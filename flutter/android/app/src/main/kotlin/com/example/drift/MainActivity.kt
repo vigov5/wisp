@@ -125,8 +125,8 @@ class MainActivity : FlutterActivity() {
             // read it via ordinary filesystem APIs. External storage paths are
             // blocked by Android scoped storage for native (non-SAF) callers.
             val destDir = File(
-                File(cacheDir, "drift_picked"),
-                "${System.currentTimeMillis()}_${rootDoc.name.ifBlank { "folder" }}",
+                File(File(cacheDir, "drift_picked"), System.currentTimeMillis().toString()),
+                rootDoc.name.ifBlank { "folder" },
             )
             val sizeBytes = copyDocumentTreeToCache(rootDoc, destDir)
             result.success(mapOf("path" to destDir.absolutePath, "sizeBytes" to sizeBytes))
@@ -162,11 +162,11 @@ class MainActivity : FlutterActivity() {
     // large files as bytes through the Flutter platform channel.
     private fun copyUriToCache(uri: Uri): String? {
         return try {
-            val fileName = resolveFileName(uri) ?: "picked_${System.currentTimeMillis()}"
-            val dir = File(cacheDir, "drift_picked")
+            val fileName = resolveFileName(uri) ?: "picked_file"
+            val dir = File(File(cacheDir, "drift_picked"), System.currentTimeMillis().toString())
             dir.mkdirs()
-            // Prefix with timestamp so repeated picks of the same name don't collide.
-            val cacheFile = File(dir, "${System.currentTimeMillis()}_$fileName")
+            // Use a timestamped subdirectory so repeated picks of the same name don't collide.
+            val cacheFile = File(dir, fileName)
             contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(cacheFile).use { output ->
                     input.copyTo(output, bufferSize = 65_536)
