@@ -67,6 +67,23 @@ class FileSelectorSendSelectionPicker implements SendSelectionPicker {
 
   @override
   Future<List<SendPickedFile>> pickFolder() async {
+    // On Android, ACTION_OPEN_DOCUMENT_TREE returns a SAF tree URI. The native
+    // side resolves it to a filesystem path and computes the directory size via
+    // DocumentFile, which works under scoped storage. We cache the size so
+    // DirectorySizeCalculator can serve it without re-traversing the tree.
+    if (Platform.isAndroid) {
+      final result = await AndroidFilePicker.pickFolder();
+      if (result == null) return const [];
+      return [
+        SendPickedFile(
+          path: result.path,
+          name: SendPickedFile.directory(result.path).name,
+          kind: SendPickedFileKind.directory,
+          sizeBytes: result.sizeBytes,
+        ),
+      ];
+    }
+
     final path = await getDirectoryPath();
     if (path == null || path.isEmpty) {
       return const [];

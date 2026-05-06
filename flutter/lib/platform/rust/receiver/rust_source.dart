@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
 import '../../../features/receive/application/state.dart';
 import '../../../src/rust/api/lan.dart' as rust_lan;
 import '../../../src/rust/api/receiver.dart' as rust_receiver;
+import '../../android_media_store.dart';
 import '../rendezvous_defaults.dart';
 import 'mapper.dart';
 import 'source.dart';
@@ -30,6 +32,7 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
     required this.deviceName,
     required this.downloadRoot,
     this.serverUrl,
+    this.androidReceiveCacheDir,
     ReceiverPairingStreamFactory? pairingStreamFactory,
     ReceiverTransferStreamFactory? transferStreamFactory,
   }) : _pairingStreamFactory =
@@ -40,6 +43,16 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
   String deviceName;
   String downloadRoot;
   String? serverUrl;
+
+  /// On Android, Rust writes received files here instead of the user-configured
+  /// [downloadRoot].  After each transfer completes, files are moved to the
+  /// public Downloads/Drift/ folder via MediaStore.
+  final String? androidReceiveCacheDir;
+
+  /// When the user has chosen a save folder via [AndroidMediaStore.pickSaveFolder],
+  /// this holds the persisted SAF tree URI.  If null, files are saved to the
+  /// default `Downloads/Drift/` via MediaStore.
+  String? androidSaveUri;
 
   final ReceiverPairingStreamFactory _pairingStreamFactory;
   final ReceiverTransferStreamFactory _transferStreamFactory;
@@ -111,7 +124,16 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
     final previousDownloadRoot = this.downloadRoot;
     final previousServerUrl = this.serverUrl;
     this.deviceName = deviceName;
-    this.downloadRoot = downloadRoot;
+    // On Android the receive cache dir is fixed; ignore the user-configured
+    // downloadRoot so Rust always writes to the temp cache.
+    if (androidReceiveCacheDir == null) {
+      this.downloadRoot = downloadRoot;
+    } else {
+      // Track the SAF URI (or clear it) so the post-transfer save step uses it.
+      androidSaveUri = AndroidMediaStore.isSafUri(downloadRoot)
+          ? downloadRoot
+          : null;
+    }
     this.serverUrl = serverUrl;
     debugPrint(
       '[receiver] updateIdentity '
@@ -236,8 +258,15 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
           );
           return;
         }
+        // Emit the event to UI first so the completion state is shown
+        // immediately, then run the Android MediaStore save in the background.
         if (!_transferController.isClosed) {
           _transferController.add(event);
+        }
+        if (Platform.isAndroid &&
+            androidReceiveCacheDir != null &&
+            event.phase == rust_receiver.ReceiverTransferPhase.completed) {
+          unawaited(_saveFilesToMediaStore(event, androidReceiveCacheDir!));
         }
       },
       onError: (_) {
@@ -245,6 +274,44 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
       },
     );
     unawaited(oldSubscription?.cancel());
+  }
+
+  /// Moves all received files from [cacheRoot] to the final destination:
+  /// - [androidSaveUri] (user-picked SAF folder) if set, or
+  /// - default `Downloads/Drift/` via MediaStore.
+  /// Then deletes the temp cache.
+  Future<void> _saveFilesToMediaStore(
+    rust_receiver.ReceiverTransferEvent event,
+    String cacheRoot,
+  ) async {
+    final safUri = androidSaveUri;
+    // The completed event has files: [] but plan.files has all paths.
+    final planFiles = event.plan?.files ?? [];
+    debugPrint(
+      '[receiver] Android post-transfer: saving ${planFiles.length} file(s) '
+      '${safUri != null ? "to SAF folder" : "to MediaStore Downloads/Drift"}',
+    );
+    for (final file in planFiles) {
+      final relativePath = file.path.replaceAll('\\', '/');
+      final srcPath = '$cacheRoot/$relativePath';
+      final String? saved;
+      if (safUri != null) {
+        saved = await AndroidMediaStore.saveToSafUri(
+          srcPath,
+          relativePath,
+          safUri,
+        );
+      } else {
+        saved = await AndroidMediaStore.saveToDownloads(srcPath, relativePath);
+      }
+      if (saved != null) {
+        debugPrint('[receiver] Android saved: $relativePath → $saved');
+      } else {
+        debugPrint('[receiver] Android save failed for: $relativePath');
+      }
+    }
+    await AndroidMediaStore.cleanupReceiveCache(cacheRoot);
+    debugPrint('[receiver] Android post-transfer: done');
   }
 
   void _ensurePairingSubscription() {

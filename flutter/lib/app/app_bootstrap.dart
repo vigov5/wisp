@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../features/settings/application/repository.dart';
 import '../features/settings/application/state.dart';
+import '../platform/android_media_store.dart';
 import '../platform/rust/receiver/rust_source.dart';
 import '../src/rust/api/device.dart' as rust_device;
 
@@ -25,6 +26,16 @@ Future<AppBootstrap> loadAppBootstrap({
   String? defaultDownloadRoot,
 }) async {
   final prefs = await SharedPreferences.getInstance();
+
+  // On Android, Rust writes to a temp cache; files are moved to the public
+  // Downloads/Drift/ folder via MediaStore after each transfer completes.
+  // The user-configured downloadRoot is ignored on Android.
+  String? androidReceiveCacheDir;
+  if (Platform.isAndroid) {
+    final tmpDir = await getTemporaryDirectory();
+    androidReceiveCacheDir = '${tmpDir.path}/Download/Drift';
+  }
+
   final repository = SettingsRepository(
     prefs: prefs,
     randomDeviceName: randomDeviceName ?? rust_device.randomDeviceName,
@@ -35,11 +46,19 @@ Future<AppBootstrap> loadAppBootstrap({
   return AppBootstrap(
     settingsRepository: repository,
     initialSettings: initialSettings,
-    receiverSource: RustReceiverServiceSource(
-      deviceName: initialSettings.deviceName,
-      downloadRoot: initialSettings.downloadRoot,
-      serverUrl: initialSettings.discoveryServerUrl,
-    ),
+    receiverSource:
+        RustReceiverServiceSource(
+            deviceName: initialSettings.deviceName,
+            downloadRoot:
+                androidReceiveCacheDir ?? initialSettings.downloadRoot,
+            serverUrl: initialSettings.discoveryServerUrl,
+            androidReceiveCacheDir: androidReceiveCacheDir,
+          )
+          ..androidSaveUri =
+              (androidReceiveCacheDir != null &&
+                  AndroidMediaStore.isSafUri(initialSettings.downloadRoot))
+              ? initialSettings.downloadRoot
+              : null,
   );
 }
 

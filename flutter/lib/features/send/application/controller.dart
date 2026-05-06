@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:app/features/receive/application/state.dart';
@@ -7,6 +8,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'model.dart';
 import 'item_size.dart';
 import 'directory_size.dart';
+import '../../../platform/android_file_picker.dart';
 import '../../../platform/send_transfer_source.dart';
 import '../../transfers/application/format_utils.dart';
 import '../../settings/application/controller.dart';
@@ -112,6 +114,9 @@ class SendController extends _$SendController {
     unawaited(_cancelActiveTransfer());
     state = const SendStateIdle();
     _pendingDirectorySizes.clear();
+    if (Platform.isAndroid) {
+      unawaited(AndroidFilePicker.clearPickedCache());
+    }
   }
 
   SendRequestData? buildSendRequest() {

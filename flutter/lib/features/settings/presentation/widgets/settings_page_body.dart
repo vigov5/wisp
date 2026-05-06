@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../platform/android_media_store.dart';
 import '../../../../theme/drift_theme.dart';
 import '../../../../platform/rust/rendezvous_defaults.dart';
 import '../../application/controller.dart';
@@ -44,7 +46,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
     _discoverable = _initialDiscoverable;
     _deviceNameController = TextEditingController(text: _initialDeviceName);
     _downloadRootController = TextEditingController(
-      text: formatSettingsDownloadRootForDisplay(_initialDownloadRoot),
+      text: _downloadRootDisplayText(_initialDownloadRoot),
     );
     _serverUrlController = TextEditingController(text: _initialServerUrl);
     _deviceNameController.addListener(_onFieldChanged);
@@ -141,7 +143,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
         _initialServerUrl = state.settings.discoveryServerUrl ?? '';
         _initialDiscoverable = state.settings.discoverableByDefault;
         _deviceNameController.text = _initialDeviceName;
-        _downloadRootController.text = formatSettingsDownloadRootForDisplay(
+        _downloadRootController.text = _downloadRootDisplayText(
           _initialDownloadRoot,
         );
         _serverUrlController.text = _initialServerUrl;
@@ -160,7 +162,42 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
     }
   }
 
+  /// Returns a user-friendly display string for [root].
+  /// On Android, `content://` SAF URIs are shown as just the path portion.
+  /// On Android with no SAF folder chosen, shows the default destination label.
+  String _downloadRootDisplayText(String root) {
+    if (Platform.isAndroid) {
+      if (AndroidMediaStore.isSafUri(root)) {
+        final uri = Uri.tryParse(root);
+        if (uri != null) {
+          final lastSegment = Uri.decodeComponent(
+            uri.pathSegments.lastOrNull ?? '',
+          );
+          // Document IDs look like "primary:Download/Drift" — show path part.
+          final colonIdx = lastSegment.indexOf(':');
+          if (colonIdx >= 0 && colonIdx < lastSegment.length - 1) {
+            return lastSegment.substring(colonIdx + 1);
+          }
+          if (lastSegment.isNotEmpty) return lastSegment;
+        }
+        return 'Selected folder';
+      }
+      // No SAF folder chosen — files go to Download/Drift via MediaStore.
+      return 'Download/Drift (default)';
+    }
+    return formatSettingsDownloadRootForDisplay(root);
+  }
+
   Future<void> _pickDownloadRoot() async {
+    if (Platform.isAndroid) {
+      final folder = await AndroidMediaStore.pickSaveFolder();
+      if (folder == null || !mounted) return;
+      setState(() {
+        _downloadRootValue = folder.uri;
+        _downloadRootController.text = folder.displayName;
+      });
+      return;
+    }
     final currentRoot = _downloadRootValue.trim();
     final selected = await ref
         .read(storageAccessSourceProvider)
