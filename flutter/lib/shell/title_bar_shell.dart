@@ -2,6 +2,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../theme/drift_theme.dart';
+import 'widgets/app_version_text.dart';
+
 class TitleBarShell extends StatelessWidget {
   const TitleBarShell({super.key, required this.child});
 
@@ -16,11 +19,77 @@ class TitleBarShell extends StatelessWidget {
       body: Column(
         children: [
           if (isDesktop)
-            const DragToMoveArea(
-              child: SizedBox(height: 32, width: double.infinity),
-            ),
+            _DesktopTitleBar(showWindowControls: Platform.isWindows),
           Expanded(child: child),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: const AppVersionText(),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _DesktopTitleBar extends StatelessWidget {
+  const _DesktopTitleBar({required this.showWindowControls});
+
+  final bool showWindowControls;
+
+  @override
+  Widget build(BuildContext context) {
+    return DragToMoveArea(
+      child: SizedBox(
+        height: 40,
+        child: Row(
+          children: [
+            const Expanded(child: SizedBox.shrink()),
+            if (showWindowControls) ...[
+              _TitleBarButton(
+                icon: Icons.remove_rounded,
+                tooltip: 'Minimize',
+                onTap: () => windowManager.minimize(),
+              ),
+              _TitleBarButton(
+                icon: Icons.close_rounded,
+                tooltip: 'Close',
+                onTap: () => windowManager.close(),
+              ),
+              const SizedBox(width: 4),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TitleBarButton extends StatelessWidget {
+  const _TitleBarButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: SizedBox(
+          width: 36,
+          height: 36,
+          child: Icon(icon, size: 16, color: kMuted),
+        ),
       ),
     );
   }

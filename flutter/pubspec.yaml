@@ -44,6 +44,7 @@ dependencies:
   window_manager: ^0.5.1
   drift_bridge:
     path: rust_builder
+  package_info_plus: ^10.1.0
 
 dev_dependencies:
   flutter_test:
