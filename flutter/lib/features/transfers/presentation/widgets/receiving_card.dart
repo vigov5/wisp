@@ -63,7 +63,7 @@ class ReceivingCard extends ConsumerWidget {
           progress: progress,
         ),
         footer: progress.progressFraction >= 1.0
-            ? const SizedBox(height: 52)
+            ? const SizedBox(height: 48)
             : Row(
                 children: [
                   Expanded(
@@ -71,15 +71,20 @@ class ReceivingCard extends ConsumerWidget {
                       onPressed: onCancel,
                       style: TextButton.styleFrom(
                         foregroundColor: const Color(0xFFB34A4A),
-                        minimumSize: const Size(0, 52),
+                        backgroundColor: const Color(
+                          0xFFB34A4A,
+                        ).withValues(alpha: 0.08),
+                        minimumSize: const Size(0, 48),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(
+                            color: const Color(
+                              0xFFB34A4A,
+                            ).withValues(alpha: 0.15),
+                          ),
                         ),
                       ),
-                      child: const Text(
-                        'Cancel',
-                        style: TextStyle(fontWeight: FontWeight.w600),
-                      ),
+                      child: const Text('Cancel transfer'),
                     ),
                   ),
                 ],

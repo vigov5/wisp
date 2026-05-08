@@ -10,7 +10,7 @@ use tracing::{info, instrument};
 
 use crate::{
     blobs::send::{BlobService, PreparedStore},
-    protocol::message::MessageKind,
+    protocol::message::{DeviceType, MessageKind},
     protocol::wire as protocol_wire,
     protocol::{ALPN, ProtocolError},
     protocol::{message as protocol_message, send as protocol_sender},
@@ -18,7 +18,10 @@ use crate::{
 
 use super::error::{Result as TransferResult, TransferError};
 use super::path::ScratchDir;
-use super::types::{TransferOutcome, TransferPlan, TransferSnapshot, wait_for_cancel};
+use super::progress::SpeedCalculator;
+use super::types::{
+    TransferOutcome, TransferPhase, TransferPlan, TransferSnapshot, wait_for_cancel,
+};
 
 type Result<T> = TransferResult<T>;
 
@@ -39,12 +42,14 @@ pub enum SenderEvent {
     WaitingForDecision {
         session_id: String,
         receiver_device_name: String,
+        receiver_device_type: DeviceType,
         receiver_endpoint_id: EndpointId,
         prepared_plan: TransferPlan,
     },
     Accepted {
         session_id: String,
         receiver_device_name: String,
+        receiver_device_type: DeviceType,
         receiver_endpoint_id: EndpointId,
         prepared_plan: TransferPlan,
     },
@@ -237,6 +242,7 @@ impl SenderSession {
                 self.events.emit(SenderEvent::Accepted {
                     session_id: self.session_id.clone(),
                     receiver_device_name: peer.identity.device_name.clone(),
+                    receiver_device_type: peer.identity.device_type,
                     receiver_endpoint_id: peer.identity.endpoint_id,
                     prepared_plan: prepared_plan.clone(),
                 });
@@ -382,6 +388,7 @@ where
     events.emit(SenderEvent::WaitingForDecision {
         session_id: session_id.to_owned(),
         receiver_device_name: peer_hello.identity.device_name,
+        receiver_device_type: peer_hello.identity.device_type,
         receiver_endpoint_id: peer_hello.identity.endpoint_id,
         prepared_plan,
     });
@@ -406,6 +413,11 @@ where
 
     let mut progress_active = true;
     let mut control_done = false;
+    // The wire protocol doesn't carry bytes_per_sec / eta — both peers measure
+    // their own throughput against their own clock. We record each progress
+    // tick locally so the sender's UI can show the same speed/ETA the receiver
+    // does.
+    let mut speed = SpeedCalculator::new();
 
     let mut progress_fut = Box::pin(protocol_wire::read_receiver_message(progress_recv));
     let mut control_fut = Box::pin(protocol_wire::read_receiver_message(control_recv));
@@ -423,11 +435,21 @@ where
                     Ok(protocol_message::ReceiverMessage::TransferProgress(p)) => {
                         events.emit(SenderEvent::TransferProgress {
                             session_id: session_id.to_owned(),
-                            snapshot: from_wire_snapshot(p.snapshot, session_id),
+                            snapshot: from_wire_snapshot(
+                                p.snapshot,
+                                session_id,
+                                plan.total_bytes,
+                                &mut speed,
+                            ),
                         });
                     }
                     Ok(protocol_message::ReceiverMessage::TransferCompleted(c)) => {
-                        let snapshot = from_wire_snapshot(c.snapshot, session_id);
+                        let snapshot = from_wire_snapshot(
+                            c.snapshot,
+                            session_id,
+                            plan.total_bytes,
+                            &mut speed,
+                        );
                         events.emit(SenderEvent::TransferCompleted {
                             session_id: session_id.to_owned(),
                             snapshot,
@@ -480,7 +502,33 @@ fn build_prepared_plan(
 fn from_wire_snapshot(
     snapshot: protocol_message::TransferProgressPayload,
     session_id: &str,
+    plan_total_bytes: u64,
+    speed: &mut SpeedCalculator,
 ) -> TransferSnapshot {
+    let now = std::time::Instant::now();
+    let total_bytes = plan_total_bytes.max(snapshot.total_bytes);
+    let bytes_transferred = snapshot.bytes_transferred.min(total_bytes);
+
+    let (bytes_per_sec, eta_seconds) = if matches!(snapshot.phase, TransferPhase::Transferring) {
+        speed.record(now, bytes_transferred);
+        let rate = speed.bytes_per_sec(now);
+        let eta = rate.and_then(|r| {
+            if r == 0 {
+                return None;
+            }
+            let remaining = total_bytes.saturating_sub(bytes_transferred);
+            if remaining == 0 {
+                None
+            } else {
+                Some(((remaining as f64) / r as f64).ceil() as u64)
+            }
+        });
+        (rate, eta)
+    } else {
+        speed.reset();
+        (None, None)
+    };
+
     TransferSnapshot {
         session_id: session_id.to_owned(),
         phase: snapshot.phase,
@@ -490,8 +538,8 @@ fn from_wire_snapshot(
         bytes_transferred: snapshot.bytes_transferred,
         active_file_id: snapshot.active_file_id,
         active_file_bytes: snapshot.active_file_bytes,
-        bytes_per_sec: None,
-        eta_seconds: None,
+        bytes_per_sec,
+        eta_seconds,
     }
 }
 
@@ -581,6 +629,7 @@ mod tests {
             [SenderEvent::WaitingForDecision {
                 session_id,
                 receiver_device_name,
+                receiver_device_type: _,
                 receiver_endpoint_id: endpoint_id,
                 prepared_plan,
             }] if session_id == "session-1"

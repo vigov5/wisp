@@ -141,6 +141,7 @@ class ReceiverTransferEvent {
   final String totalSizeLabel;
   final List<ReceiverTransferFile> files;
   final ReceiverConnectionPath? connectionPath;
+  final String? senderEndpointId;
   final UserFacingErrorData? error;
 
   const ReceiverTransferEvent({
@@ -158,6 +159,7 @@ class ReceiverTransferEvent {
     required this.totalSizeLabel,
     required this.files,
     this.connectionPath,
+    this.senderEndpointId,
     this.error,
   });
 
@@ -177,6 +179,7 @@ class ReceiverTransferEvent {
       totalSizeLabel.hashCode ^
       files.hashCode ^
       connectionPath.hashCode ^
+      senderEndpointId.hashCode ^
       error.hashCode;
 
   @override
@@ -198,6 +201,7 @@ class ReceiverTransferEvent {
           totalSizeLabel == other.totalSizeLabel &&
           files == other.files &&
           connectionPath == other.connectionPath &&
+          senderEndpointId == other.senderEndpointId &&
           error == other.error;
 }
 

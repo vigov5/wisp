@@ -62,6 +62,7 @@ pub struct SendTransferEvent {
     pub plan: Option<TransferPlanData>,
     pub snapshot: Option<TransferSnapshotData>,
     pub remote_device_type: Option<String>,
+    pub remote_endpoint_id: Option<String>,
     pub connection_path: Option<SendConnectionPath>,
     pub error: Option<crate::api::error::UserFacingErrorData>,
 }
@@ -203,6 +204,7 @@ fn terminal_event_for_app_error(destination_label: String, error: AppError) -> S
         plan: None,
         snapshot: None,
         remote_device_type: None,
+        remote_endpoint_id: None,
         connection_path: None,
         error: Some(internal_user_facing_error(title, error.to_string())),
     }
@@ -219,6 +221,7 @@ fn terminal_internal_failure_event(destination_label: String, detail: String) ->
         plan: None,
         snapshot: None,
         remote_device_type: None,
+        remote_endpoint_id: None,
         connection_path: None,
         error: Some(internal_user_facing_error("Transfer failed", detail)),
     }
@@ -266,6 +269,7 @@ fn map_event(event: AppSendEvent) -> SendTransferEvent {
         plan: event.plan.map(map_plan),
         snapshot: event.snapshot.map(map_snapshot),
         remote_device_type: event.remote_device_type,
+        remote_endpoint_id: event.remote_endpoint_id,
         connection_path: event.connection_path.map(map_connection_path),
         error: map_optional_user_facing_error(event.error),
     }
@@ -370,6 +374,7 @@ mod tests {
             plan: None,
             snapshot: None,
             remote_device_type: None,
+            remote_endpoint_id: None,
             connection_path,
             error: None,
         }

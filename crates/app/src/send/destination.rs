@@ -115,6 +115,13 @@ pub(crate) fn parse_device_type(value: &str) -> AppResult<DeviceType> {
     }
 }
 
+pub(crate) fn device_type_label(device_type: DeviceType) -> String {
+    match device_type {
+        DeviceType::Phone => "phone".to_owned(),
+        DeviceType::Laptop => "laptop".to_owned(),
+    }
+}
+
 pub(crate) fn is_receiver_decline_cancel(cancellation: &TransferCancellation) -> bool {
     matches!(cancellation.by, TransferRole::Receiver)
         && matches!(

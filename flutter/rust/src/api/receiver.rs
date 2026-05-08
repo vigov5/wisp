@@ -6,10 +6,9 @@ use drift_app::{
     ReceiverConfig, ReceiverEvent as AppReceiverEvent,
     ReceiverOfferEvent as AppReceiverOfferEvent, ReceiverOfferFile as AppReceiverOfferFile,
     ReceiverOfferPhase as AppReceiverOfferPhase, ReceiverRegistration as AppReceiverRegistration,
-    ReceiverService,
+    ReceiverService, identity as app_identity,
 };
 use drift_core::transfer::{TransferPhase, TransferPlan, TransferPlanFile, TransferSnapshot};
-use iroh::SecretKey;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 
@@ -20,8 +19,6 @@ use super::RUNTIME;
 use crate::api::error::{internal_user_facing_error, map_optional_user_facing_error};
 use crate::frb_generated::StreamSink;
 
-static RECEIVER_SECRET_KEY: LazyLock<SecretKey> =
-    LazyLock::new(|| SecretKey::from_bytes(&rand::random()));
 static RECEIVER_STATE: LazyLock<Mutex<Option<BridgeReceiverState>>> =
     LazyLock::new(|| Mutex::new(None));
 static RECEIVER_SERVICE_LOCK: LazyLock<AsyncMutex<()>> = LazyLock::new(|| AsyncMutex::new(()));
@@ -95,6 +92,7 @@ pub struct ReceiverTransferEvent {
     pub total_size_label: String,
     pub files: Vec<ReceiverTransferFile>,
     pub connection_path: Option<ReceiverConnectionPath>,
+    pub sender_endpoint_id: Option<String>,
     pub error: Option<crate::api::error::UserFacingErrorData>,
 }
 
@@ -269,7 +267,7 @@ pub(crate) async fn scan_nearby_with_receiver(
                 device_type: "laptop".to_owned(),
                 download_root: PathBuf::from("."),
                 conflict_policy: ConflictPolicy::Rename,
-                secret_key: RECEIVER_SECRET_KEY.clone(),
+                secret_key: app_identity::current_secret_key(),
             })
             .await
             .map_err(|e| internal_user_facing_error("Receiver unavailable", e.to_string()))?;
@@ -348,7 +346,7 @@ async fn ensure_receiver_service(
             device_type: config.device_type.clone(),
             download_root: config.download_root.clone(),
             conflict_policy: config.conflict_policy,
-            secret_key: RECEIVER_SECRET_KEY.clone(),
+            secret_key: app_identity::current_secret_key(),
         })
         .await
         .map_err(|e| format!("{e:#}"))?,
@@ -528,6 +526,7 @@ fn map_event(event: AppReceiverOfferEvent) -> ReceiverTransferEvent {
         total_size_label: event.total_size_label,
         files: event.files.into_iter().map(map_file_row).collect(),
         connection_path: event.connection_path.map(map_connection_path),
+        sender_endpoint_id: event.sender_endpoint_id,
         error: map_optional_user_facing_error(event.error),
     }
 }

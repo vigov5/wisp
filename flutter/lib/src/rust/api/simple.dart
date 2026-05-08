@@ -8,3 +8,17 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 String greet({required String name}) =>
     RustLib.instance.api.crateApiSimpleGreet(name: name);
+
+/// Installs the persistent app secret key supplied by the host. Bytes are the
+/// raw 32-byte iroh secret key, generated/persisted on the Flutter side.
+/// Should be called exactly once during app bootstrap, before any sender or
+/// receiver session starts.  Returns an error string when the byte length is
+/// wrong; otherwise `Ok(())`.
+void setAppIdentity({required List<int> secretKeyBytes}) => RustLib.instance.api
+    .crateApiSimpleSetAppIdentity(secretKeyBytes: secretKeyBytes);
+
+/// Returns the base32-encoded EndpointId derived from the installed secret
+/// key. Stable for the lifetime of the install. Surfaced for the settings
+/// screen so the user can copy/share their identity.
+String currentEndpointId() =>
+    RustLib.instance.api.crateApiSimpleCurrentEndpointId();

@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app/app.dart';
 import 'features/receive/feature.dart';
+import 'features/saved_devices/application/saved_devices_controller.dart';
 import 'features/transfers/feature.dart';
 import 'features/settings/settings_providers.dart';
 import 'src/rust/frb_generated.dart';
@@ -33,6 +34,9 @@ Future<void> main() async {
         ),
         transfersServiceSourceProvider.overrideWithValue(
           bootstrap.receiverSource,
+        ),
+        savedDevicesRepositoryProvider.overrideWithValue(
+          bootstrap.savedDevicesRepository,
         ),
       ],
       child: const DriftApp(),

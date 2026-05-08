@@ -29,6 +29,7 @@ class SendTransferState {
     this.plan,
     this.snapshot,
     this.remoteDeviceType,
+    this.remoteEndpointId,
     this.connectionPath,
     this.error,
   });
@@ -57,6 +58,7 @@ class SendTransferState {
   final rust_transfer.TransferPlanData? plan;
   final rust_transfer.TransferSnapshotData? snapshot;
   final String? remoteDeviceType;
+  final String? remoteEndpointId;
   final ConnectionPathInfo? connectionPath;
   final SendTransferErrorData? error;
 
@@ -77,6 +79,7 @@ class SendTransferState {
     rust_transfer.TransferPlanData? plan,
     rust_transfer.TransferSnapshotData? snapshot,
     String? remoteDeviceType,
+    String? remoteEndpointId,
     ConnectionPathInfo? connectionPath,
     SendTransferErrorData? error,
   }) {
@@ -91,6 +94,7 @@ class SendTransferState {
       plan: plan ?? this.plan,
       snapshot: snapshot ?? this.snapshot,
       remoteDeviceType: remoteDeviceType ?? this.remoteDeviceType,
+      remoteEndpointId: remoteEndpointId ?? this.remoteEndpointId,
       connectionPath: connectionPath ?? this.connectionPath,
       error: error ?? this.error,
     );

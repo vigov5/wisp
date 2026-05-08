@@ -77,6 +77,7 @@ class TransferIncomingOffer {
     required this.statusMessage,
     required this.bytesReceived,
     this.connectionPath,
+    this.senderEndpointId,
   });
 
   final TransferIdentity sender;
@@ -86,11 +87,15 @@ class TransferIncomingOffer {
   final String statusMessage;
   final BigInt bytesReceived;
   final ConnectionPathInfo? connectionPath;
+  final String? senderEndpointId;
 
   String get displaySenderName => sender.displayName;
   bool get willResume => bytesReceived > BigInt.zero;
 
-  TransferIncomingOffer copyWith({ConnectionPathInfo? connectionPath}) {
+  TransferIncomingOffer copyWith({
+    ConnectionPathInfo? connectionPath,
+    String? senderEndpointId,
+  }) {
     return TransferIncomingOffer(
       sender: sender,
       manifest: manifest,
@@ -99,6 +104,7 @@ class TransferIncomingOffer {
       statusMessage: statusMessage,
       bytesReceived: bytesReceived,
       connectionPath: connectionPath ?? this.connectionPath,
+      senderEndpointId: senderEndpointId ?? this.senderEndpointId,
     );
   }
 }

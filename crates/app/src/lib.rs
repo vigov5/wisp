@@ -1,4 +1,5 @@
 pub mod error;
+pub mod identity;
 pub mod nearby;
 mod quic_keepalive;
 mod receiver;

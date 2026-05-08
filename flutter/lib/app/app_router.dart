@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/saved_devices/presentation/saved_devices_page.dart';
 import '../features/send/application/model.dart';
 import '../features/send/presentation/send_draft_preview.dart';
 import '../features/send/presentation/send_transfer_route.dart';
@@ -12,12 +13,14 @@ import '../shell/title_bar_shell.dart';
 abstract final class AppRoutePaths {
   static const String home = '/';
   static const String settings = '/settings';
+  static const String savedDevices = '/settings/saved-devices';
   static const String sendDraft = '/send/draft';
   static const String sendTransfer = '/send/transfer';
   static const String receiveTransfer = '/receive/transfer';
 
   // GoRouter child routes use relative paths.
   static const String settingsSegment = 'settings';
+  static const String savedDevicesSegment = 'saved-devices';
   static const String sendDraftSegment = 'send/draft';
   static const String sendTransferSegment = 'send/transfer';
   static const String receiveTransferSegment = 'receive/transfer';
@@ -27,6 +30,8 @@ extension AppRouteNavigation on BuildContext {
   void goHome() => go(AppRoutePaths.home);
 
   void goSettings() => go(AppRoutePaths.settings);
+
+  void pushSavedDevices() => push(AppRoutePaths.savedDevices);
 
   void goSendDraft({required List<SendPickedFile> files}) =>
       go(AppRoutePaths.sendDraft, extra: files);
@@ -50,6 +55,13 @@ GoRouter buildAppRouter({List<NavigatorObserver> observers = const []}) {
             path: AppRoutePaths.settingsSegment,
             builder: (context, state) =>
                 const TitleBarShell(child: SettingsFeature()),
+            routes: [
+              GoRoute(
+                path: AppRoutePaths.savedDevicesSegment,
+                builder: (context, state) =>
+                    const TitleBarShell(child: SavedDevicesPage()),
+              ),
+            ],
           ),
           GoRoute(
             path: AppRoutePaths.sendDraftSegment,

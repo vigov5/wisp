@@ -75,6 +75,7 @@ class SendTransferPageData {
     required this.stripMode,
     this.durationLabel,
     this.averageSpeedLabel,
+    this.totalSizeLabel,
     this.connectionPath,
   });
 
@@ -92,6 +93,7 @@ class SendTransferPageData {
   final SendingStripMode? stripMode;
   final String? durationLabel;
   final String? averageSpeedLabel;
+  final String? totalSizeLabel;
   final ConnectionPathInfo? connectionPath;
 }
 
@@ -122,6 +124,7 @@ SendTransferPageData buildSendTransferPageData({
       stripMode: null,
       durationLabel: null,
       averageSpeedLabel: null,
+      totalSizeLabel: null,
     ),
     SendStateTransferring(:final transfer) ||
     SendStateResult(:final transfer) => SendTransferPageData(
@@ -142,6 +145,9 @@ SendTransferPageData buildSendTransferPageData({
           : null,
       averageSpeedLabel: state is SendStateResult
           ? state.result.averageSpeedLabel
+          : null,
+      totalSizeLabel: transfer.totalSize > BigInt.zero
+          ? formatBytes(transfer.totalSize)
           : null,
       connectionPath: transfer.connectionPath,
     ),

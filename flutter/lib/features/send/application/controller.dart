@@ -11,6 +11,7 @@ import 'directory_size.dart';
 import '../../../platform/android/transfer_keepalive_channel.dart';
 import '../../../platform/android_file_picker.dart';
 import '../../../platform/send_transfer_source.dart';
+import '../../saved_devices/application/saved_devices_controller.dart';
 import '../../transfers/application/format_utils.dart';
 import '../../settings/application/controller.dart';
 import 'state.dart';
@@ -375,6 +376,8 @@ class SendController extends _$SendController {
       snapshot: update.snapshot ?? currentState.transfer.snapshot,
       remoteDeviceType:
           update.remoteDeviceType ?? currentState.transfer.remoteDeviceType,
+      remoteEndpointId:
+          update.remoteEndpointId ?? currentState.transfer.remoteEndpointId,
       connectionPath:
           update.connectionPath ?? currentState.transfer.connectionPath,
       error: update.error ?? currentState.transfer.error,
@@ -562,6 +565,20 @@ class SendController extends _$SendController {
     _stopKeepalive();
 
     if (result.outcome == SendTransferOutcome.success) {
+      final endpointId = transfer.remoteEndpointId;
+      if (endpointId != null && endpointId.isNotEmpty) {
+        unawaited(
+          ref
+              .read(savedDevicesProvider.notifier)
+              .recordTransfer(
+                endpointId: endpointId,
+                label: transfer.destinationLabel,
+                deviceType: transfer.remoteDeviceType ?? 'laptop',
+                bytesTransferred: transfer.bytesSent,
+                lastTicket: currentState.request.ticket,
+              ),
+        );
+      }
       await Future.delayed(const Duration(milliseconds: 1000));
     }
 

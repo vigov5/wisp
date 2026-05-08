@@ -61,6 +61,7 @@ class SendTransferUpdate {
     this.plan,
     this.snapshot,
     this.remoteDeviceType,
+    this.remoteEndpointId,
     this.connectionPath,
     this.error,
   });
@@ -172,6 +173,7 @@ class SendTransferUpdate {
   final rust_transfer.TransferPlanData? plan;
   final rust_transfer.TransferSnapshotData? snapshot;
   final String? remoteDeviceType;
+  final String? remoteEndpointId;
   final ConnectionPathInfo? connectionPath;
   final SendTransferErrorData? error;
 }
@@ -268,6 +270,7 @@ class LocalSendTransferSource implements SendTransferSource {
       plan: event.plan,
       snapshot: event.snapshot,
       remoteDeviceType: event.remoteDeviceType,
+      remoteEndpointId: event.remoteEndpointId,
       connectionPath: ConnectionPathInfo.fromSender(event.connectionPath),
       error: _mapError(event.error),
     );

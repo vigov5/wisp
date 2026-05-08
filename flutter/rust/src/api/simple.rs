@@ -23,3 +23,27 @@ pub fn init_app() {
 pub fn greet(name: String) -> String {
     format!("Hello, {name}")
 }
+
+/// Installs the persistent app secret key supplied by the host. Bytes are the
+/// raw 32-byte iroh secret key, generated/persisted on the Flutter side.
+/// Should be called exactly once during app bootstrap, before any sender or
+/// receiver session starts.  Returns an error string when the byte length is
+/// wrong; otherwise `Ok(())`.
+#[flutter_rust_bridge::frb(sync)]
+pub fn set_app_identity(secret_key_bytes: Vec<u8>) -> Result<(), String> {
+    let bytes: [u8; 32] = secret_key_bytes
+        .try_into()
+        .map_err(|_| "secret key must be exactly 32 bytes".to_owned())?;
+    drift_app::identity::set_secret_key(bytes);
+    Ok(())
+}
+
+/// Returns the base32-encoded EndpointId derived from the installed secret
+/// key. Stable for the lifetime of the install. Surfaced for the settings
+/// screen so the user can copy/share their identity.
+#[flutter_rust_bridge::frb(sync)]
+pub fn current_endpoint_id() -> String {
+    drift_app::identity::current_secret_key()
+        .public()
+        .to_string()
+}

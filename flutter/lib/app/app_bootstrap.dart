@@ -4,22 +4,27 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../features/receive/application/pairing_cache.dart';
+import '../features/saved_devices/application/saved_devices_repository.dart';
 import '../features/settings/application/repository.dart';
 import '../features/settings/application/state.dart';
 import '../platform/android_media_store.dart';
+import '../platform/identity_storage.dart';
 import '../platform/rust/receiver/rust_source.dart';
 import '../src/rust/api/device.dart' as rust_device;
+import '../src/rust/api/simple.dart' as rust_simple;
 
 class AppBootstrap {
   const AppBootstrap({
     required this.settingsRepository,
     required this.initialSettings,
     required this.receiverSource,
+    required this.savedDevicesRepository,
   });
 
   final SettingsRepository settingsRepository;
   final AppSettings initialSettings;
   final RustReceiverServiceSource receiverSource;
+  final SavedDevicesRepository savedDevicesRepository;
 }
 
 Future<AppBootstrap> loadAppBootstrap({
@@ -45,9 +50,17 @@ Future<AppBootstrap> loadAppBootstrap({
   );
   final initialSettings = await repository.loadOrCreate();
   final pairingCache = PairingCacheRepository(prefs: prefs);
+
+  // Install the persistent app identity so iroh sees a stable EndpointId
+  // across launches. Must run before any sender/receiver session starts.
+  final identity = IdentityStorage(prefs: prefs);
+  final secretKey = await identity.loadOrCreate();
+  rust_simple.setAppIdentity(secretKeyBytes: secretKey);
+
   return AppBootstrap(
     settingsRepository: repository,
     initialSettings: initialSettings,
+    savedDevicesRepository: SavedDevicesRepository(prefs: prefs),
     receiverSource:
         RustReceiverServiceSource(
             deviceName: initialSettings.deviceName,

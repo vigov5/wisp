@@ -168,9 +168,7 @@ class _TransferStateCard extends StatelessWidget {
       statusLabel: viewData.visual.statusLabel,
       statusColor: accent,
       subtitle: subtitle,
-      explainer: state is SendStateResult
-          ? _SendStatsGrid(viewData: viewData)
-          : null,
+      explainer: isSuccessResult ? _SendStatsGrid(viewData: viewData) : null,
       illustration: RecipientAvatar(
         deviceName: viewData.remoteLabel,
         deviceType: viewData.remoteDeviceType ?? 'phone',
@@ -240,6 +238,8 @@ class _SendStatsGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     // Only show stats if we have at least one valid metric
     final displayStats = <_StatItem>[
+      if (viewData.totalSizeLabel != null)
+        _StatItem(label: 'SIZE', value: viewData.totalSizeLabel!),
       if (viewData.durationLabel != null)
         _StatItem(label: 'TIME', value: viewData.durationLabel!),
       if (viewData.averageSpeedLabel != null)

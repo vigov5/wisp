@@ -36,6 +36,7 @@ pub struct SendEvent {
     pub plan: Option<TransferPlan>,
     pub snapshot: Option<TransferSnapshot>,
     pub remote_device_type: Option<String>,
+    pub remote_endpoint_id: Option<String>,
     pub connection_path: Option<ConnectionPath>,
     pub error: Option<UserFacingError>,
 }
@@ -92,6 +93,7 @@ pub struct ReceiverOfferEvent {
     pub plan: Option<TransferPlan>,
     pub snapshot: Option<TransferSnapshot>,
     pub connection_path: Option<ConnectionPath>,
+    pub sender_endpoint_id: Option<String>,
     pub total_size_label: String,
     pub files: Vec<ReceiverOfferFile>,
     pub error: Option<UserFacingError>,

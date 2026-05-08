@@ -93,6 +93,7 @@ impl ReceiverSession {
         } = self;
 
         let remote_id = connection.remote_id();
+        let remote_id_str = remote_id.to_string();
         let initial_path = snapshot_connection_path(&endpoint, remote_id).await;
         let current_path = Arc::new(Mutex::new(initial_path));
         let watcher_endpoint = endpoint.clone();
@@ -205,7 +206,7 @@ impl ReceiverSession {
         };
         let prepared_event = ReceiverOfferEvent {
             phase: ReceiverOfferPhase::OfferReady,
-            sender_name: offer.sender_device_name.clone(),
+            sender_name: sender_label.clone(),
             sender_device_type: device_type_to_str(sender_device_type),
             destination_label: sender_label.clone(),
             save_root_label: save_root_label.clone(),
@@ -216,6 +217,7 @@ impl ReceiverSession {
             plan: Some(plan.clone()),
             snapshot: None,
             connection_path: Some(current_path.lock().unwrap().clone()),
+            sender_endpoint_id: Some(remote_id_str.clone()),
             total_size_label: human_size(offer.total_size),
             files,
             error: None,
@@ -260,6 +262,7 @@ impl ReceiverSession {
                             save_root_label.clone(),
                             sender_device_type,
                             Some(current_path.lock().unwrap().clone()),
+                            Some(remote_id_str.clone()),
                             plan.total_files as u64,
                             plan.total_bytes,
                             resume_from_bytes,
@@ -296,6 +299,7 @@ impl ReceiverSession {
                                 save_root_label.clone(),
                                 sender_device_type,
                                 Some(current_path.lock().unwrap().clone()),
+                                Some(remote_id_str.clone()),
                                 snapshot.total_files as u64,
                                 snapshot.total_bytes,
                                 snapshot.bytes_transferred,
@@ -341,6 +345,7 @@ impl ReceiverSession {
                     save_root_label,
                     sender_device_type,
                     final_path.clone(),
+                    Some(remote_id_str.clone()),
                     offer.session_id.clone(),
                     offer.file_count,
                     offer.total_size,
@@ -359,6 +364,7 @@ impl ReceiverSession {
                     plan: Some(plan.clone()),
                     snapshot: None,
                     connection_path: final_path.clone(),
+                    sender_endpoint_id: Some(remote_id_str.clone()),
                     total_size_label: human_size(offer.total_size),
                     files: Vec::new(),
                     error: None,
@@ -376,6 +382,7 @@ impl ReceiverSession {
                     plan: Some(plan.clone()),
                     snapshot: None,
                     connection_path: final_path.clone(),
+                    sender_endpoint_id: Some(remote_id_str.clone()),
                     total_size_label: human_size(offer.total_size),
                     files: Vec::new(),
                     error: Some(UserFacingError::new(
@@ -488,6 +495,7 @@ fn completed_offer_event(
     save_root_label: String,
     sender_device_type: DeviceType,
     connection_path: Option<ConnectionPath>,
+    sender_endpoint_id: Option<String>,
     session_id: String,
     item_count: u64,
     total_size: u64,
@@ -517,6 +525,7 @@ fn completed_offer_event(
             eta_seconds: None,
         }),
         connection_path,
+        sender_endpoint_id,
         total_size_label: human_size(total_size),
         files: Vec::new(),
         error: None,
@@ -529,6 +538,7 @@ fn build_offer_event(
     save_root_label: String,
     sender_device_type: DeviceType,
     connection_path: Option<ConnectionPath>,
+    sender_endpoint_id: Option<String>,
     file_count: u64,
     total_bytes: u64,
     bytes_received: u64,
@@ -558,6 +568,7 @@ fn build_offer_event(
         plan,
         snapshot,
         connection_path,
+        sender_endpoint_id,
         total_size_label: human_size(total_bytes),
         files,
         error,
@@ -584,6 +595,7 @@ fn failed_offer_event(
         plan: None,
         snapshot: None,
         connection_path: None,
+        sender_endpoint_id: None,
         total_size_label: String::new(),
         files: Vec::new(),
         error: Some(error),
@@ -643,6 +655,7 @@ mod tests {
             "Downloads".to_owned(),
             DeviceType::Laptop,
             Some(direct.clone()),
+            None,
             0,
             0,
             0,
@@ -683,6 +696,7 @@ mod tests {
                 relay_url: None,
                 direct_addr: Some("192.168.1.5:5000".to_owned()),
             }),
+            None,
             "session-1".to_owned(),
             1,
             1024,

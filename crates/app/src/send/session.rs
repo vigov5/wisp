@@ -1,14 +1,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use drift_core::protocol::{Identity, TransferRole};
+use drift_core::protocol::{DeviceType, Identity, TransferRole};
 use drift_core::transfer::{
     SendRequest, Sender, SenderEvent as CoreSenderEvent, TransferOutcome as CoreTransferOutcome,
     TransferPlan,
 };
 use drift_core::util::snapshot_connection_path;
 use iroh::{Endpoint, RelayMode, endpoint::presets};
-use rand::random;
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
@@ -24,7 +23,7 @@ type StdMutex<T> = std::sync::Mutex<T>;
 
 use super::destination::SendDestination;
 use super::destination::{
-    display_destination_label, is_receiver_decline_cancel, parse_device_type,
+    device_type_label, display_destination_label, is_receiver_decline_cancel, parse_device_type,
 };
 use super::draft::SendDraft;
 
@@ -110,6 +109,7 @@ impl SendSession {
                 plan: None,
                 snapshot: None,
                 remote_device_type: None,
+                remote_endpoint_id: None,
                 connection_path: None,
                 error: None,
             },
@@ -135,7 +135,7 @@ impl SendSession {
             ])
             .relay_mode(RelayMode::Default)
             .transport_config(crate::quic_keepalive::build_transport_config())
-            .secret_key(iroh::SecretKey::from_bytes(&random::<[u8; 32]>()))
+            .secret_key(crate::identity::current_secret_key())
             .bind()
             .await
             .map_err(|e| AppError::BindingFailed {
@@ -351,6 +351,7 @@ pub(crate) fn failed_event_from_error(
         plan: None,
         snapshot: None,
         remote_device_type: None,
+        remote_endpoint_id: None,
         connection_path: None,
         error: Some(error),
     }
@@ -373,12 +374,14 @@ fn map_sender_event(
             plan: Some(prepared_plan),
             snapshot: None,
             remote_device_type: None,
+            remote_endpoint_id: None,
             connection_path: None,
             error: None,
         },
         CoreSenderEvent::WaitingForDecision {
             receiver_device_name,
-            receiver_endpoint_id: _,
+            receiver_device_type,
+            receiver_endpoint_id,
             prepared_plan,
             ..
         } => {
@@ -392,14 +395,16 @@ fn map_sender_event(
                 bytes_sent: 0,
                 plan: Some(prepared_plan),
                 snapshot: None,
-                remote_device_type: None,
+                remote_device_type: Some(device_type_label(receiver_device_type)),
+                remote_endpoint_id: Some(receiver_endpoint_id.to_string()),
                 connection_path: None,
                 error: None,
             }
         }
         CoreSenderEvent::Accepted {
             receiver_device_name,
-            receiver_endpoint_id: _,
+            receiver_device_type,
+            receiver_endpoint_id,
             prepared_plan,
             ..
         } => {
@@ -413,7 +418,8 @@ fn map_sender_event(
                 bytes_sent: 0,
                 plan: Some(prepared_plan),
                 snapshot: None,
-                remote_device_type: None,
+                remote_device_type: Some(device_type_label(receiver_device_type)),
+                remote_endpoint_id: Some(receiver_endpoint_id.to_string()),
                 connection_path: None,
                 error: None,
             }
@@ -432,6 +438,7 @@ fn map_sender_event(
             plan: Some(prepared_plan),
             snapshot: None,
             remote_device_type: None,
+            remote_endpoint_id: None,
             connection_path: None,
             error: Some(UserFacingError::new(
                 UserFacingErrorKind::PeerDeclined,
@@ -453,6 +460,7 @@ fn map_sender_event(
             plan: Some(prepared_plan),
             snapshot: None,
             remote_device_type: None,
+            remote_endpoint_id: None,
             connection_path: None,
             error: Some(UserFacingError::from(error)),
         },
@@ -468,6 +476,7 @@ fn map_sender_event(
                 plan: Some(plan.clone()),
                 snapshot: None,
                 remote_device_type: None,
+                remote_endpoint_id: None,
                 connection_path: None,
                 error: None,
             }
@@ -488,6 +497,7 @@ fn map_sender_event(
             plan: current_plan.clone(),
             snapshot: Some(snapshot.clone()),
             remote_device_type: None,
+            remote_endpoint_id: None,
             connection_path: None,
             error: None,
         },
@@ -507,6 +517,7 @@ fn map_sender_event(
             plan: current_plan.clone(),
             snapshot: Some(snapshot.clone()),
             remote_device_type: None,
+            remote_endpoint_id: None,
             connection_path: None,
             error: None,
         },

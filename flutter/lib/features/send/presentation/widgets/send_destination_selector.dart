@@ -6,6 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../theme/drift_theme.dart';
 import '../../../receive/application/service.dart';
 import '../../../receive/application/state.dart';
+import '../../../saved_devices/application/saved_device.dart';
+import '../../../saved_devices/application/saved_devices_controller.dart';
+import '../../../transfers/application/pubkey_visual.dart';
 import '../../application/controller.dart';
 import '../../application/model.dart';
 import '../../application/state.dart';
@@ -69,6 +72,33 @@ class _SendDestinationSelectorState
       _continuousMode = false;
       _isScanningNearby = false;
     });
+  }
+
+  void _selectSavedDevice(SavedDevice device) {
+    final ticket = device.lastTicket;
+    if (ticket == null || ticket.isEmpty) {
+      // No cached ticket: tell the user we can't fast-path. Once we add a
+      // pkarr-only connect path (synthesize EndpointAddr from EndpointId),
+      // this branch goes away.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'No cached connection info for ${device.label}. '
+            'Find them on Nearby or use a code.',
+          ),
+        ),
+      );
+      return;
+    }
+    widget.controller.selectNearbyReceiver(
+      NearbyReceiver(
+        fullname: 'saved-${device.endpointId}',
+        label: device.label,
+        deviceType: device.deviceType,
+        code: '',
+        ticket: ticket,
+      ),
+    );
   }
 
   /// Minimum wall time per loop iteration. Prevents the loop from spinning the
@@ -158,9 +188,44 @@ class _SendDestinationSelectorState
       color: kInk,
     );
 
+    // Recent = saved devices NOT currently visible on the LAN scan.
+    // (When a saved device is also nearby, we only show the live Nearby tile to
+    // avoid duplicates.)
+    final savedDevices = ref.watch(savedDevicesProvider);
+    final nearbyTickets = _nearbyDevices.map((d) => d.ticket).toSet();
+    final recentDevices = savedDevices
+        .where((d) => !nearbyTickets.contains(d.lastTicket ?? ''))
+        .toList(growable: false);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (recentDevices.isNotEmpty) ...[
+          Text('Recent', style: titleStyle),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 120,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              itemCount: recentDevices.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                final saved = recentDevices[index];
+                final selected =
+                    destination.mode == SendDestinationMode.nearby &&
+                    (saved.lastTicket?.isNotEmpty ?? false) &&
+                    destination.ticket == saved.lastTicket;
+                return _RecentDeviceTile(
+                  device: saved,
+                  isSelected: selected,
+                  onTap: () => _selectSavedDevice(saved),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 18),
+        ],
         Row(
           children: [
             Text('Nearby devices', style: titleStyle),
@@ -360,6 +425,111 @@ IconData _deviceIconForType(String deviceType) {
   return deviceType.toLowerCase() == 'phone'
       ? Icons.smartphone_rounded
       : Icons.laptop_mac_rounded;
+}
+
+String _relativeTime(DateTime t) {
+  final delta = DateTime.now().toUtc().difference(t.toUtc());
+  if (delta.inMinutes < 1) return 'just now';
+  if (delta.inHours < 1) return '${delta.inMinutes}m ago';
+  if (delta.inDays < 1) return '${delta.inHours}h ago';
+  if (delta.inDays < 7) return '${delta.inDays}d ago';
+  if (delta.inDays < 30) return '${(delta.inDays / 7).floor()}w ago';
+  return '${(delta.inDays / 30).floor()}mo ago';
+}
+
+class _RecentDeviceTile extends StatelessWidget {
+  const _RecentDeviceTile({
+    required this.device,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final SavedDevice device;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final badgeColor = colorFromPubkey(device.endpointId);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        width: 116,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFF4F8FA) : kSurface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF8DBED4) : kBorder,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              _deviceIconForType(device.deviceType),
+              size: 22,
+              color: isSelected ? const Color(0xFF7AAFC9) : kMuted,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              device.label.isEmpty ? 'Saved device' : device.label,
+              style: driftSans(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: kInk,
+                height: 1.18,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 4),
+            Tooltip(
+              message:
+                  'Identity badge (from public key) — same color = same device.',
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 6,
+                  vertical: 2,
+                ),
+                decoration: BoxDecoration(
+                  color: badgeColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: badgeColor.withValues(alpha: 0.45),
+                    width: 0.8,
+                  ),
+                ),
+                child: Text(
+                  shortPubkey(device.endpointId),
+                  style: driftSans(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: HSLColor.fromColor(badgeColor)
+                        .withLightness(0.32)
+                        .toColor(),
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              _relativeTime(device.lastSeenAt),
+              style: driftSans(
+                fontSize: 9.5,
+                fontWeight: FontWeight.w400,
+                color: kMuted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _NearbyDeviceTile extends StatelessWidget {

@@ -6,6 +6,7 @@ import '../../../platform/android/transfer_keepalive_channel.dart';
 import '../../../platform/rust/receiver/fake_source.dart';
 import '../../../platform/rust/receiver/source.dart';
 import '../../../src/rust/api/receiver.dart' as rust_receiver;
+import '../../saved_devices/application/saved_devices_controller.dart';
 import 'connection_path.dart';
 import 'format_utils.dart';
 import 'identity.dart';
@@ -65,6 +66,19 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
           final offer = _mapIncomingOffer(event);
           final result = _mapResult(event);
           _stopKeepalive();
+          final endpointId = offer.senderEndpointId;
+          if (endpointId != null && endpointId.isNotEmpty) {
+            unawaited(
+              ref
+                  .read(savedDevicesProvider.notifier)
+                  .recordTransfer(
+                    endpointId: endpointId,
+                    label: offer.sender.displayName,
+                    deviceType: offer.sender.deviceType.name,
+                    bytesTransferred: result.bytesTransferred,
+                  ),
+            );
+          }
           unawaited(
             Future.delayed(const Duration(milliseconds: 1000)).then((_) {
               state = TransferSessionState.completed(
@@ -186,6 +200,7 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
       statusMessage: event.statusMessage,
       bytesReceived: event.bytesReceived,
       connectionPath: ConnectionPathInfo.fromReceiver(event.connectionPath),
+      senderEndpointId: event.senderEndpointId,
     );
   }
 

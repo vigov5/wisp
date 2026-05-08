@@ -2,11 +2,15 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../app/app_router.dart';
 import '../../../../platform/android_media_store.dart';
+import '../../../../src/rust/api/simple.dart' as rust_simple;
 import '../../../../theme/drift_theme.dart';
 import '../../../../platform/rust/rendezvous_defaults.dart';
+import '../../../transfers/application/pubkey_visual.dart';
 import '../../application/controller.dart';
 import '../../settings_providers.dart';
 import 'reliability_settings_section.dart';
@@ -34,6 +38,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
   late bool _initialDiscoverable;
   bool _discoverable = true;
   bool _saving = false;
+  String _endpointId = '';
 
   @override
   void initState() {
@@ -52,6 +57,11 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
     _serverUrlController = TextEditingController(text: _initialServerUrl);
     _deviceNameController.addListener(_onFieldChanged);
     _serverUrlController.addListener(_onFieldChanged);
+    try {
+      _endpointId = rust_simple.currentEndpointId();
+    } catch (_) {
+      // Bridge not yet initialized — stays empty, badge hides itself.
+    }
   }
 
   @override
@@ -276,6 +286,10 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                             ),
                           ),
                         ),
+                        if (_endpointId.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          _IdentityBadgeRow(endpointId: _endpointId),
+                        ],
                         const SizedBox(height: 22),
                         SettingsSectionField(
                           label: 'Save received files to',
@@ -328,6 +342,42 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                         ),
                         const SizedBox(height: 18),
                         const ReliabilitySettingsSection(),
+                        const SizedBox(height: 18),
+                        SettingsSectionField(
+                          label: 'Saved devices',
+                          child: InkWell(
+                            onTap: () => context.pushSavedDevices(),
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
+                              decoration: BoxDecoration(
+                                color: kSurface,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: kBorder),
+                              ),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      'Manage devices used for fast resends',
+                                      style: driftSans(
+                                        fontSize: 13,
+                                        color: kInk,
+                                      ),
+                                    ),
+                                  ),
+                                  const Icon(
+                                    Icons.chevron_right_rounded,
+                                    color: kMuted,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -367,6 +417,86 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _IdentityBadgeRow extends StatelessWidget {
+  const _IdentityBadgeRow({required this.endpointId});
+
+  final String endpointId;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = colorFromPubkey(endpointId);
+    final textColor = HSLColor.fromColor(color).withLightness(0.32).toColor();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Public key',
+          style: driftSans(
+            fontSize: 13.5,
+            fontWeight: FontWeight.w600,
+            color: kInk,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: Tooltip(
+                message: endpointId,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: color.withValues(alpha: 0.45),
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Text(
+                    shortPubkey(endpointId, headChars: 16, tailChars: 16),
+                    style: driftSans(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: textColor,
+                      letterSpacing: 0.4,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              tooltip: 'Copy public key',
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              icon: const Icon(Icons.copy_rounded, size: 18),
+              color: kMuted,
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: endpointId));
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Public key copied'),
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
