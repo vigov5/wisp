@@ -764,11 +764,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ReceiverConnectionPath dco_decode_box_autoadd_receiver_connection_path(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_receiver_connection_path(raw);
+  }
+
+  @protected
   ReceiverRegistration dco_decode_box_autoadd_receiver_registration(
     dynamic raw,
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_receiver_registration(raw);
+  }
+
+  @protected
+  SendConnectionPath dco_decode_box_autoadd_send_connection_path(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_send_connection_path(raw);
   }
 
   @protected
@@ -885,6 +899,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ReceiverConnectionPath? dco_decode_opt_box_autoadd_receiver_connection_path(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_receiver_connection_path(raw);
+  }
+
+  @protected
   ReceiverRegistration? dco_decode_opt_box_autoadd_receiver_registration(
     dynamic raw,
   ) {
@@ -892,6 +916,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return raw == null
         ? null
         : dco_decode_box_autoadd_receiver_registration(raw);
+  }
+
+  @protected
+  SendConnectionPath? dco_decode_opt_box_autoadd_send_connection_path(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_send_connection_path(raw);
   }
 
   @protected
@@ -933,6 +967,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ReceiverConnectionPath dco_decode_receiver_connection_path(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return ReceiverConnectionPath(
+      kind: dco_decode_String(arr[0]),
+      relayUrl: dco_decode_opt_String(arr[1]),
+      directAddr: dco_decode_opt_String(arr[2]),
+    );
+  }
+
+  @protected
   ReceiverPairingState dco_decode_receiver_pairing_state(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -960,8 +1007,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ReceiverTransferEvent dco_decode_receiver_transfer_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 14)
-      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
+    if (arr.length != 15)
+      throw Exception('unexpected arr length: expect 15 but see ${arr.length}');
     return ReceiverTransferEvent(
       phase: dco_decode_receiver_transfer_phase(arr[0]),
       senderName: dco_decode_String(arr[1]),
@@ -976,7 +1023,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       snapshot: dco_decode_opt_box_autoadd_transfer_snapshot_data(arr[10]),
       totalSizeLabel: dco_decode_String(arr[11]),
       files: dco_decode_list_receiver_transfer_file(arr[12]),
-      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[13]),
+      connectionPath: dco_decode_opt_box_autoadd_receiver_connection_path(
+        arr[13],
+      ),
+      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[14]),
     );
   }
 
@@ -1027,11 +1077,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SendConnectionPath dco_decode_send_connection_path(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return SendConnectionPath(
+      kind: dco_decode_String(arr[0]),
+      relayUrl: dco_decode_opt_String(arr[1]),
+      directAddr: dco_decode_opt_String(arr[2]),
+    );
+  }
+
+  @protected
   SendTransferEvent dco_decode_send_transfer_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
     return SendTransferEvent(
       phase: dco_decode_send_transfer_phase(arr[0]),
       destinationLabel: dco_decode_String(arr[1]),
@@ -1042,7 +1105,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       plan: dco_decode_opt_box_autoadd_transfer_plan_data(arr[6]),
       snapshot: dco_decode_opt_box_autoadd_transfer_snapshot_data(arr[7]),
       remoteDeviceType: dco_decode_opt_String(arr[8]),
-      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[9]),
+      connectionPath: dco_decode_opt_box_autoadd_send_connection_path(arr[9]),
+      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[10]),
     );
   }
 
@@ -1213,11 +1277,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ReceiverConnectionPath sse_decode_box_autoadd_receiver_connection_path(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_receiver_connection_path(deserializer));
+  }
+
+  @protected
   ReceiverRegistration sse_decode_box_autoadd_receiver_registration(
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_receiver_registration(deserializer));
+  }
+
+  @protected
+  SendConnectionPath sse_decode_box_autoadd_send_connection_path(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_send_connection_path(deserializer));
   }
 
   @protected
@@ -1376,6 +1456,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ReceiverConnectionPath? sse_decode_opt_box_autoadd_receiver_connection_path(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_receiver_connection_path(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   ReceiverRegistration? sse_decode_opt_box_autoadd_receiver_registration(
     SseDeserializer deserializer,
   ) {
@@ -1383,6 +1476,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_receiver_registration(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  SendConnectionPath? sse_decode_opt_box_autoadd_send_connection_path(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_send_connection_path(deserializer));
     } else {
       return null;
     }
@@ -1450,6 +1556,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ReceiverConnectionPath sse_decode_receiver_connection_path(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_kind = sse_decode_String(deserializer);
+    var var_relayUrl = sse_decode_opt_String(deserializer);
+    var var_directAddr = sse_decode_opt_String(deserializer);
+    return ReceiverConnectionPath(
+      kind: var_kind,
+      relayUrl: var_relayUrl,
+      directAddr: var_directAddr,
+    );
+  }
+
+  @protected
   ReceiverPairingState sse_decode_receiver_pairing_state(
     SseDeserializer deserializer,
   ) {
@@ -1489,6 +1610,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     );
     var var_totalSizeLabel = sse_decode_String(deserializer);
     var var_files = sse_decode_list_receiver_transfer_file(deserializer);
+    var var_connectionPath =
+        sse_decode_opt_box_autoadd_receiver_connection_path(deserializer);
     var var_error = sse_decode_opt_box_autoadd_user_facing_error_data(
       deserializer,
     );
@@ -1506,6 +1629,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       snapshot: var_snapshot,
       totalSizeLabel: var_totalSizeLabel,
       files: var_files,
+      connectionPath: var_connectionPath,
       error: var_error,
     );
   }
@@ -1560,6 +1684,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SendConnectionPath sse_decode_send_connection_path(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_kind = sse_decode_String(deserializer);
+    var var_relayUrl = sse_decode_opt_String(deserializer);
+    var var_directAddr = sse_decode_opt_String(deserializer);
+    return SendConnectionPath(
+      kind: var_kind,
+      relayUrl: var_relayUrl,
+      directAddr: var_directAddr,
+    );
+  }
+
+  @protected
   SendTransferEvent sse_decode_send_transfer_event(
     SseDeserializer deserializer,
   ) {
@@ -1575,6 +1714,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       deserializer,
     );
     var var_remoteDeviceType = sse_decode_opt_String(deserializer);
+    var var_connectionPath = sse_decode_opt_box_autoadd_send_connection_path(
+      deserializer,
+    );
     var var_error = sse_decode_opt_box_autoadd_user_facing_error_data(
       deserializer,
     );
@@ -1588,6 +1730,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       plan: var_plan,
       snapshot: var_snapshot,
       remoteDeviceType: var_remoteDeviceType,
+      connectionPath: var_connectionPath,
       error: var_error,
     );
   }
@@ -1812,12 +1955,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_receiver_connection_path(
+    ReceiverConnectionPath self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_receiver_connection_path(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_receiver_registration(
     ReceiverRegistration self,
     SseSerializer serializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_receiver_registration(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_send_connection_path(
+    SendConnectionPath self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_send_connection_path(self, serializer);
   }
 
   @protected
@@ -1965,6 +2126,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_receiver_connection_path(
+    ReceiverConnectionPath? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_receiver_connection_path(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_receiver_registration(
     ReceiverRegistration? self,
     SseSerializer serializer,
@@ -1974,6 +2148,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_receiver_registration(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_send_connection_path(
+    SendConnectionPath? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_send_connection_path(self, serializer);
     }
   }
 
@@ -2037,6 +2224,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_receiver_connection_path(
+    ReceiverConnectionPath self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.kind, serializer);
+    sse_encode_opt_String(self.relayUrl, serializer);
+    sse_encode_opt_String(self.directAddr, serializer);
+  }
+
+  @protected
   void sse_encode_receiver_pairing_state(
     ReceiverPairingState self,
     SseSerializer serializer,
@@ -2078,6 +2276,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     );
     sse_encode_String(self.totalSizeLabel, serializer);
     sse_encode_list_receiver_transfer_file(self.files, serializer);
+    sse_encode_opt_box_autoadd_receiver_connection_path(
+      self.connectionPath,
+      serializer,
+    );
     sse_encode_opt_box_autoadd_user_facing_error_data(self.error, serializer);
   }
 
@@ -2122,6 +2324,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_send_connection_path(
+    SendConnectionPath self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.kind, serializer);
+    sse_encode_opt_String(self.relayUrl, serializer);
+    sse_encode_opt_String(self.directAddr, serializer);
+  }
+
+  @protected
   void sse_encode_send_transfer_event(
     SendTransferEvent self,
     SseSerializer serializer,
@@ -2139,6 +2352,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       serializer,
     );
     sse_encode_opt_String(self.remoteDeviceType, serializer);
+    sse_encode_opt_box_autoadd_send_connection_path(
+      self.connectionPath,
+      serializer,
+    );
     sse_encode_opt_box_autoadd_user_facing_error_data(self.error, serializer);
   }
 

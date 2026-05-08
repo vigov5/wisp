@@ -10,21 +10,6 @@ final receiverServiceSourceProvider = Provider<ReceiverServiceSource>(
   (ref) => FakeReceiverServiceSource(),
 );
 
-/// Tracks whether LAN broadcasting (mDNS advertising) is currently active.
-/// Updated by the app lifecycle whenever [setDiscoverable] is called.
-final advertisingActiveProvider =
-    NotifierProvider<_AdvertisingActiveNotifier, bool>(
-      _AdvertisingActiveNotifier.new,
-    );
-
-class _AdvertisingActiveNotifier extends Notifier<bool> {
-  @override
-  bool build() => false;
-
-  // ignore: use_setters_to_change_properties
-  void set(bool value) => state = value;
-}
-
 final receiverServiceProvider =
     NotifierProvider<ReceiverServiceController, ReceiverServiceState>(
       ReceiverServiceController.new,

@@ -12,16 +12,6 @@ ReceiverIdleViewState receiverIdleViewState(Ref ref) {
   final snapshot = service.snapshot;
   final pairingCode = service.pairingCode;
 
-  // Advertising is active when the receiver is ready AND the user has
-  // discoverableByDefault enabled. This avoids timing issues with the
-  // route-based advertisingActiveProvider.
-  final discoverableByDefault = ref
-      .watch(settingsControllerProvider)
-      .settings
-      .discoverableByDefault;
-  final advertisingActive =
-      discoverableByDefault && snapshot.lifecycle == ReceiverLifecycle.ready;
-
   final badge = switch (snapshot.lifecycle) {
     ReceiverLifecycle.starting => const ReceiverBadgeState.registering(),
     ReceiverLifecycle.ready =>
@@ -42,6 +32,5 @@ ReceiverIdleViewState receiverIdleViewState(Ref ref) {
     code: code,
     clipboardCode: pairingCode.clipboardCode,
     lifecycle: snapshot.lifecycle,
-    advertisingActive: advertisingActive,
   );
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import 'connection_path.dart';
 import 'identity.dart';
 import 'manifest.dart';
 
@@ -23,6 +24,7 @@ class TransferTransferProgress {
     this.activeFileBytesTransferred,
     this.speedLabel,
     this.etaLabel,
+    this.connectionPath,
   });
 
   final BigInt bytesTransferred;
@@ -33,6 +35,7 @@ class TransferTransferProgress {
   final BigInt? activeFileBytesTransferred;
   final String? speedLabel;
   final String? etaLabel;
+  final ConnectionPathInfo? connectionPath;
 
   double get progressFraction {
     if (totalBytes == BigInt.zero) {
@@ -73,6 +76,7 @@ class TransferIncomingOffer {
     required this.saveRootLabel,
     required this.statusMessage,
     required this.bytesReceived,
+    this.connectionPath,
   });
 
   final TransferIdentity sender;
@@ -81,9 +85,22 @@ class TransferIncomingOffer {
   final String saveRootLabel;
   final String statusMessage;
   final BigInt bytesReceived;
+  final ConnectionPathInfo? connectionPath;
 
   String get displaySenderName => sender.displayName;
   bool get willResume => bytesReceived > BigInt.zero;
+
+  TransferIncomingOffer copyWith({ConnectionPathInfo? connectionPath}) {
+    return TransferIncomingOffer(
+      sender: sender,
+      manifest: manifest,
+      destinationLabel: destinationLabel,
+      saveRootLabel: saveRootLabel,
+      statusMessage: statusMessage,
+      bytesReceived: bytesReceived,
+      connectionPath: connectionPath ?? this.connectionPath,
+    );
+  }
 }
 
 @immutable

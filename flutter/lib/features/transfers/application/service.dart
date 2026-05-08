@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../platform/rust/receiver/fake_source.dart';
 import '../../../platform/rust/receiver/source.dart';
 import '../../../src/rust/api/receiver.dart' as rust_receiver;
+import 'connection_path.dart';
 import 'format_utils.dart';
 import 'identity.dart';
 import 'manifest.dart';
@@ -40,7 +41,14 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
           }
           return;
         case rust_receiver.ReceiverTransferPhase.receiving:
-          _incomingOffer ??= _mapIncomingOffer(event);
+          final freshPath = ConnectionPathInfo.fromReceiver(
+            event.connectionPath,
+          );
+          if (_incomingOffer == null) {
+            _incomingOffer = _mapIncomingOffer(event);
+          } else if (freshPath != _incomingOffer!.connectionPath) {
+            _incomingOffer = _incomingOffer!.copyWith(connectionPath: freshPath);
+          }
           _transferStartTime ??= DateTime.now();
           state = TransferSessionState.receiving(
             offer: _incomingOffer!,
@@ -167,6 +175,7 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
       saveRootLabel: event.saveRootLabel,
       statusMessage: event.statusMessage,
       bytesReceived: event.bytesReceived,
+      connectionPath: ConnectionPathInfo.fromReceiver(event.connectionPath),
     );
   }
 
@@ -187,6 +196,7 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
       activeFileBytesTransferred: snapshot?.activeFileBytes,
       speedLabel: snapshot == null ? null : _formatRate(snapshot.bytesPerSec),
       etaLabel: snapshot == null ? null : _formatEta(snapshot.etaSeconds),
+      connectionPath: ConnectionPathInfo.fromReceiver(event.connectionPath),
     );
   }
 

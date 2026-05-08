@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/receive/application/controller.dart';
 import '../features/receive/presentation/receive_transfer_route_gate.dart';
-import '../features/receive/presentation/widgets/broadcast_status_icon.dart';
 import '../features/send/presentation/send_selection_source_sheet.dart';
 import '../app/app_router.dart';
 import '../theme/drift_theme.dart';
@@ -31,9 +30,6 @@ class MobileShell extends ConsumerWidget with ShellPickingActions {
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                   child: Row(
                     children: [
-                      BroadcastStatusIcon(
-                        active: receiverState.advertisingActive,
-                      ),
                       const Spacer(),
                       IconButton(
                         onPressed: () => context.goSettings(),

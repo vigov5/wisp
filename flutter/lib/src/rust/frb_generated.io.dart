@@ -47,9 +47,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  ReceiverConnectionPath dco_decode_box_autoadd_receiver_connection_path(
+    dynamic raw,
+  );
+
+  @protected
   ReceiverRegistration dco_decode_box_autoadd_receiver_registration(
     dynamic raw,
   );
+
+  @protected
+  SendConnectionPath dco_decode_box_autoadd_send_connection_path(dynamic raw);
 
   @protected
   SendTransferRequest dco_decode_box_autoadd_send_transfer_request(dynamic raw);
@@ -105,7 +113,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
+  ReceiverConnectionPath? dco_decode_opt_box_autoadd_receiver_connection_path(
+    dynamic raw,
+  );
+
+  @protected
   ReceiverRegistration? dco_decode_opt_box_autoadd_receiver_registration(
+    dynamic raw,
+  );
+
+  @protected
+  SendConnectionPath? dco_decode_opt_box_autoadd_send_connection_path(
     dynamic raw,
   );
 
@@ -129,6 +147,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ReceiverConnectionPath dco_decode_receiver_connection_path(dynamic raw);
+
+  @protected
   ReceiverPairingState dco_decode_receiver_pairing_state(dynamic raw);
 
   @protected
@@ -148,6 +169,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SelectionPreview dco_decode_selection_preview(dynamic raw);
+
+  @protected
+  SendConnectionPath dco_decode_send_connection_path(dynamic raw);
 
   @protected
   SendTransferEvent dco_decode_send_transfer_event(dynamic raw);
@@ -214,7 +238,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  ReceiverConnectionPath sse_decode_box_autoadd_receiver_connection_path(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ReceiverRegistration sse_decode_box_autoadd_receiver_registration(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SendConnectionPath sse_decode_box_autoadd_send_connection_path(
     SseDeserializer deserializer,
   );
 
@@ -282,7 +316,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
+  ReceiverConnectionPath? sse_decode_opt_box_autoadd_receiver_connection_path(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ReceiverRegistration? sse_decode_opt_box_autoadd_receiver_registration(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SendConnectionPath? sse_decode_opt_box_autoadd_send_connection_path(
     SseDeserializer deserializer,
   );
 
@@ -304,6 +348,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   UserFacingErrorData? sse_decode_opt_box_autoadd_user_facing_error_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ReceiverConnectionPath sse_decode_receiver_connection_path(
     SseDeserializer deserializer,
   );
 
@@ -337,6 +386,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SelectionPreview sse_decode_selection_preview(SseDeserializer deserializer);
+
+  @protected
+  SendConnectionPath sse_decode_send_connection_path(
+    SseDeserializer deserializer,
+  );
 
   @protected
   SendTransferEvent sse_decode_send_transfer_event(
@@ -424,8 +478,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_receiver_connection_path(
+    ReceiverConnectionPath self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_receiver_registration(
     ReceiverRegistration self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_send_connection_path(
+    SendConnectionPath self,
     SseSerializer serializer,
   );
 
@@ -505,8 +571,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_receiver_connection_path(
+    ReceiverConnectionPath? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_receiver_registration(
     ReceiverRegistration? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_send_connection_path(
+    SendConnectionPath? self,
     SseSerializer serializer,
   );
 
@@ -531,6 +609,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_user_facing_error_data(
     UserFacingErrorData? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_receiver_connection_path(
+    ReceiverConnectionPath self,
     SseSerializer serializer,
   );
 
@@ -570,6 +654,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_selection_preview(
     SelectionPreview self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_send_connection_path(
+    SendConnectionPath self,
     SseSerializer serializer,
   );
 

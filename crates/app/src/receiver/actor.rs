@@ -8,8 +8,8 @@ use tokio::time::{MissedTickBehavior, interval};
 
 use crate::error::{AppError, AppResult, UserFacingError};
 use crate::types::{
-    ConflictPolicy, NearbyReceiver, PairingCodeState, ReceiverOfferEvent, ReceiverOfferPhase,
-    ReceiverRegistration,
+    ConflictPolicy, ConnectionPath, NearbyReceiver, PairingCodeState, ReceiverOfferEvent,
+    ReceiverOfferPhase, ReceiverRegistration,
 };
 
 use super::runtime::ReceiverRuntime;
@@ -48,6 +48,10 @@ pub(super) enum ReceiverCommand {
     OfferFinished {
         offer_id: u64,
         final_event: ReceiverOfferEvent,
+    },
+    OfferConnectionPathChanged {
+        offer_id: u64,
+        connection_path: ConnectionPath,
     },
     ScanNearby {
         timeout: Duration,
@@ -167,6 +171,12 @@ pub(super) async fn run_receiver_actor(
                             let _ = event_tx.send(ReceiverEvent::OfferUpdated(final_event));
                         }
                         let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
+                    }
+                    ReceiverCommand::OfferConnectionPathChanged { offer_id, connection_path } => {
+                        let _ = event_tx.send(ReceiverEvent::ConnectionPathChanged {
+                            offer_id,
+                            connection_path,
+                        });
                     }
                     ReceiverCommand::ScanNearby { timeout, reply } => {
                         let exclude = Some(runtime.endpoint_id());

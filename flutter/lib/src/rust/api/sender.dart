@@ -8,8 +8,8 @@ import 'error.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'transfer.dart';
 
-// These functions are ignored because they are not marked as `pub`: `cancel_send_session`, `fallback_destination_label`, `format_code_label`, `map_event`, `map_phase`, `map_plan_file`, `map_plan`, `map_snapshot`, `terminal_event_for_app_error`, `terminal_internal_failure_event`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `cancel_send_session`, `fallback_destination_label`, `format_code_label`, `map_connection_path`, `map_event`, `map_phase`, `map_plan_file`, `map_plan`, `map_snapshot`, `terminal_event_for_app_error`, `terminal_internal_failure_event`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
 
 Stream<SendTransferEvent> startSendTransfer({
   required SendTransferRequest request,
@@ -17,6 +17,30 @@ Stream<SendTransferEvent> startSendTransfer({
 
 Future<void> cancelActiveSendTransfer() =>
     RustLib.instance.api.crateApiSenderCancelActiveSendTransfer();
+
+class SendConnectionPath {
+  final String kind;
+  final String? relayUrl;
+  final String? directAddr;
+
+  const SendConnectionPath({
+    required this.kind,
+    this.relayUrl,
+    this.directAddr,
+  });
+
+  @override
+  int get hashCode => kind.hashCode ^ relayUrl.hashCode ^ directAddr.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SendConnectionPath &&
+          runtimeType == other.runtimeType &&
+          kind == other.kind &&
+          relayUrl == other.relayUrl &&
+          directAddr == other.directAddr;
+}
 
 class SendTransferEvent {
   final SendTransferPhase phase;
@@ -28,6 +52,7 @@ class SendTransferEvent {
   final TransferPlanData? plan;
   final TransferSnapshotData? snapshot;
   final String? remoteDeviceType;
+  final SendConnectionPath? connectionPath;
   final UserFacingErrorData? error;
 
   const SendTransferEvent({
@@ -40,6 +65,7 @@ class SendTransferEvent {
     this.plan,
     this.snapshot,
     this.remoteDeviceType,
+    this.connectionPath,
     this.error,
   });
 
@@ -54,6 +80,7 @@ class SendTransferEvent {
       plan.hashCode ^
       snapshot.hashCode ^
       remoteDeviceType.hashCode ^
+      connectionPath.hashCode ^
       error.hashCode;
 
   @override
@@ -70,6 +97,7 @@ class SendTransferEvent {
           plan == other.plan &&
           snapshot == other.snapshot &&
           remoteDeviceType == other.remoteDeviceType &&
+          connectionPath == other.connectionPath &&
           error == other.error;
 }
 

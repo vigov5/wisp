@@ -452,7 +452,8 @@ pub async fn receive(out_dir: PathBuf, conflict: String, server_url: Option<Stri
                     Ok(ReceiverEvent::Shutdown) => break,
                     Ok(ReceiverEvent::RegistrationUpdated(_))
                     | Ok(ReceiverEvent::SetupCompleted(_))
-                    | Ok(ReceiverEvent::DiscoverabilityChanged { .. }) => {}
+                    | Ok(ReceiverEvent::DiscoverabilityChanged { .. })
+                    | Ok(ReceiverEvent::ConnectionPathChanged { .. }) => {}
                     Err(RecvError::Closed) => break,
                     Err(RecvError::Lagged(count)) => {
                         warn!(dropped = count, "receiver.events_lagged");

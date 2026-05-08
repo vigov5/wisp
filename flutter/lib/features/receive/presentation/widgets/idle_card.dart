@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 
 import '../../../../theme/drift_theme.dart';
 import '../../application/state.dart';
-import 'broadcast_status_icon.dart';
 
 class ReceiveIdleCard extends StatefulWidget {
   const ReceiveIdleCard({super.key, required this.state, this.onOpenSettings});
@@ -74,11 +73,6 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                           letterSpacing: -0.25,
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    BroadcastStatusIcon(
-                      active: widget.state.advertisingActive,
-                      size: 16,
                     ),
                   ],
                 ),

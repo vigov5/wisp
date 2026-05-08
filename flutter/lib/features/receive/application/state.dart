@@ -107,7 +107,6 @@ class ReceiverIdleViewState {
     required this.code,
     required this.clipboardCode,
     required this.lifecycle,
-    required this.advertisingActive,
   });
 
   final String deviceName;
@@ -116,7 +115,6 @@ class ReceiverIdleViewState {
   final String code;
   final String clipboardCode;
   final ReceiverLifecycle lifecycle;
-  final bool advertisingActive;
 }
 
 @immutable

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:app/theme/drift_theme.dart';
+import 'package:app/features/transfers/application/connection_path.dart';
+import 'package:app/features/transfers/presentation/widgets/connection_path_badge.dart';
 import 'package:app/features/transfers/presentation/widgets/sending_connection_strip.dart';
 
 class RecipientAvatar extends StatefulWidget {
@@ -10,6 +12,7 @@ class RecipientAvatar extends StatefulWidget {
     this.progress = 0.0,
     required this.mode,
     this.animate = true,
+    this.connectionPath,
   });
 
   final String deviceName;
@@ -17,6 +20,7 @@ class RecipientAvatar extends StatefulWidget {
   final double progress;
   final SendingStripMode mode;
   final bool animate;
+  final ConnectionPathInfo? connectionPath;
 
   @override
   State<RecipientAvatar> createState() => _RecipientAvatarState();
@@ -207,6 +211,11 @@ class _RecipientAvatarState extends State<RecipientAvatar>
             letterSpacing: -0.4,
           ),
         ),
+        if (widget.connectionPath != null &&
+            widget.connectionPath!.kind != ConnectionPathKind.unknown) ...[
+          const SizedBox(height: 10),
+          ConnectionPathBadge(path: widget.connectionPath, dense: false),
+        ],
       ],
     );
   }

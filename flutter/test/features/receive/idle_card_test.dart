@@ -13,7 +13,6 @@ ReceiverIdleViewState _idleState() {
     code: 'ABC123',
     clipboardCode: 'ABC123',
     lifecycle: ReceiverLifecycle.ready,
-    advertisingActive: false,
   );
 }
 

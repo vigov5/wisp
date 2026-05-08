@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use drift_core::protocol::DeviceType;
@@ -7,20 +8,25 @@ use drift_core::transfer::{
     ReceiverStart as CoreReceiverStart, TransferOutcome as CoreTransferOutcome, TransferPhase,
     TransferPlan, TransferPlanFile, TransferSnapshot,
 };
-use drift_core::util::{ConnectionPathKind, classify_connection_path, human_size};
+use drift_core::util::{human_size, snapshot_connection_path};
 use iroh::Endpoint;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 
 use crate::error::{UserFacingError, UserFacingErrorKind, format_error_chain};
-use crate::types::{ConflictPolicy, ReceiverOfferEvent, ReceiverOfferFile, ReceiverOfferPhase};
+use crate::types::{
+    ConflictPolicy, ConnectionPath, ReceiverOfferEvent, ReceiverOfferFile, ReceiverOfferPhase,
+};
 
 use super::actor::ReceiverCommand;
 use super::runtime::OfferResolution;
 
 const PROGRESS_EVENT_MIN_INTERVAL: Duration = Duration::from_millis(100);
 const PROGRESS_EVENT_MIN_BYTES: u64 = 4 * 1024 * 1024;
+/// Interval between connection-path re-snapshots while a receiver session is active.
+/// 1.5s balances UI latency vs `remote_info` lock churn on the iroh endpoint.
+const CONNECTION_PATH_POLL_INTERVAL: Duration = Duration::from_millis(1500);
 
 #[derive(Debug)]
 pub(super) struct ReceiverSession {
@@ -86,8 +92,10 @@ impl ReceiverSession {
             cmd_tx,
         } = self;
 
-        let connection_path_kind =
-            classify_connection_path(&endpoint, connection.remote_id()).await;
+        let remote_id = connection.remote_id();
+        let initial_path = snapshot_connection_path(&endpoint, remote_id).await;
+        let current_path = Arc::new(Mutex::new(initial_path));
+        let watcher_endpoint = endpoint.clone();
         let session = CoreReceiverSession::new(build_core_receiver_request(
             device_name.clone(),
             device_type,
@@ -207,7 +215,7 @@ impl ReceiverSession {
             bytes_received: resume_from_bytes,
             plan: Some(plan.clone()),
             snapshot: None,
-            connection_path: Some(connection_path_label(connection_path_kind)),
+            connection_path: Some(current_path.lock().unwrap().clone()),
             total_size_label: human_size(offer.total_size),
             files,
             error: None,
@@ -222,6 +230,16 @@ impl ReceiverSession {
         {
             return;
         }
+
+        let (path_shutdown_tx, path_shutdown_rx) = oneshot::channel::<()>();
+        let path_watcher = spawn_connection_path_watcher(
+            watcher_endpoint,
+            remote_id,
+            offer_id,
+            cmd_tx.clone(),
+            Arc::clone(&current_path),
+            path_shutdown_rx,
+        );
 
         let progress_cmd_tx = cmd_tx.clone();
         let mut last_progress_emit_at = std::time::Instant::now()
@@ -241,7 +259,7 @@ impl ReceiverSession {
                             sender_label.clone(),
                             save_root_label.clone(),
                             sender_device_type,
-                            connection_path_kind,
+                            Some(current_path.lock().unwrap().clone()),
                             plan.total_files as u64,
                             plan.total_bytes,
                             resume_from_bytes,
@@ -277,7 +295,7 @@ impl ReceiverSession {
                                 sender_label.clone(),
                                 save_root_label.clone(),
                                 sender_device_type,
-                                connection_path_kind,
+                                Some(current_path.lock().unwrap().clone()),
                                 snapshot.total_files as u64,
                                 snapshot.total_bytes,
                                 snapshot.bytes_transferred,
@@ -307,19 +325,22 @@ impl ReceiverSession {
                             UserFacingError::from(error),
                         ),
                     });
+                    let _ = path_shutdown_tx.send(());
+                    let _ = path_watcher.await;
                     return;
                 }
                 CoreReceiverEvent::OfferReceived { .. } => {}
             }
         }
 
+        let final_path = Some(current_path.lock().unwrap().clone());
         let final_event = match outcome_rx.await {
             Ok(Ok(outcome)) => match outcome {
                 CoreTransferOutcome::Completed => completed_offer_event(
                     sender_label,
                     save_root_label,
                     sender_device_type,
-                    connection_path_kind,
+                    final_path.clone(),
                     offer.session_id.clone(),
                     offer.file_count,
                     offer.total_size,
@@ -337,7 +358,7 @@ impl ReceiverSession {
                     bytes_received: 0,
                     plan: Some(plan.clone()),
                     snapshot: None,
-                    connection_path: Some(connection_path_label(connection_path_kind)),
+                    connection_path: final_path.clone(),
                     total_size_label: human_size(offer.total_size),
                     files: Vec::new(),
                     error: None,
@@ -354,7 +375,7 @@ impl ReceiverSession {
                     bytes_received: last_progress_bytes,
                     plan: Some(plan.clone()),
                     snapshot: None,
-                    connection_path: Some(connection_path_label(connection_path_kind)),
+                    connection_path: final_path.clone(),
                     total_size_label: human_size(offer.total_size),
                     files: Vec::new(),
                     error: Some(UserFacingError::new(
@@ -386,7 +407,66 @@ impl ReceiverSession {
                 final_event,
             })
             .await;
+
+        let _ = path_shutdown_tx.send(());
+        let _ = path_watcher.await;
     }
+}
+
+fn spawn_connection_path_watcher(
+    endpoint: Endpoint,
+    remote_id: iroh::EndpointId,
+    offer_id: u64,
+    cmd_tx: mpsc::Sender<ReceiverCommand>,
+    current_path: Arc<Mutex<ConnectionPath>>,
+    mut shutdown_rx: oneshot::Receiver<()>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(CONNECTION_PATH_POLL_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Skip the first immediate tick: the initial path was already snapshotted
+        // by the caller before this watcher was spawned.
+        interval.tick().await;
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                _ = interval.tick() => {
+                    let snapshot = snapshot_connection_path(&endpoint, remote_id).await;
+                    let changed = {
+                        let mut guard = current_path.lock().unwrap();
+                        // Don't downgrade a known Direct/Relay path to Unknown — that
+                        // happens when iroh momentarily has no Active address (NAT
+                        // rebind, path migration), and would cause the UI badge to
+                        // flicker hide/show every poll.
+                        let downgrade_to_unknown = matches!(
+                            snapshot.kind,
+                            drift_core::util::ConnectionPathKind::Unknown
+                        ) && !matches!(
+                            guard.kind,
+                            drift_core::util::ConnectionPathKind::Unknown
+                        );
+                        if *guard != snapshot && !downgrade_to_unknown {
+                            *guard = snapshot.clone();
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if changed
+                        && cmd_tx
+                            .send(ReceiverCommand::OfferConnectionPathChanged {
+                                offer_id,
+                                connection_path: snapshot,
+                            })
+                            .await
+                            .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+    })
 }
 
 fn build_core_receiver_request(
@@ -407,7 +487,7 @@ fn completed_offer_event(
     sender_name: String,
     save_root_label: String,
     sender_device_type: DeviceType,
-    connection_path_kind: ConnectionPathKind,
+    connection_path: Option<ConnectionPath>,
     session_id: String,
     item_count: u64,
     total_size: u64,
@@ -436,7 +516,7 @@ fn completed_offer_event(
             bytes_per_sec: None,
             eta_seconds: None,
         }),
-        connection_path: Some(connection_path_label(connection_path_kind)),
+        connection_path,
         total_size_label: human_size(total_size),
         files: Vec::new(),
         error: None,
@@ -448,7 +528,7 @@ fn build_offer_event(
     sender_label: String,
     save_root_label: String,
     sender_device_type: DeviceType,
-    connection_path_kind: ConnectionPathKind,
+    connection_path: Option<ConnectionPath>,
     file_count: u64,
     total_bytes: u64,
     bytes_received: u64,
@@ -477,7 +557,7 @@ fn build_offer_event(
         bytes_received,
         plan,
         snapshot,
-        connection_path: Some(connection_path_label(connection_path_kind)),
+        connection_path,
         total_size_label: human_size(total_bytes),
         files,
         error,
@@ -513,11 +593,10 @@ fn failed_offer_event(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_core_receiver_request, build_offer_event, completed_offer_event,
-        connection_path_label, failed_offer_event,
+        build_core_receiver_request, build_offer_event, completed_offer_event, failed_offer_event,
     };
     use crate::error::UserFacingErrorKind;
-    use crate::types::ConflictPolicy;
+    use crate::types::{ConflictPolicy, ConnectionPath};
     use drift_core::protocol::DeviceType;
     use drift_core::transfer::TransferPlan;
     use drift_core::util::ConnectionPathKind;
@@ -553,12 +632,17 @@ mod tests {
 
     #[test]
     fn build_offer_event_can_carry_structured_error() {
+        let direct = ConnectionPath {
+            kind: ConnectionPathKind::Direct,
+            relay_url: None,
+            direct_addr: Some("192.168.1.5:5000".to_owned()),
+        };
         let event = build_offer_event(
             super::ReceiverOfferPhase::Failed,
             "Sender".to_owned(),
             "Downloads".to_owned(),
             DeviceType::Laptop,
-            ConnectionPathKind::Direct,
+            Some(direct.clone()),
             0,
             0,
             0,
@@ -571,10 +655,7 @@ mod tests {
             )),
         );
 
-        assert_eq!(
-            event.connection_path.as_deref(),
-            Some(connection_path_label(ConnectionPathKind::Direct).as_str())
-        );
+        assert_eq!(event.connection_path, Some(direct));
         assert_eq!(
             event.error.as_ref().map(|error| error.kind()),
             Some(UserFacingErrorKind::Internal)
@@ -597,7 +678,11 @@ mod tests {
             "Maya".to_owned(),
             "Downloads".to_owned(),
             DeviceType::Laptop,
-            ConnectionPathKind::Direct,
+            Some(ConnectionPath {
+                kind: ConnectionPathKind::Direct,
+                relay_url: None,
+                direct_addr: Some("192.168.1.5:5000".to_owned()),
+            }),
             "session-1".to_owned(),
             1,
             1024,
@@ -615,14 +700,6 @@ fn device_type_to_str(value: DeviceType) -> String {
     match value {
         DeviceType::Phone => "phone".to_owned(),
         DeviceType::Laptop => "laptop".to_owned(),
-    }
-}
-
-fn connection_path_label(kind: ConnectionPathKind) -> String {
-    match kind {
-        ConnectionPathKind::Direct => "p2p".to_owned(),
-        ConnectionPathKind::Relay => "relay".to_owned(),
-        ConnectionPathKind::Unknown => "unknown".to_owned(),
     }
 }
 

@@ -1,18 +1,26 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use drift_core::protocol::{Identity, TransferRole};
 use drift_core::transfer::{
     SendRequest, Sender, SenderEvent as CoreSenderEvent, TransferOutcome as CoreTransferOutcome,
     TransferPlan,
 };
+use drift_core::util::snapshot_connection_path;
 use iroh::{Endpoint, RelayMode, endpoint::presets};
 use rand::random;
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::error::{AppError, AppResult, UserFacingError, UserFacingErrorKind};
-use crate::types::{SendEvent, SendPhase};
+use crate::types::{ConnectionPath, SendEvent, SendPhase};
+
+/// Interval between connection-path re-snapshots while a send session is active.
+const CONNECTION_PATH_POLL_INTERVAL: Duration = Duration::from_millis(1500);
+
+type StdMutex<T> = std::sync::Mutex<T>;
 
 use super::destination::SendDestination;
 use super::destination::{
@@ -138,6 +146,11 @@ impl SendSession {
             device_name: self.draft.config().device_name.clone(),
             device_type,
         };
+        let watcher_endpoint = endpoint.clone();
+        let peer_endpoint_id = resolved.peer_endpoint_id;
+        let initial_path = snapshot_connection_path(&watcher_endpoint, peer_endpoint_id).await;
+        let current_path: Arc<StdMutex<ConnectionPath>> = Arc::new(StdMutex::new(initial_path));
+        let last_event: Arc<StdMutex<Option<SendEvent>>> = Arc::new(StdMutex::new(None));
         let sender = Sender::new(
             endpoint,
             identity,
@@ -157,11 +170,24 @@ impl SendSession {
         let mut current_label = destination_label.clone();
         let mut current_plan: Option<TransferPlan> = None;
 
+        let (path_shutdown_tx, path_shutdown_rx) = oneshot::channel::<()>();
+        let path_watcher = spawn_send_path_watcher(
+            watcher_endpoint,
+            peer_endpoint_id,
+            event_tx.clone(),
+            Arc::clone(&current_path),
+            Arc::clone(&last_event),
+            path_shutdown_rx,
+        );
+
         while let Some(core_event) = core_events.next().await {
             let mapped =
                 map_sender_event(&mut current_label, &preview, &mut current_plan, core_event);
-            emit_send_event(&event_tx, mapped);
+            emit_send_event_stamped(&event_tx, &current_path, &last_event, mapped);
         }
+
+        let _ = path_shutdown_tx.send(());
+        let _ = path_watcher.await;
 
         let core_outcome = outcome_rx.await.map_err(|e| AppError::Internal {
             message: e.to_string(),
@@ -241,6 +267,73 @@ impl SendCancelHandle {
 
 pub(crate) fn emit_send_event(event_tx: &mpsc::UnboundedSender<SendEvent>, event: SendEvent) {
     let _ = event_tx.send(event);
+}
+
+fn emit_send_event_stamped(
+    event_tx: &mpsc::UnboundedSender<SendEvent>,
+    current_path: &Arc<StdMutex<ConnectionPath>>,
+    last_event: &Arc<StdMutex<Option<SendEvent>>>,
+    mut event: SendEvent,
+) {
+    event.connection_path = Some(current_path.lock().unwrap().clone());
+    *last_event.lock().unwrap() = Some(event.clone());
+    let _ = event_tx.send(event);
+}
+
+fn spawn_send_path_watcher(
+    endpoint: Endpoint,
+    peer_endpoint_id: iroh::EndpointId,
+    event_tx: mpsc::UnboundedSender<SendEvent>,
+    current_path: Arc<StdMutex<ConnectionPath>>,
+    last_event: Arc<StdMutex<Option<SendEvent>>>,
+    mut shutdown_rx: oneshot::Receiver<()>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(CONNECTION_PATH_POLL_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Skip the first immediate tick: the initial path was already snapshotted
+        // by the caller before this watcher was spawned.
+        interval.tick().await;
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                _ = interval.tick() => {
+                    let snapshot = snapshot_connection_path(&endpoint, peer_endpoint_id).await;
+                    let changed = {
+                        let mut guard = current_path.lock().unwrap();
+                        // Don't downgrade a known Direct/Relay path to Unknown — that
+                        // happens when iroh momentarily has no Active address (NAT
+                        // rebind, path migration), and would cause the UI badge to
+                        // flicker hide/show every poll.
+                        let downgrade_to_unknown = matches!(
+                            snapshot.kind,
+                            drift_core::util::ConnectionPathKind::Unknown
+                        ) && !matches!(
+                            guard.kind,
+                            drift_core::util::ConnectionPathKind::Unknown
+                        );
+                        if *guard != snapshot && !downgrade_to_unknown {
+                            *guard = snapshot.clone();
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if !changed {
+                        continue;
+                    }
+                    let last = last_event.lock().unwrap().clone();
+                    if let Some(mut event) = last {
+                        event.connection_path = Some(snapshot);
+                        *last_event.lock().unwrap() = Some(event.clone());
+                        if event_tx.send(event).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    })
 }
 
 pub(crate) fn failed_event_from_error(

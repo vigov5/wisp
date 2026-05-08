@@ -40,6 +40,8 @@ class ReceivingCard extends ConsumerWidget {
       );
     }
 
+    final connectionPath = progress.connectionPath ?? offer.connectionPath;
+
     return SizedBox.expand(
       child: TransferFlowLayout(
         statusLabel: 'Receiving',
@@ -53,6 +55,7 @@ class ReceivingCard extends ConsumerWidget {
           animate: animate,
           mode: SendingStripMode.transferring,
           progress: progress.progressFraction,
+          connectionPath: connectionPath,
         ),
         manifest: TransferManifestPanel(
           mode: TransferManifestPanelMode.liveList,

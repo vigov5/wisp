@@ -28,6 +28,8 @@ class _SendDestinationSelectorState
   bool _isScanningNearby = false;
   bool _nearbyScanCompletedOnce = false;
   bool _continuousMode = false;
+  Timer? _scanThrottleTimer;
+  Completer<void>? _scanThrottleCompleter;
 
   @override
   void initState() {
@@ -42,6 +44,13 @@ class _SendDestinationSelectorState
   @override
   void dispose() {
     _continuousMode = false;
+    _scanThrottleTimer?.cancel();
+    _scanThrottleTimer = null;
+    if (_scanThrottleCompleter != null &&
+        !_scanThrottleCompleter!.isCompleted) {
+      _scanThrottleCompleter!.complete();
+    }
+    _scanThrottleCompleter = null;
     super.dispose();
   }
 
@@ -62,8 +71,18 @@ class _SendDestinationSelectorState
     });
   }
 
+  /// Minimum wall time per loop iteration. Prevents the loop from spinning the
+  /// microtask queue when [scanNearby] returns instantly (e.g. in tests with a
+  /// fake source) — without this, `pumpAndSettle` never settles. In production
+  /// the Rust scan already takes ~3 s, so this gate adds no latency.
+  static const Duration _minLoopInterval = Duration(seconds: 1);
+
   Future<void> _runScanLoop() async {
+    final iteration = Stopwatch();
     while (mounted && _continuousMode) {
+      iteration
+        ..reset()
+        ..start();
       try {
         final devices = await ref
             .read(receiverServiceProvider.notifier)
@@ -99,6 +118,21 @@ class _SendDestinationSelectorState
         setState(() {
           _nearbyScanCompletedOnce = true;
         });
+      }
+      if (!mounted || !_continuousMode) break;
+      final remaining = _minLoopInterval - iteration.elapsed;
+      if (remaining > Duration.zero) {
+        final completer = Completer<void>();
+        _scanThrottleCompleter = completer;
+        _scanThrottleTimer = Timer(remaining, () {
+          if (!completer.isCompleted) {
+            completer.complete();
+          }
+        });
+        await completer.future;
+        _scanThrottleTimer?.cancel();
+        _scanThrottleTimer = null;
+        _scanThrottleCompleter = null;
       }
     }
     if (mounted) {

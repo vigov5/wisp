@@ -2,8 +2,9 @@ use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
 use drift_app::{
-    send::SendCancelHandle, AppError, SendConfig, SendDestination, SendDraft,
-    SendEvent as AppSendEvent, SendPhase as AppSendPhase, SendSession, SendSessionOutcome,
+    send::SendCancelHandle, AppError, ConnectionPath as AppConnectionPath, SendConfig,
+    SendDestination, SendDraft, SendEvent as AppSendEvent, SendPhase as AppSendPhase, SendSession,
+    SendSessionOutcome,
 };
 use drift_core::transfer::{TransferPhase, TransferPlan, TransferPlanFile, TransferSnapshot};
 use futures_lite::StreamExt;
@@ -44,6 +45,13 @@ pub struct SendTransferRequest {
 }
 
 #[derive(Debug, Clone)]
+pub struct SendConnectionPath {
+    pub kind: String,
+    pub relay_url: Option<String>,
+    pub direct_addr: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct SendTransferEvent {
     pub phase: SendTransferPhase,
     pub destination_label: String,
@@ -54,6 +62,7 @@ pub struct SendTransferEvent {
     pub plan: Option<TransferPlanData>,
     pub snapshot: Option<TransferSnapshotData>,
     pub remote_device_type: Option<String>,
+    pub connection_path: Option<SendConnectionPath>,
     pub error: Option<crate::api::error::UserFacingErrorData>,
 }
 
@@ -194,6 +203,7 @@ fn terminal_event_for_app_error(destination_label: String, error: AppError) -> S
         plan: None,
         snapshot: None,
         remote_device_type: None,
+        connection_path: None,
         error: Some(internal_user_facing_error(title, error.to_string())),
     }
 }
@@ -209,6 +219,7 @@ fn terminal_internal_failure_event(destination_label: String, detail: String) ->
         plan: None,
         snapshot: None,
         remote_device_type: None,
+        connection_path: None,
         error: Some(internal_user_facing_error("Transfer failed", detail)),
     }
 }
@@ -255,7 +266,16 @@ fn map_event(event: AppSendEvent) -> SendTransferEvent {
         plan: event.plan.map(map_plan),
         snapshot: event.snapshot.map(map_snapshot),
         remote_device_type: event.remote_device_type,
+        connection_path: event.connection_path.map(map_connection_path),
         error: map_optional_user_facing_error(event.error),
+    }
+}
+
+fn map_connection_path(path: AppConnectionPath) -> SendConnectionPath {
+    SendConnectionPath {
+        kind: path.label().to_owned(),
+        relay_url: path.relay_url,
+        direct_addr: path.direct_addr,
     }
 }
 
@@ -306,8 +326,12 @@ fn map_phase(phase: TransferPhase) -> TransferPhaseData {
 #[cfg(test)]
 mod tests {
     use drift_app::AppError;
+    use drift_app::{ConnectionPath, ConnectionPathKind, SendEvent as AppSendEvent, SendPhase};
 
-    use super::{terminal_event_for_app_error, terminal_internal_failure_event, SendTransferPhase};
+    use super::{
+        map_event, terminal_event_for_app_error, terminal_internal_failure_event,
+        SendTransferPhase,
+    };
 
     #[test]
     fn cancelled_app_error_maps_to_cancelled_terminal_event() {
@@ -333,5 +357,56 @@ mod tests {
         assert_eq!(event.phase, SendTransferPhase::Failed);
         assert_eq!(event.status_message, "Transfer failed.");
         assert!(event.error.is_some());
+    }
+
+    fn base_app_send_event(connection_path: Option<ConnectionPath>) -> AppSendEvent {
+        AppSendEvent {
+            phase: SendPhase::Sending,
+            destination_label: "Receiver".to_owned(),
+            status_message: "Sending".to_owned(),
+            item_count: 1,
+            total_size: 100,
+            bytes_sent: 50,
+            plan: None,
+            snapshot: None,
+            remote_device_type: None,
+            connection_path,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn map_event_propagates_direct_connection_path() {
+        let event = base_app_send_event(Some(ConnectionPath {
+            kind: ConnectionPathKind::Direct,
+            relay_url: None,
+            direct_addr: Some("192.168.1.5:5000".to_owned()),
+        }));
+        let mapped = map_event(event);
+        let path = mapped.connection_path.expect("connection_path present");
+        assert_eq!(path.kind, "p2p");
+        assert!(path.relay_url.is_none());
+        assert_eq!(path.direct_addr.as_deref(), Some("192.168.1.5:5000"));
+    }
+
+    #[test]
+    fn map_event_propagates_relay_connection_path_with_url() {
+        let event = base_app_send_event(Some(ConnectionPath {
+            kind: ConnectionPathKind::Relay,
+            relay_url: Some("https://relay.example/".to_owned()),
+            direct_addr: None,
+        }));
+        let mapped = map_event(event);
+        let path = mapped.connection_path.expect("connection_path present");
+        assert_eq!(path.kind, "relay");
+        assert_eq!(path.relay_url.as_deref(), Some("https://relay.example/"));
+        assert!(path.direct_addr.is_none());
+    }
+
+    #[test]
+    fn map_event_passes_through_none_connection_path() {
+        let event = base_app_send_event(None);
+        let mapped = map_event(event);
+        assert!(mapped.connection_path.is_none());
     }
 }

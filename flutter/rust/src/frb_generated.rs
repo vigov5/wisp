@@ -835,11 +835,37 @@ impl SseDecode for Option<String> {
     }
 }
 
+impl SseDecode for Option<crate::api::receiver::ReceiverConnectionPath> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::receiver::ReceiverConnectionPath>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::receiver::ReceiverRegistration> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<crate::api::receiver::ReceiverRegistration>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::sender::SendConnectionPath> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::sender::SendConnectionPath>::sse_decode(
                 deserializer,
             ));
         } else {
@@ -909,6 +935,20 @@ impl SseDecode for Option<crate::api::error::UserFacingErrorData> {
     }
 }
 
+impl SseDecode for crate::api::receiver::ReceiverConnectionPath {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_kind = <String>::sse_decode(deserializer);
+        let mut var_relayUrl = <Option<String>>::sse_decode(deserializer);
+        let mut var_directAddr = <Option<String>>::sse_decode(deserializer);
+        return crate::api::receiver::ReceiverConnectionPath {
+            kind: var_kind,
+            relay_url: var_relayUrl,
+            direct_addr: var_directAddr,
+        };
+    }
+}
+
 impl SseDecode for crate::api::receiver::ReceiverPairingState {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -952,6 +992,8 @@ impl SseDecode for crate::api::receiver::ReceiverTransferEvent {
         let mut var_totalSizeLabel = <String>::sse_decode(deserializer);
         let mut var_files =
             <Vec<crate::api::receiver::ReceiverTransferFile>>::sse_decode(deserializer);
+        let mut var_connectionPath =
+            <Option<crate::api::receiver::ReceiverConnectionPath>>::sse_decode(deserializer);
         let mut var_error =
             <Option<crate::api::error::UserFacingErrorData>>::sse_decode(deserializer);
         return crate::api::receiver::ReceiverTransferEvent {
@@ -968,6 +1010,7 @@ impl SseDecode for crate::api::receiver::ReceiverTransferEvent {
             snapshot: var_snapshot,
             total_size_label: var_totalSizeLabel,
             files: var_files,
+            connection_path: var_connectionPath,
             error: var_error,
         };
     }
@@ -1034,6 +1077,20 @@ impl SseDecode for crate::api::preview::SelectionPreview {
     }
 }
 
+impl SseDecode for crate::api::sender::SendConnectionPath {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_kind = <String>::sse_decode(deserializer);
+        let mut var_relayUrl = <Option<String>>::sse_decode(deserializer);
+        let mut var_directAddr = <Option<String>>::sse_decode(deserializer);
+        return crate::api::sender::SendConnectionPath {
+            kind: var_kind,
+            relay_url: var_relayUrl,
+            direct_addr: var_directAddr,
+        };
+    }
+}
+
 impl SseDecode for crate::api::sender::SendTransferEvent {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1048,6 +1105,8 @@ impl SseDecode for crate::api::sender::SendTransferEvent {
         let mut var_snapshot =
             <Option<crate::api::transfer::TransferSnapshotData>>::sse_decode(deserializer);
         let mut var_remoteDeviceType = <Option<String>>::sse_decode(deserializer);
+        let mut var_connectionPath =
+            <Option<crate::api::sender::SendConnectionPath>>::sse_decode(deserializer);
         let mut var_error =
             <Option<crate::api::error::UserFacingErrorData>>::sse_decode(deserializer);
         return crate::api::sender::SendTransferEvent {
@@ -1060,6 +1119,7 @@ impl SseDecode for crate::api::sender::SendTransferEvent {
             plan: var_plan,
             snapshot: var_snapshot,
             remote_device_type: var_remoteDeviceType,
+            connection_path: var_connectionPath,
             error: var_error,
         };
     }
@@ -1355,6 +1415,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::lan::NearbyReceiverInfo>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::receiver::ReceiverConnectionPath {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.kind.into_into_dart().into_dart(),
+            self.relay_url.into_into_dart().into_dart(),
+            self.direct_addr.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::receiver::ReceiverConnectionPath
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::receiver::ReceiverConnectionPath>
+    for crate::api::receiver::ReceiverConnectionPath
+{
+    fn into_into_dart(self) -> crate::api::receiver::ReceiverConnectionPath {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::receiver::ReceiverPairingState {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -1413,6 +1495,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::receiver::ReceiverTransferEve
             self.snapshot.into_into_dart().into_dart(),
             self.total_size_label.into_into_dart().into_dart(),
             self.files.into_into_dart().into_dart(),
+            self.connection_path.into_into_dart().into_dart(),
             self.error.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -1523,6 +1606,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::preview::SelectionPreview>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::sender::SendConnectionPath {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.kind.into_into_dart().into_dart(),
+            self.relay_url.into_into_dart().into_dart(),
+            self.direct_addr.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::sender::SendConnectionPath
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::sender::SendConnectionPath>
+    for crate::api::sender::SendConnectionPath
+{
+    fn into_into_dart(self) -> crate::api::sender::SendConnectionPath {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::sender::SendTransferEvent {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -1535,6 +1640,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::sender::SendTransferEvent {
             self.plan.into_into_dart().into_dart(),
             self.snapshot.into_into_dart().into_dart(),
             self.remote_device_type.into_into_dart().into_dart(),
+            self.connection_path.into_into_dart().into_dart(),
             self.error.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -1904,12 +2010,32 @@ impl SseEncode for Option<String> {
     }
 }
 
+impl SseEncode for Option<crate::api::receiver::ReceiverConnectionPath> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::receiver::ReceiverConnectionPath>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::receiver::ReceiverRegistration> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::receiver::ReceiverRegistration>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::sender::SendConnectionPath> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::sender::SendConnectionPath>::sse_encode(value, serializer);
         }
     }
 }
@@ -1964,6 +2090,15 @@ impl SseEncode for Option<crate::api::error::UserFacingErrorData> {
     }
 }
 
+impl SseEncode for crate::api::receiver::ReceiverConnectionPath {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.kind, serializer);
+        <Option<String>>::sse_encode(self.relay_url, serializer);
+        <Option<String>>::sse_encode(self.direct_addr, serializer);
+    }
+}
+
 impl SseEncode for crate::api::receiver::ReceiverPairingState {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1996,6 +2131,10 @@ impl SseEncode for crate::api::receiver::ReceiverTransferEvent {
         <Option<crate::api::transfer::TransferSnapshotData>>::sse_encode(self.snapshot, serializer);
         <String>::sse_encode(self.total_size_label, serializer);
         <Vec<crate::api::receiver::ReceiverTransferFile>>::sse_encode(self.files, serializer);
+        <Option<crate::api::receiver::ReceiverConnectionPath>>::sse_encode(
+            self.connection_path,
+            serializer,
+        );
         <Option<crate::api::error::UserFacingErrorData>>::sse_encode(self.error, serializer);
     }
 }
@@ -2049,6 +2188,15 @@ impl SseEncode for crate::api::preview::SelectionPreview {
     }
 }
 
+impl SseEncode for crate::api::sender::SendConnectionPath {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.kind, serializer);
+        <Option<String>>::sse_encode(self.relay_url, serializer);
+        <Option<String>>::sse_encode(self.direct_addr, serializer);
+    }
+}
+
 impl SseEncode for crate::api::sender::SendTransferEvent {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -2061,6 +2209,10 @@ impl SseEncode for crate::api::sender::SendTransferEvent {
         <Option<crate::api::transfer::TransferPlanData>>::sse_encode(self.plan, serializer);
         <Option<crate::api::transfer::TransferSnapshotData>>::sse_encode(self.snapshot, serializer);
         <Option<String>>::sse_encode(self.remote_device_type, serializer);
+        <Option<crate::api::sender::SendConnectionPath>>::sse_encode(
+            self.connection_path,
+            serializer,
+        );
         <Option<crate::api::error::UserFacingErrorData>>::sse_encode(self.error, serializer);
     }
 }

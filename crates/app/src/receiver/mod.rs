@@ -14,7 +14,8 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::error::{AppError, AppResult};
 use crate::types::{
-    NearbyReceiver, PairingCodeState, ReceiverConfig, ReceiverOfferEvent, ReceiverRegistration,
+    ConnectionPath, NearbyReceiver, PairingCodeState, ReceiverConfig, ReceiverOfferEvent,
+    ReceiverRegistration,
 };
 use drift_core::protocol::{ALPN, DeviceType};
 
@@ -50,6 +51,10 @@ pub enum ReceiverEvent {
     SetupCompleted(ReceiverRegistration),
     DiscoverabilityChanged { requested: bool, active: bool },
     OfferUpdated(ReceiverOfferEvent),
+    ConnectionPathChanged {
+        offer_id: u64,
+        connection_path: ConnectionPath,
+    },
     Shutdown,
 }
 

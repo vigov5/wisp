@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../theme/drift_theme.dart';
+import '../../transfers/application/connection_path.dart';
 import '../../transfers/presentation/widgets/sending_connection_strip.dart';
 import '../../transfers/presentation/widgets/transfer_presentation_helpers.dart';
 import '../application/model.dart';
@@ -74,6 +75,7 @@ class SendTransferPageData {
     required this.stripMode,
     this.durationLabel,
     this.averageSpeedLabel,
+    this.connectionPath,
   });
 
   final SendTransferPhaseVisualData visual;
@@ -90,6 +92,7 @@ class SendTransferPageData {
   final SendingStripMode? stripMode;
   final String? durationLabel;
   final String? averageSpeedLabel;
+  final ConnectionPathInfo? connectionPath;
 }
 
 SendTransferPageData buildSendTransferPageData({
@@ -140,6 +143,7 @@ SendTransferPageData buildSendTransferPageData({
       averageSpeedLabel: state is SendStateResult
           ? state.result.averageSpeedLabel
           : null,
+      connectionPath: transfer.connectionPath,
     ),
   };
 }

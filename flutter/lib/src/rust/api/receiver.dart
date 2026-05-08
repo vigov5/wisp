@@ -8,9 +8,9 @@ import 'error.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'transfer.dart';
 
-// These functions are ignored because they are not marked as `pub`: `current_service`, `ensure_receiver_service`, `existing_service_for_config`, `map_event`, `map_file_row`, `map_pairing_state`, `map_phase`, `map_plan_file`, `map_plan`, `map_registration`, `map_snapshot`, `pairing_registration`, `replace_pairing_task`, `replace_updates_task`, `scan_nearby_with_receiver`, `set_discoverable`
+// These functions are ignored because they are not marked as `pub`: `current_service`, `ensure_receiver_service`, `existing_service_for_config`, `map_connection_path`, `map_event`, `map_file_row`, `map_pairing_state`, `map_phase`, `map_plan_file`, `map_plan`, `map_registration`, `map_snapshot`, `pairing_registration`, `replace_pairing_task`, `replace_updates_task`, `scan_nearby_with_receiver`, `set_discoverable`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `BridgeReceiverConfig`, `BridgeReceiverState`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 Future<ReceiverRegistration> registerReceiver({
   String? serverUrl,
@@ -66,6 +66,30 @@ Future<void> respondToReceiverOffer({required bool accept}) =>
 Future<void> cancelReceiverTransfer() =>
     RustLib.instance.api.crateApiReceiverCancelReceiverTransfer();
 
+class ReceiverConnectionPath {
+  final String kind;
+  final String? relayUrl;
+  final String? directAddr;
+
+  const ReceiverConnectionPath({
+    required this.kind,
+    this.relayUrl,
+    this.directAddr,
+  });
+
+  @override
+  int get hashCode => kind.hashCode ^ relayUrl.hashCode ^ directAddr.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ReceiverConnectionPath &&
+          runtimeType == other.runtimeType &&
+          kind == other.kind &&
+          relayUrl == other.relayUrl &&
+          directAddr == other.directAddr;
+}
+
 class ReceiverPairingState {
   final String? code;
   final String? expiresAt;
@@ -116,6 +140,7 @@ class ReceiverTransferEvent {
   final TransferSnapshotData? snapshot;
   final String totalSizeLabel;
   final List<ReceiverTransferFile> files;
+  final ReceiverConnectionPath? connectionPath;
   final UserFacingErrorData? error;
 
   const ReceiverTransferEvent({
@@ -132,6 +157,7 @@ class ReceiverTransferEvent {
     this.snapshot,
     required this.totalSizeLabel,
     required this.files,
+    this.connectionPath,
     this.error,
   });
 
@@ -150,6 +176,7 @@ class ReceiverTransferEvent {
       snapshot.hashCode ^
       totalSizeLabel.hashCode ^
       files.hashCode ^
+      connectionPath.hashCode ^
       error.hashCode;
 
   @override
@@ -170,6 +197,7 @@ class ReceiverTransferEvent {
           snapshot == other.snapshot &&
           totalSizeLabel == other.totalSizeLabel &&
           files == other.files &&
+          connectionPath == other.connectionPath &&
           error == other.error;
 }
 

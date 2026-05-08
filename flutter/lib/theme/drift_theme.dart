@@ -14,6 +14,8 @@ const Color kAccentCyanHover = Color(0x1F79B8C6);
 const Color kAccentCyanPressed = Color(0x3379B8C6);
 const Color kAccentWarm = Color(0xFFF2E7BA);
 const Color kAccentWarmSurface = Color(0x14F2E7BA);
+const Color kAccentDirect = Color(0xFF4DA372);
+const Color kAccentRelay = Color(0xFFC78F2A);
 
 const Color kPrimary = kAccentCyanStrong;
 const Color kPrimaryDark = kAccentCyanStrong;

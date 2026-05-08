@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../features/transfers/application/connection_path.dart';
 import '../src/rust/api/error.dart' as rust_error;
 import '../src/rust/api/sender.dart' as rust_sender;
 import '../src/rust/api/transfer.dart' as rust_transfer;
@@ -60,6 +61,7 @@ class SendTransferUpdate {
     this.plan,
     this.snapshot,
     this.remoteDeviceType,
+    this.connectionPath,
     this.error,
   });
 
@@ -170,6 +172,7 @@ class SendTransferUpdate {
   final rust_transfer.TransferPlanData? plan;
   final rust_transfer.TransferSnapshotData? snapshot;
   final String? remoteDeviceType;
+  final ConnectionPathInfo? connectionPath;
   final SendTransferErrorData? error;
 }
 
@@ -265,6 +268,7 @@ class LocalSendTransferSource implements SendTransferSource {
       plan: event.plan,
       snapshot: event.snapshot,
       remoteDeviceType: event.remoteDeviceType,
+      connectionPath: ConnectionPathInfo.fromSender(event.connectionPath),
       error: _mapError(event.error),
     );
   }

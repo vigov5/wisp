@@ -4,6 +4,7 @@ use crate::error::UserFacingError;
 
 pub use drift_core::fs_plan::ConflictPolicy;
 pub use drift_core::transfer::{TransferPlan, TransferSnapshot};
+pub use drift_core::util::{ConnectionPath, ConnectionPathKind};
 use iroh::SecretKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +36,7 @@ pub struct SendEvent {
     pub plan: Option<TransferPlan>,
     pub snapshot: Option<TransferSnapshot>,
     pub remote_device_type: Option<String>,
-    pub connection_path: Option<String>,
+    pub connection_path: Option<ConnectionPath>,
     pub error: Option<UserFacingError>,
 }
 
@@ -90,7 +91,7 @@ pub struct ReceiverOfferEvent {
     pub bytes_received: u64,
     pub plan: Option<TransferPlan>,
     pub snapshot: Option<TransferSnapshot>,
-    pub connection_path: Option<String>,
+    pub connection_path: Option<ConnectionPath>,
     pub total_size_label: String,
     pub files: Vec<ReceiverOfferFile>,
     pub error: Option<UserFacingError>,

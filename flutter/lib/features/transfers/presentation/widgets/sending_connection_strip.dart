@@ -3,6 +3,8 @@ import 'dart:math' show max, min;
 import 'package:flutter/material.dart';
 
 import '../../../../theme/drift_theme.dart';
+import '../../application/connection_path.dart';
+import 'connection_path_badge.dart';
 
 enum SendingStripMode { looping, waitingOnRecipient, transferring }
 
@@ -16,6 +18,7 @@ class SendingConnectionStrip extends StatefulWidget {
     required this.mode,
     this.remoteDeviceType,
     this.transferProgress = 0.0,
+    this.connectionPath,
   });
 
   final String localLabel;
@@ -25,6 +28,7 @@ class SendingConnectionStrip extends StatefulWidget {
   final SendingStripMode mode;
   final String? remoteDeviceType;
   final double transferProgress;
+  final ConnectionPathInfo? connectionPath;
 
   @override
   State<SendingConnectionStrip> createState() => _SendingConnectionStripState();
@@ -87,7 +91,7 @@ class _SendingConnectionStripState extends State<SendingConnectionStrip>
     final remoteIsPhone =
         (widget.remoteDeviceType ?? 'phone').toLowerCase() == 'phone';
 
-    return Row(
+    final row = Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         SizedBox(
@@ -166,6 +170,25 @@ class _SendingConnectionStripState extends State<SendingConnectionStrip>
             ],
           ),
         ),
+      ],
+    );
+
+    final badge = widget.connectionPath == null
+        ? null
+        : ConnectionPathBadge(path: widget.connectionPath);
+
+    if (badge == null) {
+      return row;
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: badge,
+        ),
+        row,
       ],
     );
   }

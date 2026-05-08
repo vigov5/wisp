@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../platform/send_transfer_source.dart';
 import '../../../src/rust/api/transfer.dart' as rust_transfer;
+import '../../transfers/application/connection_path.dart';
 
 enum SendTransferPhase {
   connecting,
@@ -28,6 +29,7 @@ class SendTransferState {
     this.plan,
     this.snapshot,
     this.remoteDeviceType,
+    this.connectionPath,
     this.error,
   });
 
@@ -55,6 +57,7 @@ class SendTransferState {
   final rust_transfer.TransferPlanData? plan;
   final rust_transfer.TransferSnapshotData? snapshot;
   final String? remoteDeviceType;
+  final ConnectionPathInfo? connectionPath;
   final SendTransferErrorData? error;
 
   bool get isTerminal =>
@@ -74,6 +77,7 @@ class SendTransferState {
     rust_transfer.TransferPlanData? plan,
     rust_transfer.TransferSnapshotData? snapshot,
     String? remoteDeviceType,
+    ConnectionPathInfo? connectionPath,
     SendTransferErrorData? error,
   }) {
     return SendTransferState(
@@ -87,6 +91,7 @@ class SendTransferState {
       plan: plan ?? this.plan,
       snapshot: snapshot ?? this.snapshot,
       remoteDeviceType: remoteDeviceType ?? this.remoteDeviceType,
+      connectionPath: connectionPath ?? this.connectionPath,
       error: error ?? this.error,
     );
   }

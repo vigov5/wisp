@@ -177,6 +177,7 @@ class _TransferStateCard extends StatelessWidget {
         mode: stripMode,
         progress: (viewData.progressFraction ?? 0.0).clamp(0.0, 1.0),
         animate: viewData.visual.showSpinner,
+        connectionPath: viewData.connectionPath,
       ),
       manifest: manifestItems.isEmpty
           ? null

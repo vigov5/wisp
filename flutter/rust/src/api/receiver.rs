@@ -2,10 +2,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use drift_app::{
-    ConflictPolicy, OfferDecision, PairingCodeState, ReceiverConfig,
-    ReceiverEvent as AppReceiverEvent, ReceiverOfferEvent as AppReceiverOfferEvent,
-    ReceiverOfferFile as AppReceiverOfferFile, ReceiverOfferPhase as AppReceiverOfferPhase,
-    ReceiverRegistration as AppReceiverRegistration, ReceiverService,
+    ConflictPolicy, ConnectionPath as AppConnectionPath, OfferDecision, PairingCodeState,
+    ReceiverConfig, ReceiverEvent as AppReceiverEvent,
+    ReceiverOfferEvent as AppReceiverOfferEvent, ReceiverOfferFile as AppReceiverOfferFile,
+    ReceiverOfferPhase as AppReceiverOfferPhase, ReceiverRegistration as AppReceiverRegistration,
+    ReceiverService,
 };
 use drift_core::transfer::{TransferPhase, TransferPlan, TransferPlanFile, TransferSnapshot};
 use iroh::SecretKey;
@@ -72,6 +73,13 @@ pub struct ReceiverTransferFile {
 }
 
 #[derive(Clone, Debug)]
+pub struct ReceiverConnectionPath {
+    pub kind: String,
+    pub relay_url: Option<String>,
+    pub direct_addr: Option<String>,
+}
+
+#[derive(Clone, Debug)]
 pub struct ReceiverTransferEvent {
     pub phase: ReceiverTransferPhase,
     pub sender_name: String,
@@ -86,6 +94,7 @@ pub struct ReceiverTransferEvent {
     pub snapshot: Option<TransferSnapshotData>,
     pub total_size_label: String,
     pub files: Vec<ReceiverTransferFile>,
+    pub connection_path: Option<ReceiverConnectionPath>,
     pub error: Option<crate::api::error::UserFacingErrorData>,
 }
 
@@ -366,10 +375,32 @@ fn replace_updates_task(
 ) {
     let mut event_rx = service.subscribe_events();
     let task = RUNTIME.spawn(async move {
+        let mut last_event: Option<ReceiverTransferEvent> = None;
         loop {
             match event_rx.recv().await {
                 Ok(AppReceiverEvent::OfferUpdated(event)) => {
-                    let _ = updates.add(map_event(event));
+                    let mapped = map_event(event);
+                    if matches!(
+                        mapped.phase,
+                        ReceiverTransferPhase::Completed
+                            | ReceiverTransferPhase::Cancelled
+                            | ReceiverTransferPhase::Failed
+                            | ReceiverTransferPhase::Declined
+                    ) {
+                        last_event = None;
+                    } else {
+                        last_event = Some(mapped.clone());
+                    }
+                    let _ = updates.add(mapped);
+                }
+                Ok(AppReceiverEvent::ConnectionPathChanged {
+                    offer_id: _,
+                    connection_path,
+                }) => {
+                    if let Some(cached) = last_event.as_mut() {
+                        cached.connection_path = Some(map_connection_path(connection_path));
+                        let _ = updates.add(cached.clone());
+                    }
                 }
                 Ok(AppReceiverEvent::Shutdown) => break,
                 Ok(AppReceiverEvent::RegistrationUpdated(_))
@@ -496,7 +527,16 @@ fn map_event(event: AppReceiverOfferEvent) -> ReceiverTransferEvent {
         snapshot: event.snapshot.map(map_snapshot),
         total_size_label: event.total_size_label,
         files: event.files.into_iter().map(map_file_row).collect(),
+        connection_path: event.connection_path.map(map_connection_path),
         error: map_optional_user_facing_error(event.error),
+    }
+}
+
+fn map_connection_path(path: AppConnectionPath) -> ReceiverConnectionPath {
+    ReceiverConnectionPath {
+        kind: path.label().to_owned(),
+        relay_url: path.relay_url,
+        direct_addr: path.direct_addr,
     }
 }
 

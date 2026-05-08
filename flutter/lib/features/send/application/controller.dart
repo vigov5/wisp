@@ -366,6 +366,8 @@ class SendController extends _$SendController {
       snapshot: update.snapshot ?? currentState.transfer.snapshot,
       remoteDeviceType:
           update.remoteDeviceType ?? currentState.transfer.remoteDeviceType,
+      connectionPath:
+          update.connectionPath ?? currentState.transfer.connectionPath,
       error: update.error ?? currentState.transfer.error,
     );
 
