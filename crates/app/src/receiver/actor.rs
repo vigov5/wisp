@@ -195,19 +195,26 @@ pub(super) async fn run_receiver_actor(
                         .map(|receivers| {
                             receivers
                                 .into_iter()
-                                .map(|receiver| NearbyReceiver {
-                                    fullname: receiver.fullname,
-                                    label: receiver.label,
-                                    device_type: match receiver.device_type {
-                                        drift_core::protocol::DeviceType::Phone => {
-                                            "phone".to_owned()
-                                        }
-                                        drift_core::protocol::DeviceType::Laptop => {
-                                            "laptop".to_owned()
-                                        }
-                                    },
-                                    code: receiver.code,
-                                    ticket: receiver.ticket,
+                                .map(|receiver| {
+                                    let endpoint_id =
+                                        drift_core::util::decode_ticket(&receiver.ticket)
+                                            .map(|a| a.id.to_string())
+                                            .unwrap_or_default();
+                                    NearbyReceiver {
+                                        fullname: receiver.fullname,
+                                        label: receiver.label,
+                                        device_type: match receiver.device_type {
+                                            drift_core::protocol::DeviceType::Phone => {
+                                                "phone".to_owned()
+                                            }
+                                            drift_core::protocol::DeviceType::Laptop => {
+                                                "laptop".to_owned()
+                                            }
+                                        },
+                                        code: receiver.code,
+                                        ticket: receiver.ticket,
+                                        endpoint_id,
+                                    }
                                 })
                                 .collect()
                         });

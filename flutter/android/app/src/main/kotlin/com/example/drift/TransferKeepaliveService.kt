@@ -41,20 +41,25 @@ class TransferKeepaliveService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
+        // Android 12+ kills the process with ForegroundServiceDidNotStartInTime
+        // if `startForegroundService()` is followed by anything other than
+        // `startForeground()` within ~5s.  Even when handling ACTION_STOP,
+        // the framework counts the service as "started as FGS" the moment
+        // it was launched via startForegroundService(), so we MUST call
+        // startForeground() before stopping — otherwise the system kills us.
         val title = intent?.getStringExtra(EXTRA_TITLE) ?: "Drift"
         val body = intent?.getStringExtra(EXTRA_BODY) ?: ""
         val notif = buildNotification(title, body)
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             @Suppress("DEPRECATION")
             startForeground(NOTIFICATION_ID, notif)
+        }
+
+        if (intent?.action == ACTION_STOP) {
+            stopSelf()
+            return START_NOT_STICKY
         }
 
         if (!locksHeld) {

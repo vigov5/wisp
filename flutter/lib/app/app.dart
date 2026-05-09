@@ -7,8 +7,9 @@ import 'package:go_router/go_router.dart';
 import '../features/receive/application/service.dart';
 import '../features/send/application/controller.dart';
 import '../features/send/application/state.dart';
+import '../features/transfers/application/controller.dart';
 import '../features/transfers/application/service.dart';
-import '../features/transfers/application/state.dart';
+import '../features/transfers/application/state.dart' as transfer_state;
 import 'app_router.dart';
 import '../theme/drift_theme.dart';
 import '../platform/android/keepalive_lifecycle_observer.dart';
@@ -51,7 +52,7 @@ class _DriftAppState extends ConsumerState<DriftApp> {
         sendState is SendStateTransferring && !sendState.transfer.isTerminal;
     final receiveActive =
         ref.read(transfersServiceProvider).phase ==
-        TransferSessionPhase.receiving;
+        transfer_state.TransferSessionPhase.receiving;
     return sendActive || receiveActive;
   }
 
@@ -78,6 +79,32 @@ class _DriftAppState extends ConsumerState<DriftApp> {
 
   @override
   Widget build(BuildContext context) {
+    // When an incoming offer arrives while the user is on any other screen
+    // (Settings, Saved devices, QR pairing/scan, deep dialogs, etc.), pop
+    // anything stacked on top of the GoRouter and push the receive-transfer
+    // route so the user sees the confirm prompt immediately.
+    ref.listen<transfer_state.TransferSessionState>(transfersViewStateProvider, (
+      prev,
+      next,
+    ) {
+      final wasIdle =
+          prev == null || prev.phase == transfer_state.TransferSessionPhase.idle;
+      final nowActive =
+          next.phase != transfer_state.TransferSessionPhase.idle;
+      if (!wasIdle || !nowActive) return;
+
+      final currentPath = _router.routeInformationProvider.value.uri.path;
+      if (currentPath == AppRoutePaths.receiveTransfer) return;
+
+      // Dismiss any modal routes pushed via Navigator (QrPairingPage,
+      // QrScanPage, etc.) so the receive-transfer route lands on top.
+      final navContext = _router.routerDelegate.navigatorKey.currentContext;
+      if (navContext != null) {
+        Navigator.of(navContext).popUntil((route) => route.isFirst);
+      }
+      _router.push(AppRoutePaths.receiveTransfer);
+    });
+
     return MaterialApp.router(
       title: 'Drift',
       debugShowCheckedModeBanner: false,

@@ -3,7 +3,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use drift_app::{
     ConflictPolicy, ConnectionPath as AppConnectionPath, OfferDecision, PairingCodeState,
-    ReceiverConfig, ReceiverEvent as AppReceiverEvent,
+    QrPairingInfo as AppQrPairingInfo, ReceiverConfig, ReceiverEvent as AppReceiverEvent,
     ReceiverOfferEvent as AppReceiverOfferEvent, ReceiverOfferFile as AppReceiverOfferFile,
     ReceiverOfferPhase as AppReceiverOfferPhase, ReceiverRegistration as AppReceiverRegistration,
     ReceiverService, identity as app_identity,
@@ -131,6 +131,37 @@ pub fn current_receiver_registration() -> Option<ReceiverRegistration> {
     current_service()
         .and_then(|service| pairing_registration(&service.pairing_code()))
         .map(map_registration)
+}
+
+#[derive(Clone, Debug)]
+pub struct QrPairingInfoData {
+    pub ticket: String,
+    pub lan_ips: Vec<String>,
+}
+
+/// Returns a ticket plus the LAN-routable IPs of the local receiver.
+/// The receiver service must already be running.  Designed for the QR
+/// pairing screen — the ticket is built from currently-known addresses
+/// without waiting on relay handshake, so it works on offline-LAN.
+pub fn current_qr_pairing_info()
+-> Result<QrPairingInfoData, crate::api::error::UserFacingErrorData> {
+    let Some(service) = current_service() else {
+        return Err(internal_user_facing_error(
+            "Receiver unavailable",
+            "The receiver is not running.",
+        ));
+    };
+    service
+        .qr_pairing_info()
+        .map(map_qr_pairing_info)
+        .map_err(|err| internal_user_facing_error("Couldn't build QR ticket", err.to_string()))
+}
+
+fn map_qr_pairing_info(info: AppQrPairingInfo) -> QrPairingInfoData {
+    QrPairingInfoData {
+        ticket: info.ticket,
+        lan_ips: info.lan_ips,
+    }
 }
 
 pub fn watch_receiver_pairing(
@@ -460,6 +491,13 @@ fn current_service() -> Option<Arc<ReceiverService>> {
         .lock()
         .ok()
         .and_then(|guard| guard.as_ref().map(|state| state.service.clone()))
+}
+
+/// Used by the sender bridge to share the long-lived receiver endpoint
+/// instead of binding a second iroh instance with the same secret key
+/// (which would race with the receiver for the relay slot).
+pub(crate) fn current_service_endpoint() -> Option<iroh::Endpoint> {
+    current_service().map(|service| service.endpoint())
 }
 
 fn set_discoverable(enabled: bool) -> Result<(), crate::api::error::UserFacingErrorData> {

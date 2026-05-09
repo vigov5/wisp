@@ -52,15 +52,45 @@ pub struct SendCancelHandle {
 
 pub type SendEventStream = UnboundedReceiverStream<SendEvent>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct SendSession {
     draft: SendDraft,
     destination: SendDestination,
+    /// Endpoint to use for the outbound transfer.
+    ///
+    /// `Some(_)` → reuse the caller's already-bound endpoint (shared with
+    /// the receiver service so we don't double-register on the relay with
+    /// the same EndpointId).
+    ///
+    /// `None` → bind a fresh endpoint inside `drive()` using the persistent
+    /// app identity.  Kept as a fallback for tests / one-off senders that
+    /// don't have a long-lived endpoint to share.
+    endpoint: Option<Endpoint>,
 }
 
 impl SendSession {
     pub fn new(draft: SendDraft, destination: SendDestination) -> Self {
-        Self { draft, destination }
+        Self {
+            draft,
+            destination,
+            endpoint: None,
+        }
+    }
+
+    /// Same as [`new`] but reuses the supplied iroh endpoint instead of
+    /// binding a new one.  Pass the receiver service's endpoint so the
+    /// app holds at most one iroh instance per process (avoids relay
+    /// "duplicate endpoint id" errors).
+    pub fn with_endpoint(
+        draft: SendDraft,
+        destination: SendDestination,
+        endpoint: Endpoint,
+    ) -> Self {
+        Self {
+            draft,
+            destination,
+            endpoint: Some(endpoint),
+        }
     }
 
     pub fn draft(&self) -> &SendDraft {
@@ -128,19 +158,23 @@ impl SendSession {
         destination_label = resolved.destination_label;
 
         let device_type = parse_device_type(&self.draft.config().device_type)?;
-        let endpoint = Endpoint::builder(presets::N0)
-            .alpns(vec![
-                drift_core::protocol::ALPN.to_vec(),
-                iroh_blobs::ALPN.to_vec(),
-            ])
-            .relay_mode(RelayMode::Default)
-            .transport_config(crate::quic_keepalive::build_transport_config())
-            .secret_key(crate::identity::current_secret_key())
-            .bind()
-            .await
-            .map_err(|e| AppError::BindingFailed {
-                context: format!("sender endpoint: {e}"),
-            })?;
+        let endpoint = if let Some(shared) = self.endpoint.clone() {
+            shared
+        } else {
+            Endpoint::builder(presets::N0)
+                .alpns(vec![
+                    drift_core::protocol::ALPN.to_vec(),
+                    iroh_blobs::ALPN.to_vec(),
+                ])
+                .relay_mode(RelayMode::Default)
+                .transport_config(crate::quic_keepalive::build_transport_config())
+                .secret_key(crate::identity::current_secret_key())
+                .bind()
+                .await
+                .map_err(|e| AppError::BindingFailed {
+                    context: format!("sender endpoint: {e}"),
+                })?
+        };
         let identity = Identity {
             role: TransferRole::Sender,
             endpoint_id: endpoint.addr().id,

@@ -84,6 +84,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  DecodedTicketData dco_decode_decoded_ticket_data(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
@@ -150,6 +153,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UserFacingErrorData? dco_decode_opt_box_autoadd_user_facing_error_data(
     dynamic raw,
   );
+
+  @protected
+  QrPairingInfoData dco_decode_qr_pairing_info_data(dynamic raw);
 
   @protected
   ReceiverConnectionPath dco_decode_receiver_connection_path(dynamic raw);
@@ -284,6 +290,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  DecodedTicketData sse_decode_decoded_ticket_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
@@ -356,6 +367,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   UserFacingErrorData? sse_decode_opt_box_autoadd_user_facing_error_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  QrPairingInfoData sse_decode_qr_pairing_info_data(
     SseDeserializer deserializer,
   );
 
@@ -534,6 +550,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_decoded_ticket_data(
+    DecodedTicketData self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
@@ -620,6 +642,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_user_facing_error_data(
     UserFacingErrorData? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_qr_pairing_info_data(
+    QrPairingInfoData self,
     SseSerializer serializer,
   );
 

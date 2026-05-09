@@ -15,6 +15,21 @@ pub async fn scan_nearby_receivers(timeout_secs: u64) -> AppResult<Vec<NearbyRec
 
     let mut by_fullname = BTreeMap::new();
     for receiver in receivers {
+        // Best effort: extract EndpointId from the ticket so the UI can show a
+        // pubkey-derived color/badge. A malformed ticket leaves it empty —
+        // dial would have failed anyway, so the empty pubkey is informational.
+        let endpoint_id = match drift_core::util::decode_ticket(&receiver.ticket) {
+            Ok(addr) => addr.id.to_string(),
+            Err(err) => {
+                tracing::debug!(
+                    target: "drift_app::nearby",
+                    receiver = %receiver.fullname,
+                    error = %err,
+                    "decode_ticket failed for nearby receiver — pubkey badge will be empty"
+                );
+                String::new()
+            }
+        };
         by_fullname.insert(
             receiver.fullname.clone(),
             NearbyReceiver {
@@ -26,6 +41,7 @@ pub async fn scan_nearby_receivers(timeout_secs: u64) -> AppResult<Vec<NearbyRec
                 },
                 code: receiver.code,
                 ticket: receiver.ticket,
+                endpoint_id,
             },
         );
     }

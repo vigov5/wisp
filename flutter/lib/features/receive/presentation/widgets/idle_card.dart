@@ -7,10 +7,16 @@ import '../../../../theme/drift_theme.dart';
 import '../../application/state.dart';
 
 class ReceiveIdleCard extends StatefulWidget {
-  const ReceiveIdleCard({super.key, required this.state, this.onOpenSettings});
+  const ReceiveIdleCard({
+    super.key,
+    required this.state,
+    this.onOpenSettings,
+    this.onOpenQr,
+  });
 
   final ReceiverIdleViewState state;
   final VoidCallback? onOpenSettings;
+  final VoidCallback? onOpenQr;
 
   @override
   State<ReceiveIdleCard> createState() => _ReceiveIdleCardState();
@@ -209,6 +215,28 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                key: const ValueKey<String>('idle-qr-button'),
+                onPressed: widget.onOpenQr ?? () {},
+                tooltip: 'Pair via QR',
+                style: IconButton.styleFrom(
+                  fixedSize: const Size(38, 38),
+                  minimumSize: const Size(38, 38),
+                  padding: EdgeInsets.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  backgroundColor: const Color(0xFFFCFCFC),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: const BorderSide(color: Color(0xFFD7D7D7)),
+                  ),
+                ),
+                icon: Icon(
+                  Icons.qr_code_rounded,
+                  size: 18,
+                  color: kMuted.withValues(alpha: 0.9),
+                ),
               ),
               const SizedBox(width: 8),
               IconButton(

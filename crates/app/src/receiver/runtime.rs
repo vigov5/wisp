@@ -264,10 +264,26 @@ impl ReceiverRuntime {
 
     pub(super) fn handle_offer_prepared(&mut self, run: ReceiverRun) -> bool {
         if !matches!(self.offer_state, OfferState::Idle) {
+            let state_label = match &self.offer_state {
+                OfferState::Idle => "idle",
+                OfferState::Pending(_) => "pending",
+                OfferState::Receiving { .. } => "receiving",
+            };
+            tracing::warn!(
+                target: "drift_app::receiver::runtime",
+                offer_id = run.offer_id,
+                state = state_label,
+                "auto-declining new offer because runtime is not idle"
+            );
             let _ = run.decision_tx.send(OfferResolution::Decline);
             return false;
         }
 
+        tracing::info!(
+            target: "drift_app::receiver::runtime",
+            offer_id = run.offer_id,
+            "accepted offer into Pending state, broadcasting OfferUpdated"
+        );
         self.offer_state = OfferState::Pending(PendingOfferState { run });
         true
     }

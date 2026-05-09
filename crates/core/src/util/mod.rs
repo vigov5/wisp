@@ -16,6 +16,36 @@ struct TransferTicket {
     addrs: Vec<EncodedTransportAddr>,
 }
 
+/// JSON envelope used by QR pairing. Carries the original ticket plus
+/// device info so the sender can show "From <name>" on its tile before
+/// dialing.  Wire-format separate from `TransferTicket` (bincode) so the
+/// LAN broadcast stays binary-compatible with older drift binaries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct QrPayload {
+    /// The same string that `make_ticket` / `make_ticket_offline` produce —
+    /// base64 of bincode `TransferTicket`.
+    ticket: String,
+    #[serde(default)]
+    device_name: String,
+    #[serde(default)]
+    device_type: String,
+}
+
+/// Magic prefix on a QR-encoded pairing payload so the scanner can
+/// distinguish it from a raw ticket string. Short enough to keep the
+/// QR small while still being self-describing.
+const QR_PAYLOAD_PREFIX: &str = "drift-pair:";
+
+/// Public read-only view of a decoded ticket. Returned by [`decode_ticket_info`]
+/// so callers (e.g., Flutter QR scan) can pre-populate UI before dialing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedTicketInfo {
+    pub endpoint_addr: EndpointAddr,
+    /// Empty string when the ticket didn't carry a name (older format).
+    pub device_name: String,
+    pub device_type: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum EncodedTransportAddr {
     Relay(String),
@@ -300,6 +330,93 @@ pub async fn make_ticket(endpoint: &Endpoint) -> std::result::Result<String, Tic
     make_ticket_from_addr(endpoint.addr())
 }
 
+/// Build a ticket from whatever addresses are known *right now*, without
+/// waiting on `endpoint.online()` (which pends until a relay handshake
+/// completes — fails forever on offline-LAN networks).
+pub fn make_ticket_offline(endpoint: &Endpoint) -> std::result::Result<String, TicketError> {
+    let mut addr = endpoint.addr();
+    let lan = lan_direct_addrs(endpoint);
+    for socket in lan {
+        addr.addrs.insert(TransportAddr::Ip(socket));
+    }
+    make_ticket_from_addr(addr)
+}
+
+/// Build a QR pairing payload — wraps an offline ticket together with
+/// device name + type so the scanning sender can render an informative
+/// tile before dialing. Format: `"drift-pair:" + base64url(json)`.
+pub fn make_qr_payload(
+    endpoint: &Endpoint,
+    device_name: &str,
+    device_type: &str,
+) -> std::result::Result<String, TicketError> {
+    let ticket = make_ticket_offline(endpoint)?;
+    let payload = QrPayload {
+        ticket,
+        device_name: device_name.to_owned(),
+        device_type: device_type.to_owned(),
+    };
+    let json = serde_json::to_vec(&payload).map_err(|_| TicketError::InvalidPayload)?;
+    Ok(format!("{QR_PAYLOAD_PREFIX}{}", URL_SAFE_NO_PAD.encode(json)))
+}
+
+/// Returns the LAN-routable direct socket addresses for this endpoint.
+///
+/// Strategy:
+/// 1. Read the bound UDP port from `endpoint.bound_sockets()` (returns
+///    immediately, doesn't depend on discovery).
+/// 2. Enumerate local network interfaces via `if_addrs`.
+/// 3. Pair each non-loopback, non-link-local IPv4/IPv6 interface IP with
+///    the bound port to produce dialable `SocketAddr` values.
+///
+/// Used both to inject addrs into the offline ticket and to display a
+/// list of IPs alongside the QR code so the user can confirm their
+/// device is on the expected network before sharing.
+pub fn lan_direct_addrs(endpoint: &Endpoint) -> Vec<std::net::SocketAddr> {
+    use std::net::{IpAddr, SocketAddr};
+
+    let bound = endpoint.bound_sockets();
+    if bound.is_empty() {
+        return Vec::new();
+    }
+
+    // Pick a single port — iroh typically binds the same port across IPv4/IPv6.
+    let port = bound
+        .iter()
+        .find(|s| !s.ip().is_unspecified())
+        .map(|s| s.port())
+        .unwrap_or_else(|| bound[0].port());
+
+    let interfaces = match if_addrs::get_if_addrs() {
+        Ok(ifs) => ifs,
+        Err(err) => {
+            tracing::debug!(error = %err, "failed to enumerate network interfaces");
+            return Vec::new();
+        }
+    };
+
+    let mut out = Vec::new();
+    for iface in interfaces {
+        let ip = iface.ip();
+        let usable = match ip {
+            IpAddr::V4(v4) => {
+                !v4.is_loopback() && !v4.is_unspecified() && !v4.is_link_local()
+            }
+            IpAddr::V6(v6) => {
+                !v6.is_loopback()
+                    && !v6.is_unspecified()
+                    // Exclude link-local fe80::/10 — needs zone id to dial,
+                    // unreliable across hosts.
+                    && !(v6.segments()[0] & 0xffc0 == 0xfe80)
+            }
+        };
+        if usable {
+            out.push(SocketAddr::new(ip, port));
+        }
+    }
+    out
+}
+
 fn make_ticket_from_addr(addr: EndpointAddr) -> std::result::Result<String, TicketError> {
     let ticket = TransferTicket {
         node_id: addr.id.to_string(),
@@ -357,9 +474,56 @@ pub fn synthesize_ticket(
     Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 
-pub fn decode_ticket(ticket: &str) -> std::result::Result<EndpointAddr, TicketError> {
+/// Decode a QR-pairing payload OR a plain ticket string. Returns the
+/// endpoint addr plus optional device name/type — both empty for plain
+/// tickets that don't carry that info.
+///
+/// Accepted inputs:
+/// - `"drift-pair:<base64url(json{ticket, device_name, device_type})>"` — new QR format.
+/// - Plain ticket string (base64url of bincode `TransferTicket`) — older QR / paste.
+pub fn decode_ticket_info(
+    input: &str,
+) -> std::result::Result<DecodedTicketInfo, TicketError> {
+    let trimmed = input.trim();
+
+    if let Some(rest) = trimmed.strip_prefix(QR_PAYLOAD_PREFIX) {
+        let bytes = URL_SAFE_NO_PAD
+            .decode(rest)
+            .map_err(|source| TicketError::DecodeBase64 { source })?;
+        let payload: QrPayload =
+            serde_json::from_slice(&bytes).map_err(|_| TicketError::InvalidPayload)?;
+        let endpoint_addr = decode_ticket(&payload.ticket)?;
+        return Ok(DecodedTicketInfo {
+            endpoint_addr,
+            device_name: payload.device_name,
+            device_type: payload.device_type,
+        });
+    }
+
+    // Fallback: plain ticket without device info.
+    Ok(DecodedTicketInfo {
+        endpoint_addr: decode_ticket(trimmed)?,
+        device_name: String::new(),
+        device_type: String::new(),
+    })
+}
+
+pub fn decode_ticket(input: &str) -> std::result::Result<EndpointAddr, TicketError> {
+    let trimmed = input.trim();
+    // Accept QR-payload form too: "drift-pair:<base64url(json{ticket,...})>" —
+    // unwrap to the inner ticket and recurse so the send flow can use the
+    // QR-scanned string directly without first stripping the prefix.
+    if let Some(rest) = trimmed.strip_prefix(QR_PAYLOAD_PREFIX) {
+        let bytes = URL_SAFE_NO_PAD
+            .decode(rest)
+            .map_err(|source| TicketError::DecodeBase64 { source })?;
+        let payload: QrPayload =
+            serde_json::from_slice(&bytes).map_err(|_| TicketError::InvalidPayload)?;
+        return decode_ticket(&payload.ticket);
+    }
+
     let bytes = URL_SAFE_NO_PAD
-        .decode(ticket)
+        .decode(trimmed)
         .map_err(|source| TicketError::DecodeBase64 { source })?;
     let ticket = parse_transfer_ticket(&bytes)?;
 
@@ -583,5 +747,106 @@ mod synthetic_ticket_tests {
         let id = sample_id();
         let result = synthesize_ticket(id, None, Some("not.a.socket"));
         assert!(matches!(result, Err(TicketError::ParseSocketAddr { .. })));
+    }
+}
+
+#[cfg(test)]
+mod qr_payload_tests {
+    use super::*;
+    use iroh::SecretKey;
+
+    fn sample_id() -> iroh::EndpointId {
+        SecretKey::from_bytes(&[9u8; 32]).public()
+    }
+
+    fn build_qr_payload(ticket: String, name: &str, dtype: &str) -> String {
+        let payload = QrPayload {
+            ticket,
+            device_name: name.to_owned(),
+            device_type: dtype.to_owned(),
+        };
+        let json = serde_json::to_vec(&payload).expect("serialize");
+        format!("{QR_PAYLOAD_PREFIX}{}", URL_SAFE_NO_PAD.encode(json))
+    }
+
+    #[test]
+    fn decode_ticket_info_round_trips_qr_payload_fields() {
+        let id = sample_id();
+        let inner =
+            synthesize_ticket(id, None, Some("192.168.1.5:5000")).expect("inner ticket");
+        let qr = build_qr_payload(inner, "Maya MacBook", "laptop");
+
+        let info = decode_ticket_info(&qr).expect("decode info");
+        assert_eq!(info.endpoint_addr.id, id);
+        assert_eq!(info.device_name, "Maya MacBook");
+        assert_eq!(info.device_type, "laptop");
+    }
+
+    #[test]
+    fn decode_ticket_info_returns_empty_device_fields_for_plain_ticket() {
+        let id = sample_id();
+        let plain = synthesize_ticket(id, None, Some("10.0.0.1:1234")).expect("ticket");
+
+        let info = decode_ticket_info(&plain).expect("decode plain");
+        assert_eq!(info.endpoint_addr.id, id);
+        assert!(info.device_name.is_empty());
+        assert!(info.device_type.is_empty());
+    }
+
+    #[test]
+    fn decode_ticket_accepts_drift_pair_prefix_and_unwraps() {
+        let id = sample_id();
+        let inner =
+            synthesize_ticket(id, Some("https://relay.example/"), None).expect("inner");
+        let qr = build_qr_payload(inner, "Phone", "phone");
+
+        let addr = decode_ticket(&qr).expect("decode");
+        assert_eq!(addr.id, id);
+        let has_relay = addr.addrs.iter().any(|a| {
+            matches!(a, TransportAddr::Relay(url) if url.as_str() == "https://relay.example/")
+        });
+        assert!(has_relay, "expected relay addr to survive QR-wrap unwrap");
+    }
+
+    #[test]
+    fn decode_ticket_info_tolerates_surrounding_whitespace() {
+        let id = sample_id();
+        let inner = synthesize_ticket(id, None, Some("10.0.0.1:1234")).expect("ticket");
+        let qr = build_qr_payload(inner, "Pad", "laptop");
+        let padded = format!("\n\t  {qr}  \n");
+
+        let info = decode_ticket_info(&padded).expect("decode padded");
+        assert_eq!(info.endpoint_addr.id, id);
+        assert_eq!(info.device_name, "Pad");
+    }
+
+    #[test]
+    fn decode_ticket_info_errors_on_malformed_base64_after_prefix() {
+        let bogus = format!("{QR_PAYLOAD_PREFIX}!!!not-base64!!!");
+        let result = decode_ticket_info(&bogus);
+        assert!(matches!(result, Err(TicketError::DecodeBase64 { .. })));
+    }
+
+    #[test]
+    fn decode_ticket_info_errors_on_non_json_payload_after_prefix() {
+        let raw = URL_SAFE_NO_PAD.encode(b"this is not json");
+        let bogus = format!("{QR_PAYLOAD_PREFIX}{raw}");
+        let result = decode_ticket_info(&bogus);
+        assert!(matches!(result, Err(TicketError::InvalidPayload)));
+    }
+
+    #[test]
+    fn qr_payload_missing_device_fields_decode_as_empty() {
+        // Older sender wrote `{"ticket": "..."}` only — the decoder must still
+        // accept it via serde(default) instead of erroring on missing fields.
+        let id = sample_id();
+        let inner = synthesize_ticket(id, None, Some("10.0.0.1:1234")).expect("ticket");
+        let json = format!(r#"{{"ticket":"{}"}}"#, inner);
+        let qr = format!("{QR_PAYLOAD_PREFIX}{}", URL_SAFE_NO_PAD.encode(json.as_bytes()));
+
+        let info = decode_ticket_info(&qr).expect("decode legacy");
+        assert_eq!(info.endpoint_addr.id, id);
+        assert!(info.device_name.is_empty());
+        assert!(info.device_type.is_empty());
     }
 }

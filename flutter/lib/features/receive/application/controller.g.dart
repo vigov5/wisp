@@ -55,4 +55,4 @@ final class ReceiverIdleViewStateProvider
 }
 
 String _$receiverIdleViewStateHash() =>
-    r'9ee3bc7bbecbeca0b4985de3328686752c87749c';
+    r'c4870ab99895ca88cbcc8c3dfb0c4b7ea6a85fe6';

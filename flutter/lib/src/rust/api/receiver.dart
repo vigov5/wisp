@@ -8,9 +8,9 @@ import 'error.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'transfer.dart';
 
-// These functions are ignored because they are not marked as `pub`: `current_service`, `ensure_receiver_service`, `existing_service_for_config`, `map_connection_path`, `map_event`, `map_file_row`, `map_pairing_state`, `map_phase`, `map_plan_file`, `map_plan`, `map_registration`, `map_snapshot`, `pairing_registration`, `replace_pairing_task`, `replace_updates_task`, `scan_nearby_with_receiver`, `set_discoverable`
+// These functions are ignored because they are not marked as `pub`: `current_service_endpoint`, `current_service`, `ensure_receiver_service`, `existing_service_for_config`, `map_connection_path`, `map_event`, `map_file_row`, `map_pairing_state`, `map_phase`, `map_plan_file`, `map_plan`, `map_qr_pairing_info`, `map_registration`, `map_snapshot`, `pairing_registration`, `replace_pairing_task`, `replace_updates_task`, `scan_nearby_with_receiver`, `set_discoverable`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `BridgeReceiverConfig`, `BridgeReceiverState`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 Future<ReceiverRegistration> registerReceiver({
   String? serverUrl,
@@ -30,6 +30,13 @@ Future<ReceiverRegistration> ensureReceiverRegistration({
 
 Future<ReceiverRegistration?> currentReceiverRegistration() =>
     RustLib.instance.api.crateApiReceiverCurrentReceiverRegistration();
+
+/// Returns a ticket plus the LAN-routable IPs of the local receiver.
+/// The receiver service must already be running.  Designed for the QR
+/// pairing screen — the ticket is built from currently-known addresses
+/// without waiting on relay handshake, so it works on offline-LAN.
+Future<QrPairingInfoData> currentQrPairingInfo() =>
+    RustLib.instance.api.crateApiReceiverCurrentQrPairingInfo();
 
 Stream<ReceiverPairingState> watchReceiverPairing({
   String? serverUrl,
@@ -65,6 +72,24 @@ Future<void> respondToReceiverOffer({required bool accept}) =>
 
 Future<void> cancelReceiverTransfer() =>
     RustLib.instance.api.crateApiReceiverCancelReceiverTransfer();
+
+class QrPairingInfoData {
+  final String ticket;
+  final List<String> lanIps;
+
+  const QrPairingInfoData({required this.ticket, required this.lanIps});
+
+  @override
+  int get hashCode => ticket.hashCode ^ lanIps.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is QrPairingInfoData &&
+          runtimeType == other.runtimeType &&
+          ticket == other.ticket &&
+          lanIps == other.lanIps;
+}
 
 class ReceiverConnectionPath {
   final String kind;

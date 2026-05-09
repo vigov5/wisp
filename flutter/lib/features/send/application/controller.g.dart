@@ -41,7 +41,7 @@ final class SendControllerProvider
   }
 }
 
-String _$sendControllerHash() => r'bd3fedf6bf02507f5f396078ad8484ca32151804';
+String _$sendControllerHash() => r'8df0c0e2940b9d0fc817426c25c5ee4f925a44b3';
 
 abstract class _$SendController extends $Notifier<SendState> {
   SendState build();

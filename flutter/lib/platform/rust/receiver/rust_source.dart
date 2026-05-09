@@ -222,6 +222,7 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
             deviceType: peer.deviceType,
             code: peer.code,
             ticket: peer.ticket,
+            endpointId: peer.endpointId,
           ),
         )
         .toList(growable: false);
@@ -397,7 +398,7 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
     if (_pairingSubscription != null) {
       return;
     }
-    _restartPairingSubscription(generation: ++_configGeneration);
+    _restartPairingSubscription(generation: _configGeneration);
   }
 
   void _ensureTransferSubscription() {

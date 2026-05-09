@@ -579,7 +579,11 @@ class SendController extends _$SendController {
               .recordTransfer(
                 endpointId: endpointId,
                 label: transfer.destinationLabel,
-                deviceType: transfer.remoteDeviceType ?? 'laptop',
+                // Pass the actual reported device type, or empty when the
+                // receiver didn't surface one. Repo treats empty as
+                // "don't overwrite existing" so a previously-saved real
+                // value isn't replaced by the fallback.
+                deviceType: transfer.remoteDeviceType ?? '',
                 bytesTransferred: transfer.bytesSent,
                 lastTicket: currentState.request.ticket,
               ),

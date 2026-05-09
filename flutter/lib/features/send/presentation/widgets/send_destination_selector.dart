@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../src/rust/api/lan.dart' as rust_lan;
 import '../../../../theme/drift_theme.dart';
 import '../../../receive/application/service.dart';
 import '../../../receive/application/state.dart';
@@ -12,6 +13,7 @@ import '../../../transfers/application/pubkey_visual.dart';
 import '../../application/controller.dart';
 import '../../application/model.dart';
 import '../../application/state.dart';
+import '../qr_scan_page.dart';
 import '../receive_code_field.dart';
 
 class SendDestinationSelector extends ConsumerStatefulWidget {
@@ -33,6 +35,10 @@ class _SendDestinationSelectorState
   bool _continuousMode = false;
   Timer? _scanThrottleTimer;
   Completer<void>? _scanThrottleCompleter;
+  // Receiver paired via QR scan. Sticky in the UI until the user dismisses
+  // it or scans a different one — gives the user a visible target so they
+  // know what they're sending to (Nearby/Recent won't show this peer).
+  NearbyReceiver? _qrPairedReceiver;
 
   @override
   void initState() {
@@ -197,9 +203,53 @@ class _SendDestinationSelectorState
         .where((d) => !nearbyTickets.contains(d.lastTicket ?? ''))
         .toList(growable: false);
 
+    final qrPaired = _qrPairedReceiver;
+    final qrSelected =
+        qrPaired != null &&
+        destination.mode == SendDestinationMode.nearby &&
+        destination.ticket == qrPaired.ticket;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Row(
+          children: [
+            Text('Pair via QR code', style: titleStyle),
+            const Spacer(),
+            TextButton.icon(
+              onPressed: _scanQr,
+              icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
+              label: Text(
+                qrPaired == null ? 'Scan QR' : 'Re-scan',
+                style: driftSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: const Color(0xFF7AAFC9),
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                foregroundColor: const Color(0xFF7AAFC9),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (qrPaired != null)
+          _QrPairedTile(
+            receiver: qrPaired,
+            isSelected: qrSelected,
+            onTap: () => widget.controller.selectNearbyReceiver(qrPaired),
+            onDismiss: _clearQrPaired,
+          )
+        else
+          Text(
+            'Scan a receiver\'s QR code to pair offline.',
+            style: driftSans(fontSize: 12.5, color: kMuted, height: 1.4),
+          ),
+        const SizedBox(height: 18),
         if (recentDevices.isNotEmpty) ...[
           Text('Recent', style: titleStyle),
           const SizedBox(height: 12),
@@ -245,7 +295,7 @@ class _SendDestinationSelectorState
           )
         else
           SizedBox(
-            height: 110,
+            height: 124,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
@@ -284,6 +334,52 @@ class _SendDestinationSelectorState
         ),
       ],
     );
+  }
+
+  Future<void> _scanQr() async {
+    final ticket = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(builder: (_) => const QrScanPage()),
+    );
+    if (!mounted || ticket == null || ticket.isEmpty) return;
+
+    // Decode the ticket so the tile can show the receiver's name + type +
+    // pubkey before we even dial.  Failure here means the QR isn't a drift
+    // ticket — surface the error and bail.
+    final rust_lan.DecodedTicketData decoded;
+    try {
+      decoded = rust_lan.decodeTicketInfo(ticket: ticket);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Couldn't read QR: ${e.toString()}"),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
+    final label = decoded.deviceName.trim().isEmpty
+        ? 'From QR code'
+        : decoded.deviceName.trim();
+    final deviceType = decoded.deviceType.trim().isEmpty
+        ? 'phone'
+        : decoded.deviceType.trim();
+
+    final receiver = NearbyReceiver(
+      fullname: 'qr-${ticket.hashCode}',
+      label: label,
+      deviceType: deviceType,
+      code: '',
+      ticket: ticket,
+      endpointId: decoded.endpointId,
+    );
+    setState(() => _qrPairedReceiver = receiver);
+    widget.controller.selectNearbyReceiver(receiver);
+  }
+
+  void _clearQrPaired() {
+    setState(() => _qrPairedReceiver = null);
   }
 }
 
@@ -491,10 +587,7 @@ class _RecentDeviceTile extends StatelessWidget {
               message:
                   'Identity badge (from public key) — same color = same device.',
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 6,
-                  vertical: 2,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: badgeColor.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(6),
@@ -508,9 +601,9 @@ class _RecentDeviceTile extends StatelessWidget {
                   style: driftSans(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color: HSLColor.fromColor(badgeColor)
-                        .withLightness(0.32)
-                        .toColor(),
+                    color: HSLColor.fromColor(
+                      badgeColor,
+                    ).withLightness(0.32).toColor(),
                     letterSpacing: 0.4,
                   ),
                 ),
@@ -578,7 +671,7 @@ class _NearbyDeviceTile extends StatelessWidget {
                 size: 20,
                 color: isSelected ? const Color(0xFF7AAFC9) : kMuted,
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               Text(
                 receiver.label,
                 style: driftSans(
@@ -587,12 +680,166 @@ class _NearbyDeviceTile extends StatelessWidget {
                   color: kInk,
                   height: 1.18,
                 ),
-                maxLines: 2,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
               ),
+              if (receiver.endpointId.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colorFromPubkey(
+                      receiver.endpointId,
+                    ).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(5),
+                    border: Border.all(
+                      color: colorFromPubkey(
+                        receiver.endpointId,
+                      ).withValues(alpha: 0.45),
+                      width: 0.6,
+                    ),
+                  ),
+                  child: Text(
+                    shortPubkey(receiver.endpointId),
+                    style: driftSans(
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w700,
+                      color: HSLColor.fromColor(
+                        colorFromPubkey(receiver.endpointId),
+                      ).withLightness(0.32).toColor(),
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _QrPairedTile extends StatelessWidget {
+  const _QrPairedTile({
+    required this.receiver,
+    required this.isSelected,
+    required this.onTap,
+    required this.onDismiss,
+  });
+
+  final NearbyReceiver receiver;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final pubkey = receiver.endpointId;
+    final badgeColor = pubkey.isEmpty ? kMuted : colorFromPubkey(pubkey);
+    final badgeText = pubkey.isEmpty
+        ? null
+        : HSLColor.fromColor(badgeColor).withLightness(0.32).toColor();
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFF4F8FA) : kSurface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF8DBED4) : kBorder,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              _deviceIconForType(receiver.deviceType),
+              size: 24,
+              color: isSelected ? const Color(0xFF7AAFC9) : kMuted,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: receiver.label,
+                          style: driftSans(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                            color: kInk,
+                          ),
+                        ),
+                        TextSpan(
+                          text: '  ·  Paired offline',
+                          style: driftSans(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w400,
+                            color: kMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (pubkey.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: badgeColor.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: badgeColor.withValues(alpha: 0.45),
+                          width: 0.8,
+                        ),
+                      ),
+                      child: Text(
+                        shortPubkey(pubkey),
+                        style: driftSans(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: badgeText,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(
+              Icons.qr_code_rounded,
+              size: 18,
+              color: Color(0xFF7AAFC9),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              icon: const Icon(Icons.close_rounded, size: 16),
+              color: kMuted,
+              tooltip: 'Dismiss',
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              onPressed: onDismiss,
+            ),
+          ],
         ),
       ),
     );

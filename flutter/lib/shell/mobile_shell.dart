@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/receive/application/controller.dart';
+import '../features/receive/presentation/qr_pairing_page.dart';
 import '../features/receive/presentation/receive_transfer_route_gate.dart';
 import '../features/send/presentation/send_selection_source_sheet.dart';
 import '../app/app_router.dart';
@@ -31,6 +32,17 @@ class MobileShell extends ConsumerWidget with ShellPickingActions {
                   child: Row(
                     children: [
                       const Spacer(),
+                      IconButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const QrPairingPage(),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.qr_code_rounded),
+                        tooltip: 'Pair via QR',
+                      ),
                       IconButton(
                         onPressed: () => context.goSettings(),
                         icon: const Icon(Icons.tune_rounded),

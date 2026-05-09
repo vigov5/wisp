@@ -55,6 +55,7 @@ class NearbyReceiver {
     required this.deviceType,
     required this.code,
     required this.ticket,
+    this.endpointId = '',
   });
 
   final String fullname;
@@ -62,6 +63,7 @@ class NearbyReceiver {
   final String deviceType;
   final String code;
   final String ticket;
+  final String endpointId;
 }
 
 @immutable

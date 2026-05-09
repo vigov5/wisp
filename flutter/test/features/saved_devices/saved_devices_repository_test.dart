@@ -57,6 +57,57 @@ void main() {
     expect(all.single.totalBytes, BigInt.from(3072));
   });
 
+  test('recordTransfer updates label/type when same pubkey gets a new name', () async {
+    final repo = await makeRepo();
+    await repo.recordTransfer(
+      endpointId: 'ABC123',
+      label: 'Old Name',
+      deviceType: 'laptop',
+      bytesTransferred: BigInt.zero,
+    );
+    await repo.recordTransfer(
+      endpointId: 'ABC123',
+      label: 'New Name',
+      deviceType: 'phone',
+      bytesTransferred: BigInt.zero,
+    );
+    final saved = repo.loadAll().single;
+    expect(saved.label, 'New Name');
+    expect(saved.deviceType, 'phone');
+  });
+
+  test('recordTransfer keeps existing label when update carries placeholder', () async {
+    final repo = await makeRepo();
+    await repo.recordTransfer(
+      endpointId: 'ABC123',
+      label: 'Maya MacBook',
+      deviceType: 'laptop',
+      bytesTransferred: BigInt.zero,
+    );
+    // Subsequent transfer where the peer didn't surface a real name.
+    await repo.recordTransfer(
+      endpointId: 'ABC123',
+      label: 'Sender',
+      deviceType: '',
+      bytesTransferred: BigInt.zero,
+    );
+    await repo.recordTransfer(
+      endpointId: 'ABC123',
+      label: 'Recipient device',
+      deviceType: '',
+      bytesTransferred: BigInt.zero,
+    );
+    await repo.recordTransfer(
+      endpointId: 'ABC123',
+      label: 'Code AB1 2CD',
+      deviceType: '',
+      bytesTransferred: BigInt.zero,
+    );
+    final saved = repo.loadAll().single;
+    expect(saved.label, 'Maya MacBook');
+    expect(saved.deviceType, 'laptop');
+  });
+
   test('remove deletes one entry', () async {
     final repo = await makeRepo();
     await repo.recordTransfer(

@@ -101,6 +101,16 @@ pub fn start_send_transfer(
         ),
     };
 
+    // NOTE: we deliberately bind a *separate* iroh endpoint for the send
+    // session even though the receiver service already has one running
+    // with the same secret key. Reusing one endpoint would be cleaner
+    // (no relay "duplicate endpoint id" warnings) but iroh's `Router`
+    // pattern that BlobService needs to register `iroh_blobs::ALPN`
+    // takes ownership of the endpoint, conflicting with the receiver's
+    // manual `endpoint.accept()` listener loop — incoming offer
+    // connections then race between the two and silently drop. Until
+    // both subsystems are refactored onto a shared `Router` that
+    // multiplexes ALPNs, two endpoints are the safer trade-off.
     let session = SendSession::new(draft, destination);
     let run = {
         let _guard = RUNTIME.enter();

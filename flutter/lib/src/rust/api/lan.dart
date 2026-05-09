@@ -8,7 +8,7 @@ import 'error.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `map_nearby_receiver`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
 
 Future<List<NearbyReceiverInfo>> scanNearbyReceivers({
   required BigInt timeoutSecs,
@@ -16,12 +16,43 @@ Future<List<NearbyReceiverInfo>> scanNearbyReceivers({
   timeoutSecs: timeoutSecs,
 );
 
+/// Pure decode (no network) of a ticket string. Used by the QR scanner so
+/// the sender UI can show the receiver's name/type/pubkey before dialing.
+DecodedTicketData decodeTicketInfo({required String ticket}) =>
+    RustLib.instance.api.crateApiLanDecodeTicketInfo(ticket: ticket);
+
+class DecodedTicketData {
+  final String endpointId;
+  final String deviceName;
+  final String deviceType;
+
+  const DecodedTicketData({
+    required this.endpointId,
+    required this.deviceName,
+    required this.deviceType,
+  });
+
+  @override
+  int get hashCode =>
+      endpointId.hashCode ^ deviceName.hashCode ^ deviceType.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DecodedTicketData &&
+          runtimeType == other.runtimeType &&
+          endpointId == other.endpointId &&
+          deviceName == other.deviceName &&
+          deviceType == other.deviceType;
+}
+
 class NearbyReceiverInfo {
   final String fullname;
   final String label;
   final String deviceType;
   final String code;
   final String ticket;
+  final String endpointId;
 
   const NearbyReceiverInfo({
     required this.fullname,
@@ -29,6 +60,7 @@ class NearbyReceiverInfo {
     required this.deviceType,
     required this.code,
     required this.ticket,
+    required this.endpointId,
   });
 
   @override
@@ -37,7 +69,8 @@ class NearbyReceiverInfo {
       label.hashCode ^
       deviceType.hashCode ^
       code.hashCode ^
-      ticket.hashCode;
+      ticket.hashCode ^
+      endpointId.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -48,5 +81,6 @@ class NearbyReceiverInfo {
           label == other.label &&
           deviceType == other.deviceType &&
           code == other.code &&
-          ticket == other.ticket;
+          ticket == other.ticket &&
+          endpointId == other.endpointId;
 }

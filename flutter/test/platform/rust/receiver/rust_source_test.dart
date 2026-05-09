@@ -138,6 +138,72 @@ void main() {
   );
 
   test(
+    'transfer events are delivered when transfer stream subscribes before pairing',
+    () async {
+      // Regression: previously _ensurePairingSubscription used `++_configGeneration`
+      // while _ensureTransferSubscription used the current value. If the transfer
+      // stream subscribed first (generation captured = 0), then the pairing stream
+      // subscribed second and bumped _configGeneration to 1, every transfer event
+      // would be filtered as "stale" because the closure-captured generation no
+      // longer matched. The result was the receiver UI never seeing OfferPrepared
+      // events. Both _ensure* helpers must use the same shared generation.
+      final transferControllers =
+          <StreamController<rust_receiver.ReceiverTransferEvent>>[];
+      final seenStatuses = <String>[];
+
+      final source = RustReceiverServiceSource(
+        deviceName: 'Old Device',
+        downloadRoot: '/tmp/Drift',
+        serverUrl: 'http://127.0.0.1:8787',
+        pairingStreamFactory:
+            ({
+              serverUrl,
+              required downloadRoot,
+              required deviceName,
+              required deviceType,
+            }) => const Stream<rust_receiver.ReceiverPairingState>.empty(),
+        transferStreamFactory:
+            ({
+              serverUrl,
+              required downloadRoot,
+              required deviceName,
+              required deviceType,
+            }) {
+              final controller =
+                  StreamController<
+                    rust_receiver.ReceiverTransferEvent
+                  >.broadcast(sync: true);
+              transferControllers.add(controller);
+              return controller.stream;
+            },
+      );
+
+      // Subscribe transfer FIRST, pairing SECOND — the order that triggered the bug.
+      final transferSubscription = source.watchIncomingTransfers().listen((
+        event,
+      ) {
+        seenStatuses.add(event.statusMessage);
+      });
+      final pairingSubscription = source.watchState().listen((_) {});
+      addTearDown(() async {
+        await transferSubscription.cancel();
+        await pairingSubscription.cancel();
+        for (final controller in transferControllers) {
+          await controller.close();
+        }
+      });
+
+      await Future<void>.delayed(Duration.zero);
+      expect(transferControllers, hasLength(1));
+
+      transferControllers[0].add(transferEvent('offer-after-pairing-attached'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(seenStatuses, ['offer-after-pairing-attached']);
+    },
+  );
+
+  test(
     'updateIdentity ignores stale transfer events when only transfer stream is active',
     () async {
       final transferControllers =

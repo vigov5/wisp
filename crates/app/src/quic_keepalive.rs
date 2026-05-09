@@ -4,17 +4,21 @@ use iroh::endpoint::QuicTransportConfig;
 
 /// Tuned QUIC transport config for Android-friendly keepalive behaviour.
 ///
-/// - `default_path_max_idle_timeout = 60s` gives ~2x the default tolerance for
-///   CPU jitter when an Android Foreground Service is throttled by Doze.
-/// - `default_path_keep_alive_interval = 15s` keeps NAT mappings warm in
-///   middle-boxes whose UDP-binding TTL is typically 30-60s.
+/// iroh caps the QUIC-level path idle/keepalive at 6.5s / 5s respectively
+/// (anything larger is logged as a warning and ignored). Higher-level
+/// resilience — surviving Doze pauses, NAT churn — is handled by iroh's
+/// path migration + relay fallback, not these knobs. We pick values just
+/// under the cap so the QUIC layer keeps NAT mappings warm during active
+/// transfers without tripping iroh's clamp.
 ///
-/// Backwards-compatible: QUIC negotiates the minimum of the two peers'
-/// idle timeouts, so a tuned client still works with a default-config peer.
+/// - `default_path_max_idle_timeout = 6_000ms` — peer must respond within 6s
+///   or QUIC tears the path; iroh then re-establishes via its own logic.
+/// - `default_path_keep_alive_interval = 4_500ms` — sub-5s ping keeps the
+///   common NAT 30-60s binding window alive while transfers are in flight.
 pub(crate) fn build_transport_config() -> QuicTransportConfig {
     QuicTransportConfig::builder()
-        .default_path_max_idle_timeout(Duration::from_secs(60))
-        .default_path_keep_alive_interval(Duration::from_secs(15))
+        .default_path_max_idle_timeout(Duration::from_millis(6_000))
+        .default_path_keep_alive_interval(Duration::from_millis(4_500))
         .build()
 }
 

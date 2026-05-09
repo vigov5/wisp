@@ -5,8 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/receive/application/controller.dart';
-import '../features/receive/presentation/widgets/idle_card.dart';
+import '../features/receive/presentation/qr_pairing_page.dart';
 import '../features/receive/presentation/receive_transfer_route_gate.dart';
+import '../features/receive/presentation/widgets/idle_card.dart';
 import '../app/app_router.dart';
 import '../features/send/application/model.dart';
 import '../features/send/application/send_selection_picker.dart';
@@ -86,11 +87,18 @@ class DesktopShell extends ConsumerWidget {
           child: Column(
             children: [
               ReceiveIdleCard(
-                state: receiverState,
-                onOpenSettings: () {
-                  context.goSettings();
-                },
-              ),
+              state: receiverState,
+              onOpenSettings: () {
+                context.goSettings();
+              },
+              onOpenQr: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const QrPairingPage(),
+                  ),
+                );
+              },
+            ),
               const SizedBox(height: 12),
               Expanded(
                 child: SendDropZone(

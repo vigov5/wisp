@@ -223,6 +223,13 @@ impl ReceiverSession {
             files,
             error: None,
         };
+        tracing::info!(
+            target: "drift_app::receiver::session",
+            offer_id,
+            sender = %sender_label,
+            file_count = offer.file_count,
+            "dispatching OfferPrepared to actor"
+        );
         if cmd_tx
             .send(ReceiverCommand::OfferPrepared {
                 run,
@@ -231,6 +238,11 @@ impl ReceiverSession {
             .await
             .is_err()
         {
+            tracing::warn!(
+                target: "drift_app::receiver::session",
+                offer_id,
+                "actor channel closed; offer event dropped"
+            );
             return;
         }
 

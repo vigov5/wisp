@@ -46,6 +46,12 @@ class SavedDevicesRepository {
   }
 
   /// Convenience: build/update a record after a successful transfer.
+  ///
+  /// `label` and `deviceType` are upserted on the existing record only when
+  /// they carry a *real* value — placeholders ("Sender", "Recipient device",
+  /// "Code XYZ ABC", default "laptop" fallback) are dropped so they don't
+  /// overwrite a previously-saved real name.  Pass an empty string to
+  /// explicitly skip the field.
   Future<void> recordTransfer({
     required String endpointId,
     required String label,
@@ -53,27 +59,56 @@ class SavedDevicesRepository {
     required BigInt bytesTransferred,
     String? lastTicket,
   }) async {
+    final cleanedLabel = _meaningfulLabel(label);
+    final cleanedType = _meaningfulDeviceType(deviceType);
     final all = loadAll();
     final existing = all.firstWhere(
       (d) => d.endpointId == endpointId,
       orElse: () => SavedDevice(
         endpointId: endpointId,
-        label: label,
-        deviceType: deviceType,
+        // First save: prefer the cleaned (real) value, fall back to the raw
+        // placeholder/default so the tile still has *something* to show.
+        // A later transfer with a real value will replace it.
+        label: cleanedLabel.isNotEmpty
+            ? cleanedLabel
+            : (label.trim().isEmpty ? 'Saved device' : label.trim()),
+        deviceType: cleanedType.isNotEmpty ? cleanedType : 'laptop',
         lastSeenAt: DateTime.now().toUtc(),
         transferCount: 0,
         totalBytes: BigInt.zero,
       ),
     );
     final updated = existing.copyWith(
-      label: label.isEmpty ? existing.label : label,
-      deviceType: deviceType.isEmpty ? existing.deviceType : deviceType,
+      label: cleanedLabel.isEmpty ? existing.label : cleanedLabel,
+      deviceType: cleanedType.isEmpty ? existing.deviceType : cleanedType,
       lastSeenAt: DateTime.now().toUtc(),
       transferCount: existing.transferCount + 1,
       totalBytes: existing.totalBytes + bytesTransferred,
       lastTicket: lastTicket ?? existing.lastTicket,
     );
     await upsert(updated);
+  }
+
+  /// Strip known placeholder labels emitted by the Rust app layer when a
+  /// peer didn't supply a real device name.  Returns empty string for
+  /// placeholders so callers (and the upsert logic above) treat it as
+  /// "no info, don't overwrite".
+  static String _meaningfulLabel(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    if (trimmed == 'Sender') return '';
+    if (trimmed == 'Recipient device') return '';
+    if (RegExp(r'^Code [A-Z0-9 ]+$').hasMatch(trimmed)) return '';
+    return trimmed;
+  }
+
+  /// Mirror of [_meaningfulLabel] for device type — `'laptop'` is the
+  /// app-wide default fallback when the peer didn't surface a real type;
+  /// treat it as a placeholder on update only (still kept on first save).
+  static String _meaningfulDeviceType(String raw) {
+    final trimmed = raw.trim().toLowerCase();
+    if (trimmed.isEmpty) return '';
+    return trimmed;
   }
 
   Future<void> remove(String endpointId) async {

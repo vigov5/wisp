@@ -32,6 +32,8 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Drift needs access to your local network to discover nearby devices and receive files.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Drift uses the camera to scan QR codes for offline pairing on the same Wi-Fi.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

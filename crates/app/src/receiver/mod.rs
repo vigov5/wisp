@@ -14,8 +14,8 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::error::{AppError, AppResult};
 use crate::types::{
-    ConnectionPath, NearbyReceiver, PairingCodeState, ReceiverConfig, ReceiverOfferEvent,
-    ReceiverRegistration,
+    ConnectionPath, NearbyReceiver, PairingCodeState, QrPairingInfo, ReceiverConfig,
+    ReceiverOfferEvent, ReceiverRegistration,
 };
 use drift_core::protocol::{ALPN, DeviceType};
 
@@ -64,6 +64,9 @@ pub struct ReceiverService {
     state_rx: watch::Receiver<ReceiverSnapshot>,
     pairing_rx: watch::Receiver<PairingCodeState>,
     event_tx: broadcast::Sender<ReceiverEvent>,
+    endpoint: Endpoint,
+    device_name: String,
+    device_type: String,
 }
 
 impl ReceiverService {
@@ -99,6 +102,9 @@ impl ReceiverService {
             config.conflict_policy,
         )?;
 
+        let endpoint_for_service = endpoint.clone();
+        let device_name_for_service = config.device_name.clone();
+        let device_type_for_service = config.device_type.clone();
         let runtime = ReceiverRuntime::new(config, endpoint, listener);
 
         tokio::spawn(run_receiver_actor(
@@ -114,7 +120,35 @@ impl ReceiverService {
             state_rx,
             pairing_rx,
             event_tx,
+            endpoint: endpoint_for_service,
+            device_name: device_name_for_service,
+            device_type: device_type_for_service,
         })
+    }
+
+    /// Returns a ticket built from currently-known addresses (no
+    /// `online()` wait — works offline-LAN) plus the LAN-routable direct
+    /// socket addresses. Used by the QR pairing screen so the sender can
+    /// dial directly via UDP without needing internet.
+    /// Clone of the underlying iroh endpoint. Shared with `SendSession` so
+    /// outbound transfers reuse the receiver's already-bound endpoint
+    /// instead of binding a second one with the same secret key (which
+    /// would race for the relay slot).
+    pub fn endpoint(&self) -> Endpoint {
+        self.endpoint.clone()
+    }
+
+    pub fn qr_pairing_info(&self) -> Result<QrPairingInfo, drift_core::util::TicketError> {
+        let ticket = drift_core::util::make_qr_payload(
+            &self.endpoint,
+            &self.device_name,
+            &self.device_type,
+        )?;
+        let lan_ips = drift_core::util::lan_direct_addrs(&self.endpoint)
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+        Ok(QrPairingInfo { ticket, lan_ips })
     }
 
     pub fn snapshot(&self) -> ReceiverSnapshot {

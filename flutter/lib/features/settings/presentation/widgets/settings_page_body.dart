@@ -443,39 +443,36 @@ class _IdentityBadgeRow extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         Row(
+          mainAxisAlignment: MainAxisAlignment.start,
           children: [
-            Expanded(
-              child: Tooltip(
-                message: endpointId,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
+            Tooltip(
+              message: endpointId,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: color.withValues(alpha: 0.45),
+                    width: 0.8,
                   ),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: color.withValues(alpha: 0.45),
-                      width: 0.8,
-                    ),
+                ),
+                child: Text(
+                  shortPubkey(endpointId, headChars: 8, tailChars: 8),
+                  style: driftSans(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: textColor,
+                    letterSpacing: 0.4,
                   ),
-                  child: Text(
-                    shortPubkey(endpointId, headChars: 16, tailChars: 16),
-                    style: driftSans(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                      color: textColor,
-                      letterSpacing: 0.4,
-                    ),
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  maxLines: 1,
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
             IconButton(
               tooltip: 'Copy public key',
               visualDensity: VisualDensity.compact,

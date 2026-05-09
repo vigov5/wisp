@@ -48,12 +48,24 @@ pub struct NearbyReceiver {
     pub device_type: String,
     pub code: String,
     pub ticket: String,
+    /// Receiver's pubkey (base32 EndpointId), decoded from the advertised
+    /// ticket. Empty when the ticket couldn't be parsed (bad input).
+    pub endpoint_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceiverRegistration {
     pub code: String,
     pub expires_at: String,
+}
+
+/// Snapshot used by the QR pairing screen: a ticket built from currently
+/// known addresses (no `online()` wait — works offline-LAN) and the
+/// LAN-routable direct socket addresses for user confirmation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QrPairingInfo {
+    pub ticket: String,
+    pub lan_ips: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
