@@ -142,6 +142,7 @@ class ReceiverTransferEvent {
   final List<ReceiverTransferFile> files;
   final ReceiverConnectionPath? connectionPath;
   final String? senderEndpointId;
+  final String? senderTicket;
   final UserFacingErrorData? error;
 
   const ReceiverTransferEvent({
@@ -160,6 +161,7 @@ class ReceiverTransferEvent {
     required this.files,
     this.connectionPath,
     this.senderEndpointId,
+    this.senderTicket,
     this.error,
   });
 
@@ -180,6 +182,7 @@ class ReceiverTransferEvent {
       files.hashCode ^
       connectionPath.hashCode ^
       senderEndpointId.hashCode ^
+      senderTicket.hashCode ^
       error.hashCode;
 
   @override
@@ -202,6 +205,7 @@ class ReceiverTransferEvent {
           files == other.files &&
           connectionPath == other.connectionPath &&
           senderEndpointId == other.senderEndpointId &&
+          senderTicket == other.senderTicket &&
           error == other.error;
 }
 

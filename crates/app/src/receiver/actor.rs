@@ -273,6 +273,7 @@ async fn run_listener_loop(
                     snapshot: None,
                     connection_path: None,
                     sender_endpoint_id: None,
+                    sender_ticket: None,
                     total_size_label: String::new(),
                     files: Vec::new(),
                     error: Some(UserFacingError::internal(

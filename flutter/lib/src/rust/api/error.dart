@@ -50,6 +50,8 @@ enum UserFacingErrorKindData {
   peerDeclined,
   networkUnavailable,
   connectionLost,
+  peerUnreachable,
+  peerNotReceiving,
   permissionDenied,
   fileConflict,
   protocolIncompatible,

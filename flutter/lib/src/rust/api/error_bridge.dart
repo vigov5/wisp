@@ -52,6 +52,8 @@ UserFacingErrorKindData _decodeKind(String value) {
     'PeerDeclined' => UserFacingErrorKindData.peerDeclined,
     'NetworkUnavailable' => UserFacingErrorKindData.networkUnavailable,
     'ConnectionLost' => UserFacingErrorKindData.connectionLost,
+    'PeerUnreachable' => UserFacingErrorKindData.peerUnreachable,
+    'PeerNotReceiving' => UserFacingErrorKindData.peerNotReceiving,
     'PermissionDenied' => UserFacingErrorKindData.permissionDenied,
     'FileConflict' => UserFacingErrorKindData.fileConflict,
     'ProtocolIncompatible' => UserFacingErrorKindData.protocolIncompatible,

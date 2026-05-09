@@ -1054,6 +1054,7 @@ impl SseDecode for crate::api::receiver::ReceiverTransferEvent {
         let mut var_connectionPath =
             <Option<crate::api::receiver::ReceiverConnectionPath>>::sse_decode(deserializer);
         let mut var_senderEndpointId = <Option<String>>::sse_decode(deserializer);
+        let mut var_senderTicket = <Option<String>>::sse_decode(deserializer);
         let mut var_error =
             <Option<crate::api::error::UserFacingErrorData>>::sse_decode(deserializer);
         return crate::api::receiver::ReceiverTransferEvent {
@@ -1072,6 +1073,7 @@ impl SseDecode for crate::api::receiver::ReceiverTransferEvent {
             files: var_files,
             connection_path: var_connectionPath,
             sender_endpoint_id: var_senderEndpointId,
+            sender_ticket: var_senderTicket,
             error: var_error,
         };
     }
@@ -1358,12 +1360,14 @@ impl SseDecode for crate::api::error::UserFacingErrorKindData {
             2 => crate::api::error::UserFacingErrorKindData::PeerDeclined,
             3 => crate::api::error::UserFacingErrorKindData::NetworkUnavailable,
             4 => crate::api::error::UserFacingErrorKindData::ConnectionLost,
-            5 => crate::api::error::UserFacingErrorKindData::PermissionDenied,
-            6 => crate::api::error::UserFacingErrorKindData::FileConflict,
-            7 => crate::api::error::UserFacingErrorKindData::ProtocolIncompatible,
-            8 => crate::api::error::UserFacingErrorKindData::Cancelled,
-            9 => crate::api::error::UserFacingErrorKindData::Internal,
-            10 => crate::api::error::UserFacingErrorKindData::Other,
+            5 => crate::api::error::UserFacingErrorKindData::PeerUnreachable,
+            6 => crate::api::error::UserFacingErrorKindData::PeerNotReceiving,
+            7 => crate::api::error::UserFacingErrorKindData::PermissionDenied,
+            8 => crate::api::error::UserFacingErrorKindData::FileConflict,
+            9 => crate::api::error::UserFacingErrorKindData::ProtocolIncompatible,
+            10 => crate::api::error::UserFacingErrorKindData::Cancelled,
+            11 => crate::api::error::UserFacingErrorKindData::Internal,
+            12 => crate::api::error::UserFacingErrorKindData::Other,
             _ => unreachable!("Invalid variant for UserFacingErrorKindData: {}", inner),
         };
     }
@@ -1562,6 +1566,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::receiver::ReceiverTransferEve
             self.files.into_into_dart().into_dart(),
             self.connection_path.into_into_dart().into_dart(),
             self.sender_endpoint_id.into_into_dart().into_dart(),
+            self.sender_ticket.into_into_dart().into_dart(),
             self.error.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -1910,12 +1915,14 @@ impl flutter_rust_bridge::IntoDart for crate::api::error::UserFacingErrorKindDat
             Self::PeerDeclined => 2.into_dart(),
             Self::NetworkUnavailable => 3.into_dart(),
             Self::ConnectionLost => 4.into_dart(),
-            Self::PermissionDenied => 5.into_dart(),
-            Self::FileConflict => 6.into_dart(),
-            Self::ProtocolIncompatible => 7.into_dart(),
-            Self::Cancelled => 8.into_dart(),
-            Self::Internal => 9.into_dart(),
-            Self::Other => 10.into_dart(),
+            Self::PeerUnreachable => 5.into_dart(),
+            Self::PeerNotReceiving => 6.into_dart(),
+            Self::PermissionDenied => 7.into_dart(),
+            Self::FileConflict => 8.into_dart(),
+            Self::ProtocolIncompatible => 9.into_dart(),
+            Self::Cancelled => 10.into_dart(),
+            Self::Internal => 11.into_dart(),
+            Self::Other => 12.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -2203,6 +2210,7 @@ impl SseEncode for crate::api::receiver::ReceiverTransferEvent {
             serializer,
         );
         <Option<String>>::sse_encode(self.sender_endpoint_id, serializer);
+        <Option<String>>::sse_encode(self.sender_ticket, serializer);
         <Option<crate::api::error::UserFacingErrorData>>::sse_encode(self.error, serializer);
     }
 }
@@ -2424,12 +2432,14 @@ impl SseEncode for crate::api::error::UserFacingErrorKindData {
                 crate::api::error::UserFacingErrorKindData::PeerDeclined => 2,
                 crate::api::error::UserFacingErrorKindData::NetworkUnavailable => 3,
                 crate::api::error::UserFacingErrorKindData::ConnectionLost => 4,
-                crate::api::error::UserFacingErrorKindData::PermissionDenied => 5,
-                crate::api::error::UserFacingErrorKindData::FileConflict => 6,
-                crate::api::error::UserFacingErrorKindData::ProtocolIncompatible => 7,
-                crate::api::error::UserFacingErrorKindData::Cancelled => 8,
-                crate::api::error::UserFacingErrorKindData::Internal => 9,
-                crate::api::error::UserFacingErrorKindData::Other => 10,
+                crate::api::error::UserFacingErrorKindData::PeerUnreachable => 5,
+                crate::api::error::UserFacingErrorKindData::PeerNotReceiving => 6,
+                crate::api::error::UserFacingErrorKindData::PermissionDenied => 7,
+                crate::api::error::UserFacingErrorKindData::FileConflict => 8,
+                crate::api::error::UserFacingErrorKindData::ProtocolIncompatible => 9,
+                crate::api::error::UserFacingErrorKindData::Cancelled => 10,
+                crate::api::error::UserFacingErrorKindData::Internal => 11,
+                crate::api::error::UserFacingErrorKindData::Other => 12,
                 _ => {
                     unimplemented!("");
                 }

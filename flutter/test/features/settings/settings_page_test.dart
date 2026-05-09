@@ -4,6 +4,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Finite-duration replacement for [WidgetTester.pumpAndSettle].  Settings
+/// page contains [TextField]s; once one is focused (auto-focus on route
+/// activation, or after [WidgetTester.enterText]) Flutter's cursor blink
+/// runs an `AnimationController.repeat()` which never settles.  We pump for
+/// a fixed window long enough to flush every finite animation in the page
+/// (route push, dialog open, AnimatedSwitcher, etc.).
+Future<void> _pumpSettle(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 500));
+}
+
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
@@ -25,7 +36,7 @@ void main() {
         child: const MaterialApp(home: SettingsFeature()),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpSettle(tester);
 
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Device name'), findsOneWidget);
@@ -37,7 +48,7 @@ void main() {
 
     await tester.enterText(find.byType(TextField).first, 'Maya MacBook');
     await tester.tap(find.byTooltip('Back'));
-    await tester.pumpAndSettle();
+    await _pumpSettle(tester);
 
     expect(find.text('Discard changes?'), findsOneWidget);
     expect(find.text('Stay'), findsOneWidget);
@@ -62,10 +73,14 @@ void main() {
         child: const MaterialApp(home: SettingsFeature()),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpSettle(tester);
 
     expect(
-      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Save Changes'),
+          )
+          .onPressed,
       isNull,
     );
 
@@ -73,7 +88,11 @@ void main() {
     await tester.pump();
 
     expect(
-      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Save Changes'),
+          )
+          .onPressed,
       isNotNull,
     );
   });
@@ -101,7 +120,7 @@ void main() {
         child: const MaterialApp(home: SettingsFeature()),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpSettle(tester);
 
     final downloadField = tester.widget<TextField>(
       find.byKey(const ValueKey<String>('settings-download-root-field')),

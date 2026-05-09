@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:app/app/app_router.dart';
+import 'package:app/features/saved_devices/application/saved_devices_controller.dart';
+import 'package:app/features/saved_devices/application/saved_devices_repository.dart';
 import 'package:app/features/send/application/controller.dart';
 import 'package:app/features/send/application/directory_size.dart';
 import 'package:app/features/receive/application/service.dart';
@@ -19,6 +21,7 @@ import 'package:app/features/send/presentation/send_transfer_route.dart';
 import 'package:app/platform/send_transfer_source.dart';
 import 'package:app/platform/rust/receiver/fake_source.dart';
 import 'package:app/theme/drift_theme.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../support/fake_send_selection_picker.dart';
 import '../../../support/settings_test_overrides.dart';
 
@@ -60,12 +63,13 @@ Future<void> _pumpPreview(WidgetTester tester) async {
   await tester.pump();
 }
 
-ProviderContainer _buildContainer({
+Future<ProviderContainer> _buildContainer({
   required DirectorySizeCalculator directorySizeCalculator,
   required SendSelectionPicker picker,
   required FakeReceiverServiceSource receiverSource,
   List overrides = const [],
-}) {
+}) async {
+  final prefs = await SharedPreferences.getInstance();
   return ProviderContainer(
     overrides: [
       initialAppSettingsProvider.overrideWithValue(testAppSettings),
@@ -74,16 +78,21 @@ ProviderContainer _buildContainer({
       ),
       receiverServiceSourceProvider.overrideWithValue(receiverSource),
       sendSelectionPickerProvider.overrideWithValue(picker),
+      savedDevicesRepositoryProvider.overrideWithValue(
+        SavedDevicesRepository(prefs: prefs),
+      ),
       ...overrides,
     ],
   );
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   testWidgets('shows recovery UI when draft state is idle', (
     WidgetTester tester,
   ) async {
-    final container = _buildContainer(
+    final container = await _buildContainer(
       directorySizeCalculator: FakeDirectorySizeCalculator({}),
       receiverSource: FakeReceiverServiceSource(),
       picker: FakeSendSelectionPicker(),
@@ -104,7 +113,7 @@ void main() {
   });
 
   testWidgets('shows the send draft preview', (WidgetTester tester) async {
-    final container = _buildContainer(
+    final container = await _buildContainer(
       directorySizeCalculator: FakeDirectorySizeCalculator({
         '/tmp/photos': BigInt.from(1024),
       }),
@@ -163,7 +172,7 @@ void main() {
   testWidgets('uses a stronger active Send button color', (
     WidgetTester tester,
   ) async {
-    final container = _buildContainer(
+    final container = await _buildContainer(
       directorySizeCalculator: FakeDirectorySizeCalculator({}),
       receiverSource: FakeReceiverServiceSource(),
       picker: FakeSendSelectionPicker(),
@@ -209,7 +218,7 @@ void main() {
       ],
     );
 
-    final container = _buildContainer(
+    final container = await _buildContainer(
       directorySizeCalculator: FakeDirectorySizeCalculator({}),
       receiverSource: FakeReceiverServiceSource(),
       picker: picker,
@@ -255,7 +264,7 @@ void main() {
       ],
     );
 
-    final container = _buildContainer(
+    final container = await _buildContainer(
       directorySizeCalculator: FakeDirectorySizeCalculator({
         '/tmp/photos': BigInt.from(2048),
       }),
@@ -304,7 +313,7 @@ void main() {
       ],
     );
 
-    final container = _buildContainer(
+    final container = await _buildContainer(
       directorySizeCalculator: FakeDirectorySizeCalculator({}),
       receiverSource: receiverSource,
       picker: FakeSendSelectionPicker(),
@@ -374,7 +383,7 @@ void main() {
       ],
     );
 
-    final container = _buildContainer(
+    final container = await _buildContainer(
       directorySizeCalculator: FakeDirectorySizeCalculator({}),
       receiverSource: FakeReceiverServiceSource(),
       picker: FakeSendSelectionPicker(),
@@ -441,7 +450,7 @@ void main() {
       ],
     );
 
-    final container = _buildContainer(
+    final container = await _buildContainer(
       directorySizeCalculator: FakeDirectorySizeCalculator({}),
       receiverSource: FakeReceiverServiceSource(),
       picker: FakeSendSelectionPicker(),
@@ -500,7 +509,7 @@ void main() {
       ],
     );
 
-    final container = _buildContainer(
+    final container = await _buildContainer(
       directorySizeCalculator: FakeDirectorySizeCalculator({}),
       receiverSource: FakeReceiverServiceSource(),
       picker: FakeSendSelectionPicker(),

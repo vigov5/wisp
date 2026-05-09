@@ -10,6 +10,7 @@ void main() {
     final bootstrap = await loadAppBootstrap(
       randomDeviceName: () => 'Rusty Ridge',
       defaultDownloadRoot: '/tmp/Drift',
+      installAppIdentity: (_) {},
     );
 
     expect(bootstrap.initialSettings.deviceName, 'Rusty Ridge');

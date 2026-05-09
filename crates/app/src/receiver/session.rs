@@ -218,6 +218,7 @@ impl ReceiverSession {
             snapshot: None,
             connection_path: Some(current_path.lock().unwrap().clone()),
             sender_endpoint_id: Some(remote_id_str.clone()),
+            sender_ticket: None,
             total_size_label: human_size(offer.total_size),
             files,
             error: None,
@@ -338,6 +339,29 @@ impl ReceiverSession {
         }
 
         let final_path = Some(current_path.lock().unwrap().clone());
+        // Synthesize a "send back" ticket so the receiver can later dial this
+        // sender via the saved-devices fast path. Best effort: a parse error
+        // on the snapshotted addr just drops the ticket. Stale addrs are
+        // tolerated — iroh's pkarr discovery (presets::N0) re-resolves the
+        // EndpointId on dial.  We compute this once and reuse across the
+        // Completed and Cancelled arms — both terminal states represent a
+        // peer we successfully reached, even if Cancelled didn't finish.
+        let sender_ticket = final_path.as_ref().and_then(|path| {
+            drift_core::util::synthesize_ticket(
+                remote_id,
+                path.relay_url.as_deref(),
+                path.direct_addr.as_deref(),
+            )
+            .map_err(|err| {
+                tracing::debug!(
+                    target: "drift_app::receiver::session",
+                    error = %err,
+                    "failed to synthesize sender ticket; saved-device fast path won't work"
+                );
+                err
+            })
+            .ok()
+        });
         let final_event = match outcome_rx.await {
             Ok(Ok(outcome)) => match outcome {
                 CoreTransferOutcome::Completed => completed_offer_event(
@@ -346,6 +370,7 @@ impl ReceiverSession {
                     sender_device_type,
                     final_path.clone(),
                     Some(remote_id_str.clone()),
+                    sender_ticket.clone(),
                     offer.session_id.clone(),
                     offer.file_count,
                     offer.total_size,
@@ -365,6 +390,9 @@ impl ReceiverSession {
                     snapshot: None,
                     connection_path: final_path.clone(),
                     sender_endpoint_id: Some(remote_id_str.clone()),
+                    // Declined = peer explicitly rejected this offer. Don't
+                    // persist — user probably doesn't want them in Recent.
+                    sender_ticket: None,
                     total_size_label: human_size(offer.total_size),
                     files: Vec::new(),
                     error: None,
@@ -383,6 +411,9 @@ impl ReceiverSession {
                     snapshot: None,
                     connection_path: final_path.clone(),
                     sender_endpoint_id: Some(remote_id_str.clone()),
+                    // Cancelled mid-transfer: peer was real and reachable, we
+                    // just didn't finish. Persist so the user can re-send.
+                    sender_ticket: sender_ticket.clone(),
                     total_size_label: human_size(offer.total_size),
                     files: Vec::new(),
                     error: Some(UserFacingError::new(
@@ -496,6 +527,7 @@ fn completed_offer_event(
     sender_device_type: DeviceType,
     connection_path: Option<ConnectionPath>,
     sender_endpoint_id: Option<String>,
+    sender_ticket: Option<String>,
     session_id: String,
     item_count: u64,
     total_size: u64,
@@ -526,6 +558,7 @@ fn completed_offer_event(
         }),
         connection_path,
         sender_endpoint_id,
+        sender_ticket,
         total_size_label: human_size(total_size),
         files: Vec::new(),
         error: None,
@@ -569,6 +602,7 @@ fn build_offer_event(
         snapshot,
         connection_path,
         sender_endpoint_id,
+        sender_ticket: None,
         total_size_label: human_size(total_bytes),
         files,
         error,
@@ -596,6 +630,7 @@ fn failed_offer_event(
         snapshot: None,
         connection_path: None,
         sender_endpoint_id: None,
+        sender_ticket: None,
         total_size_label: String::new(),
         files: Vec::new(),
         error: Some(error),
@@ -696,6 +731,7 @@ mod tests {
                 relay_url: None,
                 direct_addr: Some("192.168.1.5:5000".to_owned()),
             }),
+            None,
             None,
             "session-1".to_owned(),
             1,

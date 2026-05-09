@@ -12,19 +12,26 @@ import 'package:app/features/transfers/feature.dart';
 import 'package:app/features/settings/feature.dart';
 import 'package:app/features/send/presentation/send_draft_preview.dart';
 import 'package:app/features/send/send_drop_zone.dart';
+import 'package:app/features/saved_devices/application/saved_devices_controller.dart';
 import 'package:app/platform/rust/receiver/fake_source.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../support/settings_test_overrides.dart';
 import '../support/fake_send_selection_picker.dart';
+import '../support/test_overrides.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   testWidgets('shows the receiver card above the send dropzone', (
     WidgetTester tester,
   ) async {
     final router = buildAppRouter();
+    final savedDevicesRepo = await mockSavedDevicesRepo();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          savedDevicesRepositoryProvider.overrideWithValue(savedDevicesRepo),
         ],
         child: MaterialApp.router(routerConfig: router),
       ),
@@ -42,6 +49,7 @@ void main() {
   ) async {
     final router = buildAppRouter();
     final source = FakeReceiverServiceSource();
+    final savedDevicesRepo = await mockSavedDevicesRepo();
 
     await tester.pumpWidget(
       ProviderScope(
@@ -49,6 +57,7 @@ void main() {
           initialAppSettingsProvider.overrideWithValue(testAppSettings),
           receiverServiceSourceProvider.overrideWithValue(source),
           transfersServiceSourceProvider.overrideWithValue(source),
+          savedDevicesRepositoryProvider.overrideWithValue(savedDevicesRepo),
         ],
         child: MaterialApp.router(routerConfig: router),
       ),
@@ -81,10 +90,12 @@ void main() {
     WidgetTester tester,
   ) async {
     final router = buildAppRouter();
+    final savedDevicesRepo = await mockSavedDevicesRepo();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          savedDevicesRepositoryProvider.overrideWithValue(savedDevicesRepo),
         ],
         child: MaterialApp.router(routerConfig: router),
       ),
@@ -96,7 +107,7 @@ void main() {
     );
 
     await tester.tap(find.byTooltip('Settings'));
-    await tester.pumpAndSettle();
+    await pumpFinite(tester);
 
     expect(
       router.routeInformationProvider.value.uri.toString(),
@@ -113,10 +124,12 @@ void main() {
     final droppedFile = File('${tempDir.path}/report.pdf')
       ..writeAsStringSync('preview');
     final router = buildAppRouter();
+    final savedDevicesRepo = await mockSavedDevicesRepo();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          savedDevicesRepositoryProvider.overrideWithValue(savedDevicesRepo),
         ],
         child: MaterialApp.router(routerConfig: router),
       ),
@@ -130,7 +143,7 @@ void main() {
     final dropZone = tester.widget<SendDropZone>(find.byType(SendDropZone));
     dropZone.onDropPaths([droppedFile.path]);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump(const Duration(milliseconds: 500));
 
     expect(
       router.routeInformationProvider.value.uri.toString(),
@@ -145,10 +158,12 @@ void main() {
     (WidgetTester tester) async {
       final directory = Directory.systemTemp.createTempSync('drift_shell_dir');
       final router = buildAppRouter();
+      final savedDevicesRepo = await mockSavedDevicesRepo();
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
             initialAppSettingsProvider.overrideWithValue(testAppSettings),
+            savedDevicesRepositoryProvider.overrideWithValue(savedDevicesRepo),
           ],
           child: MaterialApp.router(routerConfig: router),
         ),
@@ -157,7 +172,7 @@ void main() {
       final dropZone = tester.widget<SendDropZone>(find.byType(SendDropZone));
       dropZone.onDropPaths([directory.path]);
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump(const Duration(milliseconds: 500));
 
       expect(
         router.routeInformationProvider.value.uri.toString(),
@@ -185,20 +200,22 @@ void main() {
       ],
     );
     final router = buildAppRouter();
+    final savedDevicesRepo = await mockSavedDevicesRepo();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           initialAppSettingsProvider.overrideWithValue(testAppSettings),
           sendSelectionPickerProvider.overrideWithValue(picker),
+          savedDevicesRepositoryProvider.overrideWithValue(savedDevicesRepo),
         ],
         child: MaterialApp.router(routerConfig: router),
       ),
     );
 
     await tester.tap(find.text('Select files'));
-    await tester.pumpAndSettle();
+    await pumpFinite(tester);
     await tester.tap(find.text('Files'));
-    await tester.pumpAndSettle();
+    await pumpFinite(tester);
 
     expect(picker.filesPickCount, 1);
     expect(picker.folderPickCount, 0);
@@ -223,20 +240,22 @@ void main() {
       ],
     );
     final router = buildAppRouter();
+    final savedDevicesRepo = await mockSavedDevicesRepo();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           initialAppSettingsProvider.overrideWithValue(testAppSettings),
           sendSelectionPickerProvider.overrideWithValue(picker),
+          savedDevicesRepositoryProvider.overrideWithValue(savedDevicesRepo),
         ],
         child: MaterialApp.router(routerConfig: router),
       ),
     );
 
     await tester.tap(find.text('Select files'));
-    await tester.pumpAndSettle();
+    await pumpFinite(tester);
     await tester.tap(find.text('Folder'));
-    await tester.pumpAndSettle();
+    await pumpFinite(tester);
 
     expect(picker.filesPickCount, 0);
     expect(picker.folderPickCount, 1);

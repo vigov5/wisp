@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use drift_core::protocol::{DeviceType, Identity, TransferRole};
+use drift_core::protocol::{Identity, TransferRole};
 use drift_core::transfer::{
     SendRequest, Sender, SenderEvent as CoreSenderEvent, TransferOutcome as CoreTransferOutcome,
     TransferPlan,
@@ -184,6 +184,7 @@ impl SendSession {
         while let Some(core_event) = core_events.next().await {
             let mapped =
                 map_sender_event(&mut current_label, &preview, &mut current_plan, core_event);
+            let mapped = maybe_demote_pre_handshake_failure(&last_event, mapped);
             emit_send_event_stamped(&event_tx, &current_path, &last_event, mapped);
         }
 
@@ -279,6 +280,55 @@ fn emit_send_event_stamped(
     event.connection_path = Some(current_path.lock().unwrap().clone());
     *last_event.lock().unwrap() = Some(event.clone());
     let _ = event_tx.send(event);
+}
+
+/// When the sender hits a Failed event before any Hello has been exchanged
+/// (i.e., we never advanced past `Connecting`), the most likely cause is the
+/// peer being offline or not in receive mode — not a generic "connection
+/// lost" mid-transfer. Re-classify so the user sees an actionable hint.
+///
+/// We pick between two kinds based on whether iroh ever observed an active
+/// connection path before the failure:
+///   - never observed any active path → [`UserFacingErrorKind::PeerUnreachable`]
+///     (peer probably offline / out of range).
+///   - observed Direct or Relay briefly, then dial failed → [`UserFacingErrorKind::PeerNotReceiving`]
+///     (peer is on the network but isn't accepting transfers).
+///
+/// This is a heuristic — iroh's `ConnectError` doesn't cleanly distinguish
+/// the two cases at the source, but the connection-path watcher's record is
+/// a useful proxy: if we never saw the peer light up an active path, we
+/// almost certainly never reached them.
+fn maybe_demote_pre_handshake_failure(
+    last_event: &Arc<StdMutex<Option<SendEvent>>>,
+    mut event: SendEvent,
+) -> SendEvent {
+    if !matches!(event.phase, SendPhase::Failed) {
+        return event;
+    }
+    let prior = last_event.lock().unwrap().clone();
+    let prior_phase = prior.as_ref().map(|e| e.phase);
+    let pre_handshake = matches!(prior_phase, None | Some(SendPhase::Connecting));
+    if !pre_handshake {
+        return event;
+    }
+
+    let observed_active_path = prior
+        .as_ref()
+        .and_then(|e| e.connection_path.as_ref())
+        .is_some_and(|path| {
+            matches!(
+                path.kind,
+                drift_core::util::ConnectionPathKind::Direct
+                    | drift_core::util::ConnectionPathKind::Relay
+            )
+        });
+    let kind = if observed_active_path {
+        UserFacingErrorKind::PeerNotReceiving
+    } else {
+        UserFacingErrorKind::PeerUnreachable
+    };
+    event.error = Some(UserFacingError::from_kind(kind));
+    event
 }
 
 fn spawn_send_path_watcher(
@@ -526,13 +576,127 @@ fn map_sender_event(
 
 #[cfg(test)]
 mod tests {
-    use super::{SendRun, failed_event_from_error, is_receiver_decline_cancel};
+    use super::{
+        SendRun, failed_event_from_error, is_receiver_decline_cancel,
+        maybe_demote_pre_handshake_failure,
+    };
     use crate::error::{AppError, UserFacingErrorKind};
+    use crate::types::{SendEvent, SendPhase};
     use drift_core::protocol::{CancelPhase, TransferRole};
     use drift_core::transfer::TransferCancellation;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex as StdMutex};
     use tokio::sync::{Mutex, mpsc, oneshot, watch};
     use tokio_stream::wrappers::UnboundedReceiverStream;
+
+    fn synthetic_event(phase: SendPhase) -> SendEvent {
+        SendEvent {
+            phase,
+            destination_label: "Receiver".to_owned(),
+            status_message: String::new(),
+            item_count: 0,
+            total_size: 0,
+            bytes_sent: 0,
+            plan: None,
+            snapshot: None,
+            remote_device_type: None,
+            remote_endpoint_id: None,
+            connection_path: None,
+            error: None,
+        }
+    }
+
+    fn synthetic_event_with_path(
+        phase: SendPhase,
+        path: drift_core::util::ConnectionPath,
+    ) -> SendEvent {
+        let mut e = synthetic_event(phase);
+        e.connection_path = Some(path);
+        e
+    }
+
+    #[test]
+    fn demote_no_prior_event_yields_unreachable() {
+        // Never observed any path → peer is probably offline.
+        let last = Arc::new(StdMutex::new(None));
+        let event = maybe_demote_pre_handshake_failure(&last, synthetic_event(SendPhase::Failed));
+        let kind = event.error.expect("error").kind();
+        assert_eq!(kind, UserFacingErrorKind::PeerUnreachable);
+    }
+
+    #[test]
+    fn demote_connecting_with_unknown_path_yields_unreachable() {
+        // Connecting phase reached but the watcher never saw any active path.
+        let prior = synthetic_event_with_path(SendPhase::Connecting, drift_core::util::ConnectionPath::unknown());
+        let last = Arc::new(StdMutex::new(Some(prior)));
+        let event = maybe_demote_pre_handshake_failure(&last, synthetic_event(SendPhase::Failed));
+        let kind = event.error.expect("error").kind();
+        assert_eq!(kind, UserFacingErrorKind::PeerUnreachable);
+    }
+
+    #[test]
+    fn demote_connecting_with_relay_path_yields_not_receiving() {
+        // We did connect (relay path observed) but never made it to handshake.
+        let prior = synthetic_event_with_path(
+            SendPhase::Connecting,
+            drift_core::util::ConnectionPath {
+                kind: drift_core::util::ConnectionPathKind::Relay,
+                relay_url: Some("https://relay.example/".to_owned()),
+                direct_addr: None,
+            },
+        );
+        let last = Arc::new(StdMutex::new(Some(prior)));
+        let event = maybe_demote_pre_handshake_failure(&last, synthetic_event(SendPhase::Failed));
+        let kind = event.error.expect("error").kind();
+        assert_eq!(kind, UserFacingErrorKind::PeerNotReceiving);
+    }
+
+    #[test]
+    fn demote_connecting_with_direct_path_yields_not_receiving() {
+        let prior = synthetic_event_with_path(
+            SendPhase::Connecting,
+            drift_core::util::ConnectionPath {
+                kind: drift_core::util::ConnectionPathKind::Direct,
+                relay_url: None,
+                direct_addr: Some("192.168.1.5:5000".to_owned()),
+            },
+        );
+        let last = Arc::new(StdMutex::new(Some(prior)));
+        let event = maybe_demote_pre_handshake_failure(&last, synthetic_event(SendPhase::Failed));
+        let kind = event.error.expect("error").kind();
+        assert_eq!(kind, UserFacingErrorKind::PeerNotReceiving);
+    }
+
+    #[test]
+    fn keep_failed_classification_when_prior_reached_handshake() {
+        let prior = synthetic_event(SendPhase::WaitingForDecision);
+        let last = Arc::new(StdMutex::new(Some(prior)));
+        let mut failed = synthetic_event(SendPhase::Failed);
+        failed.error = Some(crate::error::UserFacingError::from_kind(
+            UserFacingErrorKind::ConnectionLost,
+        ));
+        let event = maybe_demote_pre_handshake_failure(&last, failed);
+        let kind = event.error.expect("error").kind();
+        assert_eq!(kind, UserFacingErrorKind::ConnectionLost);
+    }
+
+    #[test]
+    fn keep_failed_classification_when_prior_was_sending() {
+        let last = Arc::new(StdMutex::new(Some(synthetic_event(SendPhase::Sending))));
+        let mut failed = synthetic_event(SendPhase::Failed);
+        failed.error = Some(crate::error::UserFacingError::from_kind(
+            UserFacingErrorKind::ConnectionLost,
+        ));
+        let event = maybe_demote_pre_handshake_failure(&last, failed);
+        let kind = event.error.expect("error").kind();
+        assert_eq!(kind, UserFacingErrorKind::ConnectionLost);
+    }
+
+    #[test]
+    fn passthrough_non_failed_events_unchanged() {
+        let last = Arc::new(StdMutex::new(None));
+        let event = maybe_demote_pre_handshake_failure(&last, synthetic_event(SendPhase::Sending));
+        assert!(event.error.is_none(), "non-Failed events must not gain an error");
+    }
 
     #[test]
     fn failed_event_uses_structured_error() {

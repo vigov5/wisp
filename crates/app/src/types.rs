@@ -94,6 +94,7 @@ pub struct ReceiverOfferEvent {
     pub snapshot: Option<TransferSnapshot>,
     pub connection_path: Option<ConnectionPath>,
     pub sender_endpoint_id: Option<String>,
+    pub sender_ticket: Option<String>,
     pub total_size_label: String,
     pub files: Vec<ReceiverOfferFile>,
     pub error: Option<UserFacingError>,

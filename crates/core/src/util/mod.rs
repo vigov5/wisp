@@ -314,6 +314,49 @@ fn make_ticket_from_addr(addr: EndpointAddr) -> std::result::Result<String, Tick
     Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 
+/// Build a ticket string from a peer's `EndpointId` plus optional connection
+/// hints. Used by the receiver after a transfer completes to persist a
+/// "send back" ticket without requiring an active iroh `Endpoint`.
+///
+/// Empty / blank hint strings are dropped silently. Invalid relay URLs or
+/// socket addresses produce a `TicketError`. Callers in event-emission paths
+/// should treat errors as "no ticket"; iroh's pkarr discovery can resolve a
+/// ticket carrying only an `EndpointId`, so empty `addrs` is acceptable.
+pub fn synthesize_ticket(
+    endpoint_id: iroh::EndpointId,
+    relay_url: Option<&str>,
+    direct_addr: Option<&str>,
+) -> std::result::Result<String, TicketError> {
+    let mut addrs: Vec<EncodedTransportAddr> = Vec::new();
+
+    if let Some(s) = direct_addr.map(str::trim).filter(|s| !s.is_empty()) {
+        // Validate via parse; the on-the-wire form keeps the original string.
+        let _: std::net::SocketAddr =
+            s.parse().map_err(|source| TicketError::ParseSocketAddr {
+                value: s.to_owned(),
+                source,
+            })?;
+        addrs.push(EncodedTransportAddr::Ip(s.to_owned()));
+    }
+
+    if let Some(s) = relay_url.map(str::trim).filter(|s| !s.is_empty()) {
+        let _: iroh::RelayUrl =
+            s.parse().map_err(|source| TicketError::ParseRelayUrl {
+                value: s.to_owned(),
+                source: Box::new(source),
+            })?;
+        addrs.push(EncodedTransportAddr::Relay(s.to_owned()));
+    }
+
+    let ticket = TransferTicket {
+        node_id: endpoint_id.to_string(),
+        addrs,
+    };
+
+    let bytes = bincode::serialize(&ticket).map_err(|source| TicketError::Serialize { source })?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
 pub fn decode_ticket(ticket: &str) -> std::result::Result<EndpointAddr, TicketError> {
     let bytes = URL_SAFE_NO_PAD
         .decode(ticket)
@@ -458,5 +501,87 @@ mod connection_path_tests {
         assert_eq!(default.kind, ConnectionPathKind::Unknown);
         assert!(default.relay_url.is_none());
         assert!(default.direct_addr.is_none());
+    }
+}
+
+#[cfg(test)]
+mod synthetic_ticket_tests {
+    use super::*;
+    use iroh::SecretKey;
+
+    fn sample_id() -> iroh::EndpointId {
+        SecretKey::from_bytes(&[7u8; 32]).public()
+    }
+
+    #[test]
+    fn empty_hints_round_trip_endpoint_id_only() {
+        let id = sample_id();
+        let ticket = synthesize_ticket(id, None, None).expect("ticket");
+        let decoded = decode_ticket(&ticket).expect("decode");
+        assert_eq!(decoded.id, id);
+        assert!(decoded.addrs.is_empty());
+    }
+
+    #[test]
+    fn blank_hints_treated_as_none() {
+        let id = sample_id();
+        let ticket = synthesize_ticket(id, Some("   "), Some("")).expect("ticket");
+        let decoded = decode_ticket(&ticket).expect("decode");
+        assert_eq!(decoded.id, id);
+        assert!(decoded.addrs.is_empty());
+    }
+
+    #[test]
+    fn relay_only_round_trips() {
+        let id = sample_id();
+        let ticket = synthesize_ticket(id, Some("https://relay.example/"), None).expect("ticket");
+        let decoded = decode_ticket(&ticket).expect("decode");
+        assert_eq!(decoded.id, id);
+        let has_relay = decoded
+            .addrs
+            .iter()
+            .any(|a| matches!(a, TransportAddr::Relay(url) if url.as_str() == "https://relay.example/"));
+        assert!(has_relay, "decoded ticket missing relay addr");
+    }
+
+    #[test]
+    fn direct_only_round_trips() {
+        let id = sample_id();
+        let ticket = synthesize_ticket(id, None, Some("192.168.1.5:5000")).expect("ticket");
+        let decoded = decode_ticket(&ticket).expect("decode");
+        assert_eq!(decoded.id, id);
+        let has_ip = decoded
+            .addrs
+            .iter()
+            .any(|a| matches!(a, TransportAddr::Ip(s) if s.to_string() == "192.168.1.5:5000"));
+        assert!(has_ip, "decoded ticket missing direct addr");
+    }
+
+    #[test]
+    fn both_hints_round_trip() {
+        let id = sample_id();
+        let ticket = synthesize_ticket(
+            id,
+            Some("https://relay.example/"),
+            Some("10.0.0.1:1234"),
+        )
+        .expect("ticket");
+        let decoded = decode_ticket(&ticket).expect("decode");
+        assert_eq!(decoded.id, id);
+        assert_eq!(decoded.addrs.len(), 2);
+    }
+
+    #[test]
+    fn invalid_relay_url_errors() {
+        let id = sample_id();
+        let result = synthesize_ticket(id, Some("not a url"), None);
+        assert!(matches!(result, Err(TicketError::ParseRelayUrl { .. })));
+    }
+
+    #[test]
+    fn invalid_socket_addr_errors() {
+        let id = sample_id();
+        let result = synthesize_ticket(id, None, Some("not.a.socket"));
+        assert!(matches!(result, Err(TicketError::ParseSocketAddr { .. })));
     }
 }

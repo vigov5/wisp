@@ -1065,8 +1065,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ReceiverTransferEvent dco_decode_receiver_transfer_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 16)
-      throw Exception('unexpected arr length: expect 16 but see ${arr.length}');
+    if (arr.length != 17)
+      throw Exception('unexpected arr length: expect 17 but see ${arr.length}');
     return ReceiverTransferEvent(
       phase: dco_decode_receiver_transfer_phase(arr[0]),
       senderName: dco_decode_String(arr[1]),
@@ -1085,7 +1085,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         arr[13],
       ),
       senderEndpointId: dco_decode_opt_String(arr[14]),
-      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[15]),
+      senderTicket: dco_decode_opt_String(arr[15]),
+      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[16]),
     );
   }
 
@@ -1680,6 +1681,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_connectionPath =
         sse_decode_opt_box_autoadd_receiver_connection_path(deserializer);
     var var_senderEndpointId = sse_decode_opt_String(deserializer);
+    var var_senderTicket = sse_decode_opt_String(deserializer);
     var var_error = sse_decode_opt_box_autoadd_user_facing_error_data(
       deserializer,
     );
@@ -1699,6 +1701,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       files: var_files,
       connectionPath: var_connectionPath,
       senderEndpointId: var_senderEndpointId,
+      senderTicket: var_senderTicket,
       error: var_error,
     );
   }
@@ -2364,6 +2367,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       serializer,
     );
     sse_encode_opt_String(self.senderEndpointId, serializer);
+    sse_encode_opt_String(self.senderTicket, serializer);
     sse_encode_opt_box_autoadd_user_facing_error_data(self.error, serializer);
   }
 

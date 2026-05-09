@@ -30,6 +30,7 @@ class AppBootstrap {
 Future<AppBootstrap> loadAppBootstrap({
   String Function()? randomDeviceName,
   String? defaultDownloadRoot,
+  void Function(List<int> secretKeyBytes)? installAppIdentity,
 }) async {
   final prefs = await SharedPreferences.getInstance();
 
@@ -53,9 +54,14 @@ Future<AppBootstrap> loadAppBootstrap({
 
   // Install the persistent app identity so iroh sees a stable EndpointId
   // across launches. Must run before any sender/receiver session starts.
+  // The installer hook is overridable so unit tests can stub it without
+  // initializing the native bridge.
   final identity = IdentityStorage(prefs: prefs);
   final secretKey = await identity.loadOrCreate();
-  rust_simple.setAppIdentity(secretKeyBytes: secretKey);
+  final install =
+      installAppIdentity ??
+      ((bytes) => rust_simple.setAppIdentity(secretKeyBytes: bytes));
+  install(secretKey);
 
   return AppBootstrap(
     settingsRepository: repository,

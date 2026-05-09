@@ -201,6 +201,8 @@ enum SendTransferErrorKind {
   peerDeclined,
   networkUnavailable,
   connectionLost,
+  peerUnreachable,
+  peerNotReceiving,
   permissionDenied,
   fileConflict,
   protocolIncompatible,
@@ -295,6 +297,10 @@ class LocalSendTransferSource implements SendTransferSource {
           SendTransferErrorKind.networkUnavailable,
         rust_error.UserFacingErrorKindData.connectionLost =>
           SendTransferErrorKind.connectionLost,
+        rust_error.UserFacingErrorKindData.peerUnreachable =>
+          SendTransferErrorKind.peerUnreachable,
+        rust_error.UserFacingErrorKindData.peerNotReceiving =>
+          SendTransferErrorKind.peerNotReceiving,
         rust_error.UserFacingErrorKindData.permissionDenied =>
           SendTransferErrorKind.permissionDenied,
         rust_error.UserFacingErrorKindData.fileConflict =>

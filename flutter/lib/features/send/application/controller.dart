@@ -564,7 +564,13 @@ class SendController extends _$SendController {
 
     _stopKeepalive();
 
-    if (result.outcome == SendTransferOutcome.success) {
+    // Persist on success or mid-transfer cancel — both mean the peer was real
+    // and reachable.  Skip on declined/failed: declined = peer rejected (don't
+    // pin in Recent), failed = uncertain whether a connection ever happened.
+    final shouldRemember =
+        result.outcome == SendTransferOutcome.success ||
+        result.outcome == SendTransferOutcome.cancelled;
+    if (shouldRemember) {
       final endpointId = transfer.remoteEndpointId;
       if (endpointId != null && endpointId.isNotEmpty) {
         unawaited(
@@ -579,7 +585,9 @@ class SendController extends _$SendController {
               ),
         );
       }
-      await Future.delayed(const Duration(milliseconds: 1000));
+      if (result.outcome == SendTransferOutcome.success) {
+        await Future.delayed(const Duration(milliseconds: 1000));
+      }
     }
 
     state = SendStateResult(

@@ -176,7 +176,13 @@ void main() {
     );
 
     await tester.tap(find.byTooltip('Settings'));
-    await tester.pumpAndSettle();
+    // Avoid `pumpAndSettle`: when the SettingsFeature route activates,
+    // Flutter's focus system may auto-focus a TextField, which starts the
+    // cursor-blink `AnimationController.repeat()` — an infinite tick that
+    // `pumpAndSettle` never observes as settled.  A finite pump completes
+    // the route transition (~300ms) without waiting on cursor blink.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.text('Settings'), findsWidgets);
     expect(find.text('Device name'), findsOneWidget);

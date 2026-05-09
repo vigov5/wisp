@@ -393,7 +393,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('RECEIVING'), findsOneWidget);
-    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.text('Cancel transfer'), findsOneWidget);
     expect(find.text('INCOMING'), findsNothing);
     expect(find.text('wants to send you 2 files (3.0 KB).'), findsNothing);
   });
@@ -424,7 +424,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump();
 
-    await tester.tap(find.text('Cancel'));
+    await tester.tap(find.text('Cancel transfer'));
     await tester.pumpAndSettle();
 
     expect(

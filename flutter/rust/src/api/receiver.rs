@@ -93,6 +93,7 @@ pub struct ReceiverTransferEvent {
     pub files: Vec<ReceiverTransferFile>,
     pub connection_path: Option<ReceiverConnectionPath>,
     pub sender_endpoint_id: Option<String>,
+    pub sender_ticket: Option<String>,
     pub error: Option<crate::api::error::UserFacingErrorData>,
 }
 
@@ -527,6 +528,7 @@ fn map_event(event: AppReceiverOfferEvent) -> ReceiverTransferEvent {
         files: event.files.into_iter().map(map_file_row).collect(),
         connection_path: event.connection_path.map(map_connection_path),
         sender_endpoint_id: event.sender_endpoint_id,
+        sender_ticket: event.sender_ticket,
         error: map_optional_user_facing_error(event.error),
     }
 }

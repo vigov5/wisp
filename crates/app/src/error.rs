@@ -22,6 +22,11 @@ pub enum UserFacingErrorKind {
     PeerDeclined,
     NetworkUnavailable,
     ConnectionLost,
+    /// Peer never responded to the dial — likely offline / out of range.
+    PeerUnreachable,
+    /// Peer was reachable on the network but not accepting transfers (Drift
+    /// not running or not in Receive mode).
+    PeerNotReceiving,
     PermissionDenied,
     FileConflict,
     ProtocolIncompatible,
@@ -133,7 +138,7 @@ impl UserFacingError {
         self.retryable
     }
 
-    fn from_kind(kind: UserFacingErrorKind) -> Self {
+    pub(crate) fn from_kind(kind: UserFacingErrorKind) -> Self {
         match kind {
             UserFacingErrorKind::InvalidInput => Self::new(
                 kind,
@@ -162,6 +167,20 @@ impl UserFacingError {
                 "Connection lost",
                 "The connection was interrupted.",
                 "Reconnect and try again.",
+                true,
+            ),
+            UserFacingErrorKind::PeerUnreachable => Self::with_recovery(
+                kind,
+                "Couldn't reach device",
+                "Device is offline or out of range.",
+                "Check that the device is online.",
+                true,
+            ),
+            UserFacingErrorKind::PeerNotReceiving => Self::with_recovery(
+                kind,
+                "Device not in Receive mode",
+                "The other device isn't accepting transfers.",
+                "Ask them to open Drift and tap Receive.",
                 true,
             ),
             UserFacingErrorKind::PermissionDenied => Self::new(

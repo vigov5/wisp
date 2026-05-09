@@ -9,15 +9,20 @@ import 'package:app/platform/rust/receiver/fake_source.dart';
 import 'package:app/features/settings/settings_providers.dart';
 import 'package:app/features/send/presentation/send_draft_preview.dart';
 import 'package:app/features/send/presentation/send_transfer_route.dart';
+import 'package:app/features/saved_devices/application/saved_devices_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/settings_test_overrides.dart';
 import 'support/fake_send_selection_picker.dart';
+import 'support/test_overrides.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   test('router exposes the home, settings, and send draft routes', () {
     final router = buildAppRouter();
 
@@ -131,27 +136,29 @@ void main() {
     tester,
   ) async {
     final receiverSource = FakeReceiverServiceSource();
+    final savedDevicesRepo = await mockSavedDevicesRepo();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           initialAppSettingsProvider.overrideWithValue(testAppSettings),
           receiverServiceSourceProvider.overrideWithValue(receiverSource),
+          savedDevicesRepositoryProvider.overrideWithValue(savedDevicesRepo),
         ],
         child: const DriftApp(),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpFinite(tester);
 
     expect(receiverSource.lastDiscoverableEnabled, isTrue);
 
     await tester.tap(find.byTooltip('Settings'));
-    await tester.pumpAndSettle();
+    await pumpFinite(tester);
 
     expect(find.text('Settings'), findsWidgets);
     expect(receiverSource.lastDiscoverableEnabled, isFalse);
 
     await tester.tap(find.byTooltip('Back'));
-    await tester.pumpAndSettle();
+    await pumpFinite(tester);
 
     expect(find.text('Drop files to send'), findsOneWidget);
     expect(receiverSource.lastDiscoverableEnabled, isTrue);
@@ -161,6 +168,7 @@ void main() {
     tester,
   ) async {
     final receiverSource = FakeReceiverServiceSource();
+    final savedDevicesRepo = await mockSavedDevicesRepo();
     late final GoRouter router;
     final discoveryObserver = DiscoveryRouterObserver(() {
       final uri = router.routeInformationProvider.value.uri;
@@ -173,11 +181,12 @@ void main() {
         overrides: [
           initialAppSettingsProvider.overrideWithValue(testAppSettings),
           receiverServiceSourceProvider.overrideWithValue(receiverSource),
+          savedDevicesRepositoryProvider.overrideWithValue(savedDevicesRepo),
         ],
         child: MaterialApp.router(routerConfig: router),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpFinite(tester);
 
     expect(receiverSource.lastDiscoverableEnabled, isTrue);
 
@@ -191,13 +200,13 @@ void main() {
         ),
       ],
     );
-    await tester.pumpAndSettle();
+    await pumpFinite(tester);
 
     expect(find.byType(SendDraftPreview), findsOneWidget);
     expect(receiverSource.lastDiscoverableEnabled, isFalse);
 
     await tester.tap(find.byTooltip('Back'));
-    await tester.pumpAndSettle();
+    await pumpFinite(tester);
 
     expect(find.text('Drop files to send'), findsOneWidget);
     expect(receiverSource.lastDiscoverableEnabled, isTrue);

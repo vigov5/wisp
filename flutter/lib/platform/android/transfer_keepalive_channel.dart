@@ -51,12 +51,21 @@ class TransferKeepalive {
   }
 
   /// Whether the user has granted the battery-optimisation exemption.
-  /// Returns `false` on non-Android platforms.
+  /// Returns `false` on non-Android platforms or when the platform handler is
+  /// missing (e.g., widget tests where the host plugin isn't registered —
+  /// without this guard, the future never completes and `pumpAndSettle`
+  /// hangs).
   static Future<bool> isIgnoringBatteryOptimizations() async {
     if (!_supported) return false;
-    final ok = await _channel.invokeMethod<bool>(
-      'isIgnoringBatteryOptimizations',
-    );
-    return ok ?? false;
+    try {
+      final ok = await _channel.invokeMethod<bool>(
+        'isIgnoringBatteryOptimizations',
+      );
+      return ok ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
   }
 }

@@ -76,6 +76,7 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
                     label: offer.sender.displayName,
                     deviceType: offer.sender.deviceType.name,
                     bytesTransferred: result.bytesTransferred,
+                    lastTicket: event.senderTicket,
                   ),
             );
           }
@@ -93,6 +94,23 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
         case rust_receiver.ReceiverTransferPhase.cancelled:
           final offer = _mapIncomingOffer(event);
           _stopKeepalive();
+          // Persist a recent-device entry even though the transfer didn't
+          // finish — the peer was reachable and the user may want to retry
+          // later.  Uses bytesReceived (partial) for the totalBytes counter.
+          final endpointId = offer.senderEndpointId;
+          if (endpointId != null && endpointId.isNotEmpty) {
+            unawaited(
+              ref
+                  .read(savedDevicesProvider.notifier)
+                  .recordTransfer(
+                    endpointId: endpointId,
+                    label: offer.sender.displayName,
+                    deviceType: offer.sender.deviceType.name,
+                    bytesTransferred: offer.bytesReceived,
+                    lastTicket: event.senderTicket,
+                  ),
+            );
+          }
           state = TransferSessionState.cancelled(
             offer: offer,
             errorMessage: event.error?.message ?? event.statusMessage,
