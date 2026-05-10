@@ -107,6 +107,13 @@ class _SendDestinationSelectorState
     );
   }
 
+  /// Identity key used by [_runScanLoop] to dedupe nearby devices.  Prefers
+  /// the iroh pubkey when known (so the same device behind two mDNS records,
+  /// or after renaming, collapses to one tile).  Falls back to fullname for
+  /// legacy peers that don't surface a pubkey yet.
+  static String _identityKey(NearbyReceiver d) =>
+      d.endpointId.isNotEmpty ? 'pk:${d.endpointId}' : 'fn:${d.fullname}';
+
   /// Minimum wall time per loop iteration. Prevents the loop from spinning the
   /// microtask queue when [scanNearby] returns instantly (e.g. in tests with a
   /// fake source) — without this, `pumpAndSettle` never settles. In production
@@ -124,16 +131,21 @@ class _SendDestinationSelectorState
             .read(receiverServiceProvider.notifier)
             .scanNearby(timeout: const Duration(seconds: 3));
         if (!mounted || !_continuousMode) break;
-        // Merge results: add/refresh seen devices, tolerate up to 2 consecutive
-        // missed rounds before removing (prevents flicker on intermittent scans).
-        final fresh = devices.map((d) => d.fullname).toSet();
+        // Merge by pubkey when available (so two mDNS records for the same
+        // device collapse into one tile, and a renamed device replaces the
+        // cached entry with its fresh label).  Fall back to fullname when
+        // pubkey is empty so legacy peers still get their own entry.
+        final fresh = devices.map(_identityKey).toSet();
         final merged = <String, NearbyReceiver>{};
         for (final d in _nearbyDevices) {
-          merged[d.fullname] = d;
+          merged[_identityKey(d)] = d;
         }
         for (final d in devices) {
-          merged[d.fullname] = d;
-          _deviceMissCount.remove(d.fullname); // seen this round → reset
+          // Fresh scan wins: overwrites any cached entry under the same
+          // identity key, so a device that changed its mDNS label between
+          // sessions shows its new name immediately.
+          merged[_identityKey(d)] = d;
+          _deviceMissCount.remove(_identityKey(d));
         }
         for (final key in merged.keys.toList()) {
           if (!fresh.contains(key)) {

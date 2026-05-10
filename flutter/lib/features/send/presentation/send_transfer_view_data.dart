@@ -77,6 +77,7 @@ class SendTransferPageData {
     this.averageSpeedLabel,
     this.totalSizeLabel,
     this.connectionPath,
+    this.countdownDuration,
   });
 
   final SendTransferPhaseVisualData visual;
@@ -95,6 +96,7 @@ class SendTransferPageData {
   final String? averageSpeedLabel;
   final String? totalSizeLabel;
   final ConnectionPathInfo? connectionPath;
+  final Duration? countdownDuration;
 }
 
 SendTransferPageData buildSendTransferPageData({
@@ -150,7 +152,26 @@ SendTransferPageData buildSendTransferPageData({
           ? formatBytes(transfer.totalSize)
           : null,
       connectionPath: transfer.connectionPath,
+      countdownDuration: state is SendStateTransferring
+          ? _countdownDurationFor(transfer)
+          : null,
     ),
+  };
+}
+
+/// Maps the active send phase onto the wire-level deadline driving it, so the
+/// avatar's red countdown ring stays in sync with what Rust will actually
+/// time out on:
+/// - `connecting` → 30 s handshake timeout (crates/core/.../sender.rs:366).
+/// - `waitingForDecision` → 120 s receiver decision timer
+///   (crates/core/.../receiver.rs:293).  When the receiver hits this we'll
+///   see Failed/connection-closed on the sender side.
+/// Other phases don't have a user-meaningful deadline, so we skip the ring.
+Duration? _countdownDurationFor(SendTransferState transfer) {
+  return switch (transfer.phase) {
+    SendTransferPhase.connecting => const Duration(seconds: 30),
+    SendTransferPhase.waitingForDecision => const Duration(seconds: 120),
+    _ => null,
   };
 }
 

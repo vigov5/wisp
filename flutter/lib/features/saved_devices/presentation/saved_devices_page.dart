@@ -156,19 +156,31 @@ class _SavedDeviceRow extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${shortPubkey(device.endpointId)} · '
-                    '${device.transferCount} transfer'
-                    '${device.transferCount == 1 ? '' : 's'} · '
-                    '${_relativeTime(device.lastSeenAt)}',
-                    style: driftSans(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w400,
-                      color: kMuted,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      PubkeyBadge(
+                        endpointId: device.endpointId,
+                        size: PubkeyBadgeSize.small,
+                        tooltip: 'Identity badge (from public key) — '
+                            'same color = same device.',
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          '${device.transferCount} transfer'
+                          '${device.transferCount == 1 ? '' : 's'} · '
+                          '${_relativeTime(device.lastSeenAt)}',
+                          style: driftSans(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w400,
+                            color: kMuted,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

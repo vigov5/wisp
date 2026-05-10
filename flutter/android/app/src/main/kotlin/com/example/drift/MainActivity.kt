@@ -83,6 +83,7 @@ class MainActivity : FlutterActivity() {
                     startActivityForResult(intent, REQUEST_CODE_PICK_SAVE_FOLDER)
                 }
                 "saveToSafUri" -> saveToSafUri(call, result)
+                "openSavedFolder" -> openSavedFolder(call, result)
                 else -> result.notImplemented()
             }
         }
@@ -416,6 +417,45 @@ class MainActivity : FlutterActivity() {
             result.success(docFile.uri.toString())
         } catch (e: Exception) {
             result.error("SAVE_FAILED", e.message, null)
+        }
+    }
+
+    // Opens the system Files app at the receive destination.  When [path] is
+    // a SAF tree URI (`content://…/tree/…`) we resolve it to a document URI
+    // and ACTION_VIEW that — Files apps recognize the directory MIME type
+    // and navigate into it.  Otherwise (legacy or default Downloads/Drift
+    // path) we fall back to DownloadManager.ACTION_VIEW_DOWNLOADS so the
+    // user still ends up looking at where their files landed.
+    private fun openSavedFolder(call: MethodCall, result: MethodChannel.Result) {
+        val path = call.argument<String>("path").orEmpty()
+        try {
+            val intent: Intent = if (path.startsWith("content://")) {
+                val treeUri = Uri.parse(path)
+                val docId = android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+                val docUri = android.provider.DocumentsContract
+                    .buildDocumentUriUsingTree(treeUri, docId)
+                Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(
+                        docUri,
+                        android.provider.DocumentsContract.Document.MIME_TYPE_DIR,
+                    )
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            } else {
+                Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS)
+            }
+
+            try {
+                startActivity(intent)
+            } catch (_: ActivityNotFoundException) {
+                // Some Files apps reject the directory MIME type; fall back
+                // to the generic Downloads view so the button never silently
+                // fails on the user.
+                startActivity(Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS))
+            }
+            result.success(null)
+        } catch (e: Exception) {
+            result.error("OPEN_FAILED", e.message, null)
         }
     }
 

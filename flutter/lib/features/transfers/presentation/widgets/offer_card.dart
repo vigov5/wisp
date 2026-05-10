@@ -52,6 +52,10 @@ class OfferCard extends StatelessWidget {
           deviceType: deviceTypeLabel(offer.sender.deviceType),
           animate: animate,
           mode: SendingStripMode.waitingOnRecipient,
+          // Mirrors crates/core/src/transfer/receiver.rs decision timer
+          // (`tokio::time::sleep(Duration::from_secs(120))`).  Keep these
+          // two values in sync.
+          countdownDuration: const Duration(seconds: 120),
         ),
         manifest: TransferManifestPanel(
           mode: TransferManifestPanelMode.previewTree,

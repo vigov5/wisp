@@ -103,6 +103,26 @@ class AndroidMediaStore {
     }
   }
 
+  /// Launches the system Files app focused on the receive destination.
+  ///
+  /// [path] is whatever the user selected as their save root:
+  /// - A SAF tree URI (`content://…/tree/…`) → opens that exact folder via
+  ///   `ACTION_VIEW` on the document URI.
+  /// - Anything else → opens the system Downloads view via
+  ///   `DownloadManager.ACTION_VIEW_DOWNLOADS` so the user lands on
+  ///   `Downloads/Drift/`.
+  ///
+  /// Errors are surfaced as a log line — the UI is best-effort and shouldn't
+  /// crash the result screen if the device has no Files app.
+  static Future<void> openSavedFolder(String path) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('openSavedFolder', {'path': path});
+    } on PlatformException catch (e) {
+      debugPrint('[AndroidMediaStore] openSavedFolder failed: ${e.message}');
+    }
+  }
+
   /// Deletes the temp receive cache directory at [cacheRoot].
   /// Errors are silently ignored (best-effort cleanup).
   static Future<void> cleanupReceiveCache(String cacheRoot) async {

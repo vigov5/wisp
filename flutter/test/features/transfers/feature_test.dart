@@ -60,6 +60,7 @@ String _expectedOpenFolderLabel([TargetPlatform? platform]) {
     case TargetPlatform.linux:
       return 'Show in Files';
     case TargetPlatform.android:
+      return 'Show in Files';
     case TargetPlatform.iOS:
     case TargetPlatform.fuchsia:
       return 'Open folder';
@@ -537,6 +538,59 @@ void main() {
 
     expect(openedPaths, equals(<String>[testAppSettings.downloadRoot]));
     expect(find.text('Done'), findsOneWidget);
+  });
+
+  testWidgets('successful receive on Android shows show-in-files button', (
+    tester,
+  ) async {
+    // Regression: Android used to be opted out of canOpenSavedFolder so the
+    // result card hid the secondary action.  Sender flow already had
+    // platform-specific reveal; the receiver should match.
+    final source = FakeReceiverServiceSource();
+    final openedPaths = <String>[];
+    final router = _buildReceiveFeatureRouter(size: const Size(440, 560));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          transferReviewAnimationProvider.overrideWithValue(false),
+          initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          receiverServiceSourceProvider.overrideWithValue(source),
+          transfersServiceSourceProvider.overrideWithValue(source),
+          transferTargetPlatformProvider.overrideWithValue(
+            TargetPlatform.android,
+          ),
+          savedFolderOpenerProvider.overrideWithValue((path) async {
+            openedPaths.add(path);
+          }),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+
+    source.emitIncomingOffer(senderName: 'Maya');
+    await tester.pumpAndSettle();
+    await _waitForReceiveTransferRoute(tester, router);
+
+    await tester.tap(find.text('Save to Downloads'));
+    await tester.pumpAndSettle();
+    await tester.pump();
+
+    source.emitCompletedTransfer(
+      senderName: 'Maya',
+      saveRootLabel: 'Downloads',
+    );
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+
+    final openLabel = _expectedOpenFolderLabel(TargetPlatform.android);
+    expect(openLabel, 'Show in Files');
+    expect(find.text(openLabel), findsOneWidget);
+
+    await tester.tap(find.text(openLabel));
+    await tester.pumpAndSettle();
+
+    expect(openedPaths, equals(<String>[testAppSettings.downloadRoot]));
   });
 
   testWidgets('done on a completed transfer returns to idle', (tester) async {
