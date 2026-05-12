@@ -140,6 +140,7 @@ impl SendSession {
                 snapshot: None,
                 remote_device_type: None,
                 remote_endpoint_id: None,
+                remote_ticket: None,
                 connection_path: None,
                 error: None,
             },
@@ -186,6 +187,12 @@ impl SendSession {
         let initial_path = snapshot_connection_path(&watcher_endpoint, peer_endpoint_id).await;
         let current_path: Arc<StdMutex<ConnectionPath>> = Arc::new(StdMutex::new(initial_path));
         let last_event: Arc<StdMutex<Option<SendEvent>>> = Arc::new(StdMutex::new(None));
+        // Re-encode the resolved peer addr so emitted events carry a ticket
+        // Dart can persist as `lastTicket`.  Encoding errors fall back to
+        // `None` — pkarr will still be able to find the peer via endpoint id,
+        // we just lose the offline-LAN fast path on next reconnect.
+        let remote_ticket: Option<String> =
+            drift_core::util::encode_ticket(resolved.peer_endpoint_addr.clone()).ok();
         let sender = Sender::new(
             endpoint,
             identity,
@@ -216,8 +223,9 @@ impl SendSession {
         );
 
         while let Some(core_event) = core_events.next().await {
-            let mapped =
+            let mut mapped =
                 map_sender_event(&mut current_label, &preview, &mut current_plan, core_event);
+            mapped.remote_ticket = remote_ticket.clone();
             let mapped = maybe_demote_pre_handshake_failure(&last_event, mapped);
             emit_send_event_stamped(&event_tx, &current_path, &last_event, mapped);
         }
@@ -436,6 +444,7 @@ pub(crate) fn failed_event_from_error(
         snapshot: None,
         remote_device_type: None,
         remote_endpoint_id: None,
+        remote_ticket: None,
         connection_path: None,
         error: Some(error),
     }
@@ -459,6 +468,7 @@ fn map_sender_event(
             snapshot: None,
             remote_device_type: None,
             remote_endpoint_id: None,
+            remote_ticket: None,
             connection_path: None,
             error: None,
         },
@@ -481,6 +491,7 @@ fn map_sender_event(
                 snapshot: None,
                 remote_device_type: Some(device_type_label(receiver_device_type)),
                 remote_endpoint_id: Some(receiver_endpoint_id.to_string()),
+                remote_ticket: None,
                 connection_path: None,
                 error: None,
             }
@@ -504,6 +515,7 @@ fn map_sender_event(
                 snapshot: None,
                 remote_device_type: Some(device_type_label(receiver_device_type)),
                 remote_endpoint_id: Some(receiver_endpoint_id.to_string()),
+                remote_ticket: None,
                 connection_path: None,
                 error: None,
             }
@@ -523,6 +535,7 @@ fn map_sender_event(
             snapshot: None,
             remote_device_type: None,
             remote_endpoint_id: None,
+            remote_ticket: None,
             connection_path: None,
             error: Some(UserFacingError::new(
                 UserFacingErrorKind::PeerDeclined,
@@ -545,6 +558,7 @@ fn map_sender_event(
             snapshot: None,
             remote_device_type: None,
             remote_endpoint_id: None,
+            remote_ticket: None,
             connection_path: None,
             error: Some(UserFacingError::from(error)),
         },
@@ -561,6 +575,7 @@ fn map_sender_event(
                 snapshot: None,
                 remote_device_type: None,
                 remote_endpoint_id: None,
+                remote_ticket: None,
                 connection_path: None,
                 error: None,
             }
@@ -582,6 +597,7 @@ fn map_sender_event(
             snapshot: Some(snapshot.clone()),
             remote_device_type: None,
             remote_endpoint_id: None,
+            remote_ticket: None,
             connection_path: None,
             error: None,
         },
@@ -602,6 +618,7 @@ fn map_sender_event(
             snapshot: Some(snapshot.clone()),
             remote_device_type: None,
             remote_endpoint_id: None,
+            remote_ticket: None,
             connection_path: None,
             error: None,
         },
@@ -634,6 +651,7 @@ mod tests {
             snapshot: None,
             remote_device_type: None,
             remote_endpoint_id: None,
+            remote_ticket: None,
             connection_path: None,
             error: None,
         }

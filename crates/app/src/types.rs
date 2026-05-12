@@ -37,6 +37,12 @@ pub struct SendEvent {
     pub snapshot: Option<TransferSnapshot>,
     pub remote_device_type: Option<String>,
     pub remote_endpoint_id: Option<String>,
+    /// Re-serialized ticket of the resolved peer addr.  For code-based sends
+    /// the ticket is owned by the rendezvous server, not the original
+    /// request, so we surface it here once `claim_peer` returns — the Dart
+    /// saved-devices repo persists it as `lastTicket` for fast-reconnect.
+    /// `None` until the destination resolves, or when re-encoding fails.
+    pub remote_ticket: Option<String>,
     pub connection_path: Option<ConnectionPath>,
     pub error: Option<UserFacingError>,
 }

@@ -378,6 +378,8 @@ class SendController extends _$SendController {
           update.remoteDeviceType ?? currentState.transfer.remoteDeviceType,
       remoteEndpointId:
           update.remoteEndpointId ?? currentState.transfer.remoteEndpointId,
+      remoteTicket:
+          update.remoteTicket ?? currentState.transfer.remoteTicket,
       connectionPath:
           update.connectionPath ?? currentState.transfer.connectionPath,
       error: update.error ?? currentState.transfer.error,
@@ -573,6 +575,14 @@ class SendController extends _$SendController {
     if (shouldRemember) {
       final endpointId = transfer.remoteEndpointId;
       if (endpointId != null && endpointId.isNotEmpty) {
+        // Code-based sends never carry a ticket in the original request
+        // (the rendezvous server owns it).  Prefer the Rust-emitted
+        // `remoteTicket` (re-encoded from the resolved peer addr) so the
+        // Recent tile has cached connection info next session; fall back
+        // to the request ticket for nearby/QR sends that already carry
+        // one end-to-end.
+        final lastTicket =
+            transfer.remoteTicket ?? currentState.request.ticket;
         unawaited(
           ref
               .read(savedDevicesProvider.notifier)
@@ -585,7 +595,7 @@ class SendController extends _$SendController {
                 // value isn't replaced by the fallback.
                 deviceType: transfer.remoteDeviceType ?? '',
                 bytesTransferred: transfer.bytesSent,
-                lastTicket: currentState.request.ticket,
+                lastTicket: lastTicket,
               ),
         );
       }

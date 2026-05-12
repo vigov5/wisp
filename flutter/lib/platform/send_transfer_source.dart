@@ -62,6 +62,7 @@ class SendTransferUpdate {
     this.snapshot,
     this.remoteDeviceType,
     this.remoteEndpointId,
+    this.remoteTicket,
     this.connectionPath,
     this.error,
   });
@@ -174,6 +175,9 @@ class SendTransferUpdate {
   final rust_transfer.TransferSnapshotData? snapshot;
   final String? remoteDeviceType;
   final String? remoteEndpointId;
+  /// Re-serialized peer ticket — flows from Rust once `claim_peer` resolves
+  /// so the controller can persist it via saved-devices `lastTicket`.
+  final String? remoteTicket;
   final ConnectionPathInfo? connectionPath;
   final SendTransferErrorData? error;
 }
@@ -273,6 +277,7 @@ class LocalSendTransferSource implements SendTransferSource {
       snapshot: event.snapshot,
       remoteDeviceType: event.remoteDeviceType,
       remoteEndpointId: event.remoteEndpointId,
+      remoteTicket: event.remoteTicket,
       connectionPath: ConnectionPathInfo.fromSender(event.connectionPath),
       error: _mapError(event.error),
     );

@@ -1236,8 +1236,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SendTransferEvent dco_decode_send_transfer_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 12)
-      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
+    if (arr.length != 13)
+      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
     return SendTransferEvent(
       phase: dco_decode_send_transfer_phase(arr[0]),
       destinationLabel: dco_decode_String(arr[1]),
@@ -1249,8 +1249,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       snapshot: dco_decode_opt_box_autoadd_transfer_snapshot_data(arr[7]),
       remoteDeviceType: dco_decode_opt_String(arr[8]),
       remoteEndpointId: dco_decode_opt_String(arr[9]),
-      connectionPath: dco_decode_opt_box_autoadd_send_connection_path(arr[10]),
-      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[11]),
+      remoteTicket: dco_decode_opt_String(arr[10]),
+      connectionPath: dco_decode_opt_box_autoadd_send_connection_path(arr[11]),
+      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[12]),
     );
   }
 
@@ -1897,6 +1898,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     );
     var var_remoteDeviceType = sse_decode_opt_String(deserializer);
     var var_remoteEndpointId = sse_decode_opt_String(deserializer);
+    var var_remoteTicket = sse_decode_opt_String(deserializer);
     var var_connectionPath = sse_decode_opt_box_autoadd_send_connection_path(
       deserializer,
     );
@@ -1914,6 +1916,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       snapshot: var_snapshot,
       remoteDeviceType: var_remoteDeviceType,
       remoteEndpointId: var_remoteEndpointId,
+      remoteTicket: var_remoteTicket,
       connectionPath: var_connectionPath,
       error: var_error,
     );
@@ -2573,6 +2576,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     );
     sse_encode_opt_String(self.remoteDeviceType, serializer);
     sse_encode_opt_String(self.remoteEndpointId, serializer);
+    sse_encode_opt_String(self.remoteTicket, serializer);
     sse_encode_opt_box_autoadd_send_connection_path(
       self.connectionPath,
       serializer,

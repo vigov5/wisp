@@ -1260,6 +1260,7 @@ impl SseDecode for crate::api::sender::SendTransferEvent {
             <Option<crate::api::transfer::TransferSnapshotData>>::sse_decode(deserializer);
         let mut var_remoteDeviceType = <Option<String>>::sse_decode(deserializer);
         let mut var_remoteEndpointId = <Option<String>>::sse_decode(deserializer);
+        let mut var_remoteTicket = <Option<String>>::sse_decode(deserializer);
         let mut var_connectionPath =
             <Option<crate::api::sender::SendConnectionPath>>::sse_decode(deserializer);
         let mut var_error =
@@ -1275,6 +1276,7 @@ impl SseDecode for crate::api::sender::SendTransferEvent {
             snapshot: var_snapshot,
             remote_device_type: var_remoteDeviceType,
             remote_endpoint_id: var_remoteEndpointId,
+            remote_ticket: var_remoteTicket,
             connection_path: var_connectionPath,
             error: var_error,
         };
@@ -1854,6 +1856,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::sender::SendTransferEvent {
             self.snapshot.into_into_dart().into_dart(),
             self.remote_device_type.into_into_dart().into_dart(),
             self.remote_endpoint_id.into_into_dart().into_dart(),
+            self.remote_ticket.into_into_dart().into_dart(),
             self.connection_path.into_into_dart().into_dart(),
             self.error.into_into_dart().into_dart(),
         ]
@@ -2446,6 +2449,7 @@ impl SseEncode for crate::api::sender::SendTransferEvent {
         <Option<crate::api::transfer::TransferSnapshotData>>::sse_encode(self.snapshot, serializer);
         <Option<String>>::sse_encode(self.remote_device_type, serializer);
         <Option<String>>::sse_encode(self.remote_endpoint_id, serializer);
+        <Option<String>>::sse_encode(self.remote_ticket, serializer);
         <Option<crate::api::sender::SendConnectionPath>>::sse_encode(
             self.connection_path,
             serializer,

@@ -30,6 +30,7 @@ class SendTransferState {
     this.snapshot,
     this.remoteDeviceType,
     this.remoteEndpointId,
+    this.remoteTicket,
     this.connectionPath,
     this.error,
   });
@@ -59,6 +60,10 @@ class SendTransferState {
   final rust_transfer.TransferSnapshotData? snapshot;
   final String? remoteDeviceType;
   final String? remoteEndpointId;
+  /// Re-serialized ticket of the resolved peer.  Populated for both
+  /// code-based and nearby sends once the destination resolves, so
+  /// `_completeTransfer` can persist it to saved devices as `lastTicket`.
+  final String? remoteTicket;
   final ConnectionPathInfo? connectionPath;
   final SendTransferErrorData? error;
 
@@ -80,6 +85,7 @@ class SendTransferState {
     rust_transfer.TransferSnapshotData? snapshot,
     String? remoteDeviceType,
     String? remoteEndpointId,
+    String? remoteTicket,
     ConnectionPathInfo? connectionPath,
     SendTransferErrorData? error,
   }) {
@@ -95,6 +101,7 @@ class SendTransferState {
       snapshot: snapshot ?? this.snapshot,
       remoteDeviceType: remoteDeviceType ?? this.remoteDeviceType,
       remoteEndpointId: remoteEndpointId ?? this.remoteEndpointId,
+      remoteTicket: remoteTicket ?? this.remoteTicket,
       connectionPath: connectionPath ?? this.connectionPath,
       error: error ?? this.error,
     );

@@ -63,6 +63,11 @@ pub struct SendTransferEvent {
     pub snapshot: Option<TransferSnapshotData>,
     pub remote_device_type: Option<String>,
     pub remote_endpoint_id: Option<String>,
+    /// Re-serialized ticket of the resolved peer address (see
+    /// `drift_app::types::SendEvent::remote_ticket`).  Surfaced to Dart so
+    /// the saved-devices repo can persist a `lastTicket` for code-based
+    /// sends — otherwise Recent tile shows "no cached connection info".
+    pub remote_ticket: Option<String>,
     pub connection_path: Option<SendConnectionPath>,
     pub error: Option<crate::api::error::UserFacingErrorData>,
 }
@@ -215,6 +220,7 @@ fn terminal_event_for_app_error(destination_label: String, error: AppError) -> S
         snapshot: None,
         remote_device_type: None,
         remote_endpoint_id: None,
+        remote_ticket: None,
         connection_path: None,
         error: Some(internal_user_facing_error(title, error.to_string())),
     }
@@ -232,6 +238,7 @@ fn terminal_internal_failure_event(destination_label: String, detail: String) ->
         snapshot: None,
         remote_device_type: None,
         remote_endpoint_id: None,
+        remote_ticket: None,
         connection_path: None,
         error: Some(internal_user_facing_error("Transfer failed", detail)),
     }
@@ -280,6 +287,7 @@ fn map_event(event: AppSendEvent) -> SendTransferEvent {
         snapshot: event.snapshot.map(map_snapshot),
         remote_device_type: event.remote_device_type,
         remote_endpoint_id: event.remote_endpoint_id,
+        remote_ticket: event.remote_ticket,
         connection_path: event.connection_path.map(map_connection_path),
         error: map_optional_user_facing_error(event.error),
     }
@@ -385,6 +393,7 @@ mod tests {
             snapshot: None,
             remote_device_type: None,
             remote_endpoint_id: None,
+            remote_ticket: None,
             connection_path,
             error: None,
         }

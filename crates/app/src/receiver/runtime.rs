@@ -67,6 +67,30 @@ impl ReceiverRuntime {
         self.endpoint.addr().id
     }
 
+    /// Test-only setters that bypass the rendezvous server.  Production
+    /// callers must go through `handle_setup` / `ensure_registered`, which
+    /// register via HTTP — those paths can't be hit in a unit test without a
+    /// running server.  These helpers let the unit tests build a runtime
+    /// already in the "registered" state so they can exercise downstream
+    /// logic (e.g. `maintain_registration`) in isolation.
+    #[cfg(test)]
+    pub(super) fn set_server_url_for_test(&mut self, url: Option<String>) {
+        self.server_url = url;
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_registration_for_test(
+        &mut self,
+        registration: Option<ReceiverRegistration>,
+    ) {
+        self.registration = registration;
+    }
+
+    #[cfg(test)]
+    pub(super) fn registration_for_test(&self) -> Option<&ReceiverRegistration> {
+        self.registration.as_ref()
+    }
+
     pub(super) fn has_registration(&self) -> bool {
         self.registration.is_some()
     }
@@ -211,25 +235,24 @@ impl ReceiverRuntime {
             let _ = pairing_tx.send(PairingCodeState::Active(registration.clone()));
             let _ = event_tx.send(ReceiverEvent::RegistrationUpdated(registration));
             self.publish_discoverability_change_if_needed(was_active, event_tx);
-            return Ok(());
         }
 
-        match RendezvousClient::new(server_url)
-            .pair_status(&existing.code)
-            .await
-            .map_err(|e| AppError::Internal {
-                message: e.to_string(),
-            })? {
-            Some(_) => Ok(()),
-            None => {
-                let was_active = self.advertising_active();
-                let registration = self.ensure_registered_with_current_server().await?;
-                let _ = pairing_tx.send(PairingCodeState::Active(registration.clone()));
-                let _ = event_tx.send(ReceiverEvent::RegistrationUpdated(registration));
-                self.publish_discoverability_change_if_needed(was_active, event_tx);
-                Ok(())
-            }
-        }
+        // Intentionally do NOT rotate the code here based on `pair_status`.
+        // Once a sender claims the code, the server flips the session state
+        // from `Open` to `Claimed` and `get_pair_status` starts returning 404
+        // (claimed != open).  An earlier version of this loop took that 404
+        // as "session vanished, mint a new one" and rotated, which made the
+        // displayed code change *while the sender was still in the connect
+        // phase* — confusing the user and breaking the one-shot retry
+        // window before the offer actually arrived.  Rotation is owned by
+        // exactly two events now:
+        //   1. TTL expiry (handled by `registration_needs_refresh` above).
+        //   2. `OfferPrepared` (handled in `refresh_registration_after_offer`
+        //      from the actor loop), which fires the moment the sender's
+        //      offer reaches us — the correct user-visible "pairing done"
+        //      moment.  Server still enforces one-shot via 409 on re-claim,
+        //      so leaving the visible code stale here is safe.
+        Ok(())
     }
 
     pub(super) async fn set_discoverable(&mut self, enabled: bool) -> AppResult<()> {

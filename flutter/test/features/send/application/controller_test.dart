@@ -431,6 +431,61 @@ void main() {
     expect(state.transfer.remoteDeviceType, 'laptop');
   });
 
+  test('send controller propagates remoteTicket from update into transfer state',
+      () {
+    // Regression: code-based sends used to leave `lastTicket` null in saved
+    // devices because the rendezvous-claimed ticket lived only in Rust.  The
+    // controller must accept a `remoteTicket` on the update and stash it on
+    // the transfer state so `_completeTransfer` can persist it.
+    final fakeSource = FakeSendTransferSource();
+    final container = ProviderContainer(
+      overrides: [
+        initialAppSettingsProvider.overrideWithValue(testAppSettings),
+        sendTransferSourceProvider.overrideWithValue(fakeSource),
+      ],
+    );
+    addTearDown(container.dispose);
+    addTearDown(fakeSource.close);
+
+    final controller = container.read(sendControllerProvider.notifier);
+    controller.beginDraft([
+      SendPickedFile(
+        path: '/tmp/report.pdf',
+        name: 'report.pdf',
+        sizeBytes: BigInt.from(1024),
+      ),
+    ]);
+    controller.updateDestinationCode('ABC123');
+    controller.startTransfer(controller.buildSendRequest()!);
+
+    // Code-based send: request itself has no ticket.
+    expect(
+      (container.read(sendControllerProvider) as SendStateTransferring)
+          .request
+          .ticket,
+      isNull,
+    );
+
+    fakeSource.emit(
+      SendTransferUpdate(
+        phase: SendTransferUpdatePhase.waitingForDecision,
+        destinationLabel: 'Laptop',
+        statusMessage: 'Waiting for confirmation.',
+        itemCount: BigInt.one,
+        totalSize: BigInt.from(1024),
+        bytesSent: BigInt.zero,
+        totalBytes: BigInt.from(1024),
+        remoteEndpointId: 'PEER_ID_ABC',
+        remoteTicket: 'resolved-ticket-blob',
+      ),
+    );
+
+    final state =
+        container.read(sendControllerProvider) as SendStateTransferring;
+    expect(state.transfer.remoteEndpointId, 'PEER_ID_ABC');
+    expect(state.transfer.remoteTicket, 'resolved-ticket-blob');
+  });
+
   test(
     'send controller maps terminal transfer updates into result state',
     () async {

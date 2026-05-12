@@ -46,6 +46,21 @@ class _DesktopTitleBar extends StatelessWidget {
         height: 40,
         child: Row(
           children: [
+            const SizedBox(width: 12),
+            // App label — replaces the native title bar text we hid via
+            // `TitleBarStyle.hidden`, so the window is identifiable at a
+            // glance like a normal Windows app.  Maximize button is
+            // intentionally omitted because the window is fixed-size
+            // (see main.dart: maximumSize == initialSize).
+            Text(
+              'Drift',
+              style: driftSans(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: kInk,
+                letterSpacing: -0.2,
+              ),
+            ),
             const Expanded(child: SizedBox.shrink()),
             if (showWindowControls) ...[
               _TitleBarButton(

@@ -417,6 +417,14 @@ pub fn lan_direct_addrs(endpoint: &Endpoint) -> Vec<std::net::SocketAddr> {
     out
 }
 
+/// Round-trips an already-known [`EndpointAddr`] back into the base64 ticket
+/// string callers can persist.  Used by the sender to capture the ticket it
+/// got from `claim_peer` (which is owned by the rendezvous response, not the
+/// caller's request) so the saved-devices list can fast-reconnect later.
+pub fn encode_ticket(addr: EndpointAddr) -> std::result::Result<String, TicketError> {
+    make_ticket_from_addr(addr)
+}
+
 fn make_ticket_from_addr(addr: EndpointAddr) -> std::result::Result<String, TicketError> {
     let ticket = TransferTicket {
         node_id: addr.id.to_string(),
@@ -848,5 +856,64 @@ mod qr_payload_tests {
         assert_eq!(info.endpoint_addr.id, id);
         assert!(info.device_name.is_empty());
         assert!(info.device_type.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod encode_ticket_tests {
+    use super::*;
+    use iroh::SecretKey;
+
+    fn sample_id() -> iroh::EndpointId {
+        SecretKey::from_bytes(&[11u8; 32]).public()
+    }
+
+    #[test]
+    fn encode_round_trips_back_to_endpoint_addr() {
+        // The whole point of `encode_ticket`: take an EndpointAddr we already
+        // hold (e.g. from a rendezvous claim) and serialize it back so Dart
+        // can persist it as the saved-devices `lastTicket`.  Going through
+        // `decode_ticket` and back must preserve both the EndpointId and the
+        // addr set without loss.
+        let id = sample_id();
+        let original = synthesize_ticket(
+            id,
+            Some("https://relay.example/"),
+            Some("192.168.1.5:5000"),
+        )
+        .expect("synth");
+        let decoded = decode_ticket(&original).expect("decode");
+
+        let encoded = encode_ticket(decoded.clone()).expect("encode");
+        let decoded_again = decode_ticket(&encoded).expect("decode again");
+
+        assert_eq!(decoded_again.id, id);
+        assert_eq!(decoded_again.addrs.len(), decoded.addrs.len());
+        let has_relay = decoded_again.addrs.iter().any(|a| {
+            matches!(a, TransportAddr::Relay(url) if url.as_str() == "https://relay.example/")
+        });
+        let has_ip = decoded_again
+            .addrs
+            .iter()
+            .any(|a| matches!(a, TransportAddr::Ip(s) if s.to_string() == "192.168.1.5:5000"));
+        assert!(has_relay, "relay hint must survive encode_ticket round-trip");
+        assert!(has_ip, "ip hint must survive encode_ticket round-trip");
+    }
+
+    #[test]
+    fn encode_endpoint_id_only_when_no_addrs() {
+        // Sender's resolved EndpointAddr from pkarr can legitimately carry
+        // zero addrs (relay-less, direct unknown).  encode_ticket must still
+        // produce a valid ticket so the lastTicket persistence path doesn't
+        // silently drop those peers.
+        let id = sample_id();
+        let original = synthesize_ticket(id, None, None).expect("synth");
+        let decoded = decode_ticket(&original).expect("decode");
+        assert!(decoded.addrs.is_empty());
+
+        let encoded = encode_ticket(decoded).expect("encode");
+        let decoded_again = decode_ticket(&encoded).expect("decode again");
+        assert_eq!(decoded_again.id, id);
+        assert!(decoded_again.addrs.is_empty());
     }
 }

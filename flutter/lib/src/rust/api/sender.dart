@@ -53,6 +53,7 @@ class SendTransferEvent {
   final TransferSnapshotData? snapshot;
   final String? remoteDeviceType;
   final String? remoteEndpointId;
+  final String? remoteTicket;
   final SendConnectionPath? connectionPath;
   final UserFacingErrorData? error;
 
@@ -67,6 +68,7 @@ class SendTransferEvent {
     this.snapshot,
     this.remoteDeviceType,
     this.remoteEndpointId,
+    this.remoteTicket,
     this.connectionPath,
     this.error,
   });
@@ -83,6 +85,7 @@ class SendTransferEvent {
       snapshot.hashCode ^
       remoteDeviceType.hashCode ^
       remoteEndpointId.hashCode ^
+      remoteTicket.hashCode ^
       connectionPath.hashCode ^
       error.hashCode;
 
@@ -101,6 +104,7 @@ class SendTransferEvent {
           snapshot == other.snapshot &&
           remoteDeviceType == other.remoteDeviceType &&
           remoteEndpointId == other.remoteEndpointId &&
+          remoteTicket == other.remoteTicket &&
           connectionPath == other.connectionPath &&
           error == other.error;
 }

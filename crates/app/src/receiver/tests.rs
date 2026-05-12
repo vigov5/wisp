@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use iroh::SecretKey;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{broadcast, oneshot, watch};
 
 use crate::error::{AppError, AppResult};
 
@@ -10,7 +10,8 @@ use super::runtime::{
 };
 use super::session::ReceiverRun;
 use super::{
-    OfferDecision, PairingCodeState, ReceiverLifecycle, ReceiverRegistration, ReceiverService,
+    OfferDecision, PairingCodeState, ReceiverEvent, ReceiverLifecycle, ReceiverRegistration,
+    ReceiverService,
 };
 use crate::types::{ConflictPolicy, ReceiverConfig};
 
@@ -151,5 +152,88 @@ async fn busy_runtime_rejects_second_offer() -> AppResult<()> {
         cancel_tx: cancel_tx2,
     }));
     assert!(matches!(rx2.await.unwrap(), OfferResolution::Decline));
+    Ok(())
+}
+
+#[tokio::test]
+async fn maintain_registration_is_noop_when_no_server_url_configured() -> AppResult<()> {
+    let Some(endpoint) = try_bind_endpoint().await? else {
+        return Ok(());
+    };
+    let listener = tokio::spawn(async {});
+    let mut runtime = ReceiverRuntime::new(test_config(), endpoint, listener);
+
+    let (pairing_tx, mut pairing_rx) = watch::channel(PairingCodeState::Unavailable);
+    let (event_tx, mut event_rx) = broadcast::channel::<ReceiverEvent>(8);
+
+    // Mark "no new value" baseline so we can assert nothing was sent.
+    pairing_rx.borrow_and_update();
+
+    runtime.maintain_registration(&pairing_tx, &event_tx).await?;
+
+    assert!(
+        !pairing_rx.has_changed().unwrap(),
+        "pairing_tx must not be touched when no server URL is configured"
+    );
+    assert!(
+        matches!(event_rx.try_recv(), Err(broadcast::error::TryRecvError::Empty)),
+        "event_tx must not receive anything when no server URL is configured"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn maintain_registration_does_not_rotate_fresh_code_after_claim() -> AppResult<()> {
+    // Regression for the "code rotates while sender still connecting" bug.
+    //
+    // Setup: receiver has a registration whose TTL has NOT expired.  In the
+    // old behavior, `maintain_registration` would call `pair_status` and, on
+    // a 404 (which the server returns once the sender claims the code), it
+    // would mint a new code immediately — visible to the user as the code
+    // changing mid-connect.  The fix removed that branch; rotation is now
+    // owned exclusively by TTL expiry and `OfferPrepared`.
+    //
+    // We can verify the fix without a mock server because the function is
+    // now a pure no-op when the registration is fresh — no HTTP call happens
+    // at all.  Setting a bogus server URL is deliberate: if the buggy code
+    // path resurfaces, the test will fail by either erroring out on the
+    // unreachable host *or* sending a rotation event.
+    let Some(endpoint) = try_bind_endpoint().await? else {
+        return Ok(());
+    };
+    let listener = tokio::spawn(async {});
+    let mut runtime = ReceiverRuntime::new(test_config(), endpoint, listener);
+
+    let registration = ReceiverRegistration {
+        code: "ABC123".to_owned(),
+        expires_at: "2999-01-01T00:00:00Z".to_owned(),
+    };
+    runtime.set_server_url_for_test(Some(
+        "http://127.0.0.1:1/__unreachable_test_host__".to_owned(),
+    ));
+    runtime.set_registration_for_test(Some(registration.clone()));
+
+    let (pairing_tx, mut pairing_rx) = watch::channel(PairingCodeState::Unavailable);
+    let (event_tx, mut event_rx) = broadcast::channel::<ReceiverEvent>(8);
+    pairing_rx.borrow_and_update();
+
+    runtime.maintain_registration(&pairing_tx, &event_tx).await?;
+
+    assert_eq!(
+        runtime.registration_for_test(),
+        Some(&registration),
+        "registration must stay intact while TTL is in the future, even if the \
+         sender has already claimed the code (server would return 404 on pair_status)"
+    );
+    assert!(
+        !pairing_rx.has_changed().unwrap(),
+        "no PairingCodeState update should be emitted when the existing \
+         registration is still fresh"
+    );
+    assert!(
+        matches!(event_rx.try_recv(), Err(broadcast::error::TryRecvError::Empty)),
+        "no RegistrationUpdated event should be emitted when the existing \
+         registration is still fresh"
+    );
     Ok(())
 }
