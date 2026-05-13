@@ -106,17 +106,24 @@ pub fn start_send_transfer(
         ),
     };
 
-    // NOTE: we deliberately bind a *separate* iroh endpoint for the send
-    // session even though the receiver service already has one running
-    // with the same secret key. Reusing one endpoint would be cleaner
-    // (no relay "duplicate endpoint id" warnings) but iroh's `Router`
-    // pattern that BlobService needs to register `iroh_blobs::ALPN`
-    // takes ownership of the endpoint, conflicting with the receiver's
-    // manual `endpoint.accept()` listener loop — incoming offer
-    // connections then race between the two and silently drop. Until
-    // both subsystems are refactored onto a shared `Router` that
-    // multiplexes ALPNs, two endpoints are the safer trade-off.
-    let session = SendSession::new(draft, destination);
+    // Reuse the receiver service's already-bound iroh endpoint when
+    // available so the process holds exactly one endpoint per secret key —
+    // avoids the "Another endpoint connected with the same endpoint id"
+    // relay rejection that used to break cross-network sends when both the
+    // long-lived receiver service and a fresh send session each tried to
+    // claim the relay slot.  Blob serving on the shared endpoint goes
+    // through `BlobDispatcher::global()`, plugged into the receiver
+    // service's `iroh::protocol::Router` for `iroh_blobs::ALPN`.
+    //
+    // Fallback to binding a private endpoint when no receiver service is
+    // running (rare — only happens if Dart starts a send before
+    // `current_service_endpoint()` is initialised).  In that fallback path
+    // the old internal-router blob serving still works because no other
+    // process-local endpoint is competing for the relay slot.
+    let session = match crate::api::receiver::current_service_endpoint() {
+        Some(endpoint) => SendSession::with_endpoint(draft, destination, endpoint),
+        None => SendSession::new(draft, destination),
+    };
     let run = {
         let _guard = RUNTIME.enter();
         session.start()

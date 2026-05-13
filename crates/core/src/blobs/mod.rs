@@ -4,3 +4,4 @@ pub mod send;
 pub(crate) mod util;
 
 pub use error::BlobError;
+pub use send::{BlobServingStrategy, ExternalBlobRegistrar};

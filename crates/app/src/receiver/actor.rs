@@ -1,20 +1,16 @@
 use std::time::Duration;
 
-use drift_core::protocol::DeviceType;
-use iroh::Endpoint;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
-use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval};
 
-use crate::error::{AppError, AppResult, UserFacingError};
+use crate::error::{AppError, AppResult};
 use crate::types::{
-    ConflictPolicy, ConnectionPath, NearbyReceiver, PairingCodeState, ReceiverOfferEvent,
-    ReceiverOfferPhase, ReceiverRegistration,
+    ConnectionPath, NearbyReceiver, PairingCodeState, ReceiverOfferEvent, ReceiverOfferPhase,
+    ReceiverRegistration,
 };
 
 use super::runtime::ReceiverRuntime;
-use super::session::ReceiverSession;
-use super::{OfferDecision, ReceiverEvent, ReceiverLifecycle, ReceiverSnapshot, parse_device_type};
+use super::{OfferDecision, ReceiverEvent, ReceiverLifecycle, ReceiverSnapshot};
 
 #[derive(Debug)]
 pub(super) enum ReceiverCommand {
@@ -60,33 +56,6 @@ pub(super) enum ReceiverCommand {
     Shutdown {
         reply: oneshot::Sender<AppResult<()>>,
     },
-}
-
-pub(super) fn spawn_listener_task(
-    endpoint: Endpoint,
-    cmd_tx: mpsc::Sender<ReceiverCommand>,
-    out_dir: std::path::PathBuf,
-    device_name: String,
-    device_type: String,
-    conflict_policy: ConflictPolicy,
-) -> AppResult<JoinHandle<()>> {
-    if matches!(conflict_policy, ConflictPolicy::Overwrite) {
-        return Err(AppError::UnsupportedLocalOperation {
-            operation: "receiver overwrite policy",
-        });
-    }
-    let device_type = parse_device_type(&device_type)?;
-    Ok(tokio::spawn(async move {
-        run_listener_loop(
-            endpoint,
-            cmd_tx,
-            out_dir,
-            device_name,
-            device_type,
-            conflict_policy,
-        )
-        .await;
-    }))
 }
 
 pub(super) async fn run_receiver_actor(
@@ -150,9 +119,15 @@ pub(super) async fn run_receiver_actor(
                     ReceiverCommand::OfferPrepared { run, event } => {
                         if runtime.handle_offer_prepared(run) {
                             let _ = event_tx.send(ReceiverEvent::OfferUpdated(event));
-                            let _ = runtime
-                                .refresh_registration_after_offer(&pairing_tx, &event_tx)
-                                .await;
+                            // Code rotation deliberately deferred to
+                            // `OfferFinished` (below).  Rotating here
+                            // (when the manifest arrives but before the
+                            // user accepts) used to mean the visible
+                            // code changed silently mid-flow, confusing
+                            // users who read the rotated code thinking
+                            // it was current and then got 404'd by the
+                            // server (which had already consumed the
+                            // original code).
                         }
                         let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
                     }
@@ -162,14 +137,23 @@ pub(super) async fn run_receiver_actor(
                         }
                     }
                     ReceiverCommand::OfferFinished { offer_id, final_event } => {
+                        let phase = final_event.phase;
                         if runtime.handle_offer_finished(offer_id)
                             || matches!(
-                                final_event.phase,
+                                phase,
                                 ReceiverOfferPhase::Failed | ReceiverOfferPhase::Declined
                             )
                         {
                             let _ = event_tx.send(ReceiverEvent::OfferUpdated(final_event));
                         }
+                        // Rotate the pairing code now that the transfer
+                        // has settled.  The previous code was claimed by
+                        // the sender and is dead on the server regardless
+                        // of outcome, so a new code must be visible
+                        // before the user attempts another send.
+                        let _ = runtime
+                            .refresh_registration_after_offer(&pairing_tx, &event_tx)
+                            .await;
                         let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
                     }
                     ReceiverCommand::OfferConnectionPathChanged { offer_id, connection_path } => {
@@ -222,7 +206,10 @@ pub(super) async fn run_receiver_actor(
                     }
                     ReceiverCommand::Shutdown { reply } => {
                         runtime.clear_advertising();
-                        runtime.abort_listener();
+                        // Shut down the Router first so no new inbound ALPN
+                        // connections are accepted, *then* close the endpoint
+                        // so iroh unregisters from the relay cleanly.
+                        runtime.shutdown_router().await;
                         runtime.close_endpoint().await;
                         let _ = pairing_tx.send(PairingCodeState::Unavailable);
                         let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Stopped);
@@ -253,72 +240,3 @@ fn publish_snapshot(
     Ok(())
 }
 
-async fn run_listener_loop(
-    endpoint: Endpoint,
-    cmd_tx: mpsc::Sender<ReceiverCommand>,
-    out_dir: std::path::PathBuf,
-    device_name: String,
-    device_type: DeviceType,
-    conflict_policy: ConflictPolicy,
-) {
-    let save_root_label = super::session::save_root_display(&out_dir);
-    if let Err(err) = tokio::fs::create_dir_all(&out_dir).await {
-        let _ = cmd_tx
-            .send(ReceiverCommand::OfferFinished {
-                offer_id: 0,
-                final_event: ReceiverOfferEvent {
-                    phase: ReceiverOfferPhase::Failed,
-                    sender_name: String::new(),
-                    sender_device_type: String::new(),
-                    destination_label: String::new(),
-                    save_root_label,
-                    status_message: "Could not prepare save location.".to_owned(),
-                    item_count: 0,
-                    total_size_bytes: 0,
-                    bytes_received: 0,
-                    plan: None,
-                    snapshot: None,
-                    connection_path: None,
-                    sender_endpoint_id: None,
-                    sender_ticket: None,
-                    total_size_label: String::new(),
-                    files: Vec::new(),
-                    error: Some(UserFacingError::internal(
-                        "Receiver unavailable",
-                        err.to_string(),
-                    )),
-                },
-            })
-            .await;
-        return;
-    }
-
-    let mut next_offer_id = 1_u64;
-    loop {
-        let Some(incoming) = endpoint.accept().await else {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            continue;
-        };
-        let connection = match incoming.await {
-            Ok(connection) => connection,
-            Err(_) => continue,
-        };
-        let offer_id = next_offer_id;
-        next_offer_id = next_offer_id.saturating_add(1);
-        let cmd_tx_for_offer = cmd_tx.clone();
-        let out_dir_for_offer = out_dir.clone();
-        let device_name_for_offer = device_name.clone();
-        let endpoint_for_offer = endpoint.clone();
-        let session = ReceiverSession::new(
-            offer_id,
-            endpoint_for_offer,
-            connection,
-            out_dir_for_offer,
-            device_name_for_offer,
-            device_type,
-            conflict_policy,
-            cmd_tx_for_offer,
-        );
-        let _ = session.spawn();
-    }
-}

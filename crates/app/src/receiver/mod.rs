@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod actor;
+mod drift_handler;
 mod runtime;
 mod session;
 
@@ -9,17 +10,19 @@ mod tests;
 
 use std::time::Duration;
 
-use iroh::{Endpoint, RelayMode, endpoint::presets};
+use iroh::{Endpoint, RelayMode, endpoint::presets, protocol::Router};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
+use crate::blob_dispatcher::BlobDispatcher;
 use crate::error::{AppError, AppResult};
 use crate::types::{
-    ConnectionPath, NearbyReceiver, PairingCodeState, QrPairingInfo, ReceiverConfig,
-    ReceiverOfferEvent, ReceiverRegistration,
+    ConflictPolicy, ConnectionPath, NearbyReceiver, PairingCodeState, QrPairingInfo,
+    ReceiverConfig, ReceiverOfferEvent, ReceiverRegistration,
 };
 use drift_core::protocol::{ALPN, DeviceType};
 
-use self::actor::{ReceiverCommand, run_receiver_actor, spawn_listener_task};
+use self::actor::{ReceiverCommand, run_receiver_actor};
+use self::drift_handler::DriftProtocolHandler;
 use self::runtime::ReceiverRuntime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,8 +74,15 @@ pub struct ReceiverService {
 
 impl ReceiverService {
     pub async fn start(config: ReceiverConfig) -> AppResult<Self> {
+        // Bind a single endpoint that advertises **both** ALPNs we speak:
+        // `drift_core::protocol::ALPN` for handshake/control and
+        // `iroh_blobs::ALPN` for data transfers.  An active sender (running
+        // in the same process) reuses this endpoint via `BlobDispatcher`
+        // rather than binding its own — that's what avoids the "two
+        // endpoints with the same secret key fight for the relay slot"
+        // failure mode.
         let endpoint = Endpoint::builder(presets::N0)
-            .alpns(vec![ALPN.to_vec()])
+            .alpns(vec![ALPN.to_vec(), iroh_blobs::ALPN.to_vec()])
             .relay_mode(RelayMode::Default)
             .transport_config(crate::quic_keepalive::build_transport_config())
             .secret_key(config.secret_key.clone())
@@ -81,7 +91,35 @@ impl ReceiverService {
             .map_err(|e| AppError::BindingFailed {
                 context: format!("receiver v2 endpoint: {e}"),
             })?;
-        let (cmd_tx, cmd_rx) = mpsc::channel(16);
+
+        if matches!(config.conflict_policy, ConflictPolicy::Overwrite) {
+            return Err(AppError::UnsupportedLocalOperation {
+                operation: "receiver overwrite policy",
+            });
+        }
+        let device_type = parse_device_type(&config.device_type)?;
+        if let Err(err) = tokio::fs::create_dir_all(&config.download_root).await {
+            return Err(AppError::Internal {
+                message: format!(
+                    "could not prepare save location {}: {err}",
+                    config.download_root.display()
+                ),
+            });
+        }
+
+        // Channel sized for high-throughput receivers.  Progress events emit
+        // every ~100 ms at peak — 10 events/sec.  16 used to be enough but
+        // any pause in the actor loop (e.g. the HTTP register call during
+        // `refresh_registration_after_offer`) lets the producer overflow
+        // 16 slots in <2 s, causing `try_send` in
+        // `ReceiverSession::handle_progress` to drop updates silently —
+        // visible to users as a UI speed indicator stuck well below the
+        // real transfer rate.  256 slots absorbs a multi-second actor
+        // stall at 10 Hz.  Long-term fix: progress should ride a
+        // `watch::channel` so the latest value always wins and the actor
+        // can't fall behind.  For now, the extra capacity is the cheap
+        // pragmatic fix.
+        let (cmd_tx, cmd_rx) = mpsc::channel(256);
         let (state_tx, state_rx) = watch::channel(ReceiverSnapshot {
             lifecycle: ReceiverLifecycle::Ready,
             discoverable_requested: false,
@@ -90,22 +128,43 @@ impl ReceiverService {
             has_pending_offer: false,
         });
         let (pairing_tx, pairing_rx) = watch::channel(PairingCodeState::Unavailable);
-        let (event_tx, _) = broadcast::channel(32);
-        let endpoint_for_listener = endpoint.clone();
-        let cmd_tx_for_listener = cmd_tx.clone();
-        let listener = spawn_listener_task(
-            endpoint_for_listener,
-            cmd_tx_for_listener,
+        // Broadcast channel for fan-out to Dart subscribers.  Each
+        // subscriber has its own backlog of `capacity` items; iroh-fast
+        // transfers can fill 32 in well under a second when the Flutter
+        // bridge is busy rebuilding the progress UI on the platform
+        // thread.  Bumped to 256 to match `cmd_tx` capacity — see comment
+        // there.  (broadcast::Sender drops the oldest item per slow
+        // subscriber rather than blocking the producer, so over-capacity
+        // is "missed UI updates", never deadlock.)
+        let (event_tx, _) = broadcast::channel(256);
+
+        // Build the Router that multiplexes inbound ALPNs.  We accept
+        // `drift_ALPN` ourselves (delegates to `ReceiverSession`) and route
+        // `iroh_blobs::ALPN` to the global `BlobDispatcher`, which forwards
+        // to whichever sender (in the same process) is currently active.
+        let drift_handler = DriftProtocolHandler::new(
+            cmd_tx.clone(),
             config.download_root.clone(),
             config.device_name.clone(),
-            config.device_type.clone(),
+            device_type,
             config.conflict_policy,
-        )?;
+            endpoint.clone(),
+        );
+        let router = Router::builder(endpoint.clone())
+            .accept(ALPN, drift_handler)
+            .accept(iroh_blobs::ALPN, BlobDispatcher::global())
+            .spawn();
+        tracing::info!(
+            target: "drift_app::receiver",
+            endpoint_id = %endpoint.addr().id,
+            "receiver service started; Router accepting drift_ALPN + iroh_blobs ALPN \
+             on shared endpoint"
+        );
 
         let endpoint_for_service = endpoint.clone();
         let device_name_for_service = config.device_name.clone();
         let device_type_for_service = config.device_type.clone();
-        let runtime = ReceiverRuntime::new(config, endpoint, listener);
+        let runtime = ReceiverRuntime::new(config, endpoint, router);
 
         tokio::spawn(run_receiver_actor(
             runtime,

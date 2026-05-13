@@ -9,7 +9,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{info, instrument};
 
 use crate::{
-    blobs::send::{BlobService, PreparedStore},
+    blobs::send::{BlobService, BlobServingStrategy, PreparedStore},
     protocol::message::{DeviceType, MessageKind},
     protocol::wire as protocol_wire,
     protocol::{ALPN, ProtocolError},
@@ -132,6 +132,7 @@ pub struct Sender {
     session_id: String,
     identity: protocol_message::Identity,
     request: SendRequest,
+    blob_strategy: BlobServingStrategy,
 }
 
 impl Sender {
@@ -145,7 +146,16 @@ impl Sender {
             identity,
             session_id: format!("{:016x}", random::<u64>()),
             request,
+            blob_strategy: BlobServingStrategy::Internal,
         }
+    }
+
+    /// Override the default Internal-router blob serving strategy.  See
+    /// [`BlobServingStrategy::External`] for when this is needed (sharing
+    /// the receiver-service endpoint to avoid relay duplicate-id).
+    pub fn with_blob_strategy(mut self, strategy: BlobServingStrategy) -> Self {
+        self.blob_strategy = strategy;
+        self
     }
 
     pub fn run_with_events(self) -> SenderRun
@@ -162,6 +172,7 @@ impl Sender {
             session_id,
             identity,
             request,
+            blob_strategy,
         } = self;
 
         tokio::spawn(async move {
@@ -171,6 +182,7 @@ impl Sender {
                 identity,
                 request,
                 events: events.clone(),
+                blob_strategy,
             };
             let outcome = session.run(cancel_rx).await;
             let _ = outcome_tx.send(outcome);
@@ -190,6 +202,7 @@ struct SenderSession {
     identity: protocol_message::Identity,
     request: SendRequest,
     events: SenderEventSink,
+    blob_strategy: BlobServingStrategy,
 }
 
 impl SenderSession {
@@ -261,9 +274,12 @@ impl SenderSession {
 
         // --- Data Transfer ---
         let blob_service = BlobService::new(self.endpoint.clone());
-        let registration = blob_service.register(prepared).await.map_err(|source| {
-            TransferError::other("registering files with blob service", source)
-        })?;
+        let registration = blob_service
+            .register_with_strategy(prepared, &self.blob_strategy)
+            .await
+            .map_err(|source| {
+                TransferError::other("registering files with blob service", source)
+            })?;
 
         protocol_wire::write_sender_message(
             &mut control_send,

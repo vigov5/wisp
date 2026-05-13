@@ -37,7 +37,12 @@ void main() {
       ),
     );
 
-    expect(find.text('Drift'), findsOneWidget);
+    // 'Drift' appears in both the custom Windows title bar shell and the
+    // receiver card (since `testAppSettings.deviceName == 'Drift'`).  We
+    // only care that it's rendered somewhere on the home screen — the
+    // dedicated `'Ready'` / `'Receive code'` checks below confirm the
+    // receiver card itself is present.
+    expect(find.text('Drift'), findsAtLeastNWidgets(1));
     expect(find.text('Ready'), findsOneWidget);
     expect(find.text('Receive code'), findsOneWidget);
     expect(find.text('Drop files to send'), findsOneWidget);

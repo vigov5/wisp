@@ -113,8 +113,7 @@ async fn stale_offer_updates_are_ignored() -> AppResult<()> {
     let Some(endpoint) = try_bind_endpoint().await? else {
         return Ok(());
     };
-    let listener = tokio::spawn(async {});
-    let mut runtime = ReceiverRuntime::new(test_config(), endpoint, listener);
+    let mut runtime = ReceiverRuntime::new_for_test(test_config(), endpoint);
 
     let (tx, _rx) = oneshot::channel::<OfferResolution>();
     let (cancel_tx, _cancel_rx) = watch::channel(false);
@@ -134,8 +133,7 @@ async fn busy_runtime_rejects_second_offer() -> AppResult<()> {
     let Some(endpoint) = try_bind_endpoint().await? else {
         return Ok(());
     };
-    let listener = tokio::spawn(async {});
-    let mut runtime = ReceiverRuntime::new(test_config(), endpoint, listener);
+    let mut runtime = ReceiverRuntime::new_for_test(test_config(), endpoint);
 
     let (tx1, _rx1) = oneshot::channel::<OfferResolution>();
     let (tx2, rx2) = oneshot::channel::<OfferResolution>();
@@ -160,8 +158,7 @@ async fn maintain_registration_is_noop_when_no_server_url_configured() -> AppRes
     let Some(endpoint) = try_bind_endpoint().await? else {
         return Ok(());
     };
-    let listener = tokio::spawn(async {});
-    let mut runtime = ReceiverRuntime::new(test_config(), endpoint, listener);
+    let mut runtime = ReceiverRuntime::new_for_test(test_config(), endpoint);
 
     let (pairing_tx, mut pairing_rx) = watch::channel(PairingCodeState::Unavailable);
     let (event_tx, mut event_rx) = broadcast::channel::<ReceiverEvent>(8);
@@ -201,8 +198,7 @@ async fn maintain_registration_does_not_rotate_fresh_code_after_claim() -> AppRe
     let Some(endpoint) = try_bind_endpoint().await? else {
         return Ok(());
     };
-    let listener = tokio::spawn(async {});
-    let mut runtime = ReceiverRuntime::new(test_config(), endpoint, listener);
+    let mut runtime = ReceiverRuntime::new_for_test(test_config(), endpoint);
 
     let registration = ReceiverRegistration {
         code: "ABC123".to_owned(),

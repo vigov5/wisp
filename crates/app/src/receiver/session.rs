@@ -304,7 +304,12 @@ impl ReceiverSession {
                     if interval_elapsed || bytes_advanced || is_complete || phase_changed {
                         last_progress_emit_at = now;
                         last_progress_bytes = snapshot.bytes_transferred;
-                        let _ = progress_cmd_tx.try_send(ReceiverCommand::OfferProgress {
+                        // `try_send` over `send().await` so a stalled actor
+                        // can't backpressure the receiver transfer loop —
+                        // throughput must not be capped by UI responsiveness.
+                        // When the channel is full we log + drop; the UI just
+                        // misses one progress tick, the transfer continues.
+                        if let Err(err) = progress_cmd_tx.try_send(ReceiverCommand::OfferProgress {
                             offer_id,
                             event: build_offer_event(
                                 ReceiverOfferPhase::Receiving,
@@ -321,7 +326,16 @@ impl ReceiverSession {
                                 Vec::new(),
                                 None,
                             ),
-                        });
+                        }) {
+                            tracing::debug!(
+                                target: "drift_app::receiver::session",
+                                offer_id,
+                                bytes = snapshot.bytes_transferred,
+                                ?err,
+                                "dropping progress event — actor channel full \
+                                 (UI may show stale speed/progress until next tick)"
+                            );
+                        }
                     }
                 }
                 CoreReceiverEvent::Listening { .. } => {}

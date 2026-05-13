@@ -704,4 +704,105 @@ void main() {
       );
     },
   );
+
+  test(
+    'restoreDraftFromResult rolls a failed result back into Drafting',
+    () async {
+      // Regression-shape test for the "Retry" button on the send result
+      // card: after a failed/cancelled/declined transfer the controller
+      // must surface the original items + destination as a fresh
+      // SendStateDrafting so the user can re-tap Send without re-picking.
+      final fakeSource = FakeSendTransferSource();
+      final container = ProviderContainer(
+        overrides: [
+          initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          sendTransferSourceProvider.overrideWithValue(fakeSource),
+        ],
+      );
+      addTearDown(container.dispose);
+      addTearDown(fakeSource.close);
+
+      final controller = container.read(sendControllerProvider.notifier);
+      controller.beginDraft([
+        SendPickedFile(
+          path: '/tmp/report.pdf',
+          name: 'report.pdf',
+          sizeBytes: BigInt.from(1024),
+        ),
+      ]);
+      controller.updateDestinationCode('ABC123');
+      controller.startTransfer(controller.buildSendRequest()!);
+
+      fakeSource.emit(
+        SendTransferUpdate.failed(
+          destinationLabel: 'Laptop',
+          statusMessage: 'Failed',
+          itemCount: BigInt.one,
+          totalSize: BigInt.from(1024),
+          bytesSent: BigInt.zero,
+          totalBytes: BigInt.from(1024),
+          error: const SendTransferErrorData(
+            kind: SendTransferErrorKind.internal,
+            title: 'Send failed',
+            message: 'boom',
+            retryable: false,
+          ),
+        ),
+      );
+
+      final failedState =
+          container.read(sendControllerProvider) as SendStateResult;
+      expect(failedState.result.outcome, SendTransferOutcome.failed);
+      expect(failedState.items, hasLength(1));
+
+      controller.restoreDraftFromResult();
+
+      final restored =
+          container.read(sendControllerProvider) as SendStateDrafting;
+      expect(restored.items, failedState.items);
+      expect(restored.destination, failedState.destination);
+      expect(
+        restored.resolvedDirectorySizes,
+        failedState.resolvedDirectorySizes,
+      );
+    },
+  );
+
+  test(
+    'restoreDraftFromResult is a no-op when not in Result state',
+    () {
+      // Hardening: the controller protects against the "Retry" callback
+      // being invoked from a screen where state has already changed
+      // (e.g. user navigated away and came back, fresh app launch, etc).
+      final fakeSource = FakeSendTransferSource();
+      final container = ProviderContainer(
+        overrides: [
+          initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          sendTransferSourceProvider.overrideWithValue(fakeSource),
+        ],
+      );
+      addTearDown(container.dispose);
+      addTearDown(fakeSource.close);
+
+      final controller = container.read(sendControllerProvider.notifier);
+      expect(container.read(sendControllerProvider), isA<SendStateIdle>());
+
+      controller.restoreDraftFromResult();
+      expect(
+        container.read(sendControllerProvider),
+        isA<SendStateIdle>(),
+        reason: 'idle state must survive a stray restore call',
+      );
+
+      controller.beginDraft([
+        SendPickedFile(path: '/tmp/a.pdf', name: 'a.pdf'),
+      ]);
+      controller.restoreDraftFromResult();
+      expect(
+        container.read(sendControllerProvider),
+        isA<SendStateDrafting>(),
+        reason: 'drafting state must survive a stray restore call',
+      );
+    },
+  );
 }

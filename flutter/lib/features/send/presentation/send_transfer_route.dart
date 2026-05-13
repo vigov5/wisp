@@ -48,6 +48,10 @@ class _SendTransferRoutePageState extends ConsumerState<SendTransferRoutePage> {
       request: widget.request,
     );
 
+    // "Done" path — clear the draft for terminal results, then home.  Used
+    // for both success (only button shown) and failure (left button next to
+    // "Retry") so the user always has an explicit way back to home from the
+    // result card.
     void exitRoute() {
       if (!mounted) {
         return;
@@ -59,6 +63,33 @@ class _SendTransferRoutePageState extends ConsumerState<SendTransferRoutePage> {
       }
 
       context.goHome();
+    }
+
+    // "Retry" path — only offered for failed/cancelled/declined results.
+    // Restores the SendStateResult back to SendStateDrafting (same files,
+    // same destination, same resolved sizes) and navigates to the draft
+    // preview so the user can adjust destination + re-tap Send without
+    // re-picking files.  No-op on a state that isn't a failure result.
+    void retryFromResult() {
+      if (!mounted) {
+        return;
+      }
+      final currentState = ref.read(sendControllerProvider);
+      if (currentState is! SendStateResult) {
+        return;
+      }
+      if (currentState.result.outcome == SendTransferOutcome.success) {
+        // Defensive: Retry shouldn't be reachable for success, but if a
+        // race surfaces it, fall back to the success exit so we don't
+        // strand the user on the result screen.
+        exitRoute();
+        return;
+      }
+      ref.read(sendControllerProvider.notifier).restoreDraftFromResult();
+      // Pass empty `files` so the draft route builder uses the
+      // controller state we just restored instead of seeding from
+      // `extra` (which would replace the items via `beginDraft`).
+      context.goSendDraft(files: const []);
     }
 
     return PopScope(
@@ -91,6 +122,7 @@ class _SendTransferRoutePageState extends ConsumerState<SendTransferRoutePage> {
                 state: state,
                 viewData: viewData,
                 onExit: exitRoute,
+                onRetry: retryFromResult,
               ),
             ),
           ),
@@ -106,11 +138,13 @@ class _TransferStateCard extends StatelessWidget {
     required this.state,
     required this.viewData,
     required this.onExit,
+    required this.onRetry,
   });
 
   final SendState state;
   final SendTransferPageData viewData;
   final VoidCallback onExit;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -186,48 +220,130 @@ class _TransferStateCard extends StatelessWidget {
               progress: progress,
               initiallyExpanded: state is SendStateResult,
             ),
-      footer: Row(
-        children: [
-          Expanded(
-            child: showFooterButton
-                ? (state is SendStateResult
-                      ? FilledButton(
-                          onPressed: onExit,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: isSuccessResult ? primary : accent,
-                            foregroundColor: Colors.white,
-                            minimumSize: const Size(0, 48),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          child: const Text('Done'),
-                        )
-                      : TextButton(
-                          onPressed: onExit,
-                          style: TextButton.styleFrom(
-                            foregroundColor: const Color(0xFFB34A4A),
-                            backgroundColor: const Color(
-                              0xFFB34A4A,
-                            ).withValues(alpha: 0.08),
-                            minimumSize: const Size(0, 48),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              side: BorderSide(
-                                color: const Color(
-                                  0xFFB34A4A,
-                                ).withValues(alpha: 0.15),
-                              ),
-                            ),
-                          ),
-                          child: const Text('Cancel transfer'),
-                        ))
-                : const SizedBox.shrink(),
-          ),
-        ],
+      footer: _buildFooter(
+        state: state,
+        showFooterButton: showFooterButton,
+        isSuccessResult: isSuccessResult,
+        primary: primary,
+        accent: accent,
+        onExit: onExit,
+        onRetry: onRetry,
       ),
     );
   }
+}
+
+/// Footer button layout for the transfer result / in-flight card.
+///
+/// Three branches in priority order:
+/// 1. **Active transfer not yet at 100%** → one red "Cancel transfer" button
+///    (TextButton with red tint).
+/// 2. **Success result** → one "Done" button (primary color) → home.
+/// 3. **Failed / cancelled / declined result** → two buttons side-by-side:
+///    left "Done" (outlined / secondary, back to home, clears draft) and
+///    right "Retry" (filled, accent color, restores the draft and pushes
+///    /send/draft so the user can immediately re-send the same files).
+/// 4. **Anything else** (e.g. early connecting phase) → no footer button.
+Widget _buildFooter({
+  required SendState state,
+  required bool showFooterButton,
+  required bool isSuccessResult,
+  required Color primary,
+  required Color accent,
+  required VoidCallback onExit,
+  required VoidCallback onRetry,
+}) {
+  if (!showFooterButton) {
+    return const SizedBox.shrink();
+  }
+
+  if (state is SendStateTransferring) {
+    return Row(
+      children: [
+        Expanded(
+          child: TextButton(
+            onPressed: onExit,
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFFB34A4A),
+              backgroundColor:
+                  const Color(0xFFB34A4A).withValues(alpha: 0.08),
+              minimumSize: const Size(0, 48),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: const Color(0xFFB34A4A).withValues(alpha: 0.15),
+                ),
+              ),
+            ),
+            child: const Text('Cancel transfer'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  if (state is! SendStateResult) {
+    return const SizedBox.shrink();
+  }
+
+  if (isSuccessResult) {
+    return Row(
+      children: [
+        Expanded(
+          child: FilledButton(
+            onPressed: onExit,
+            style: FilledButton.styleFrom(
+              backgroundColor: primary,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(0, 48),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text('Done'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Failure result: side-by-side "Done" + "Retry".  "Retry" is the visually
+  // dominant action (FilledButton in the accent color) because re-sending
+  // the same files is the more likely user intent after a failure; "Done"
+  // (OutlinedButton) is the escape hatch back to home.
+  return Row(
+    children: [
+      Expanded(
+        child: OutlinedButton(
+          onPressed: onExit,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: kInk,
+            minimumSize: const Size(0, 48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            side: BorderSide(color: kBorder),
+          ),
+          child: const Text('Done'),
+        ),
+      ),
+      const SizedBox(width: 12),
+      Expanded(
+        child: FilledButton(
+          onPressed: onRetry,
+          style: FilledButton.styleFrom(
+            backgroundColor: accent,
+            foregroundColor: Colors.white,
+            minimumSize: const Size(0, 48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          child: const Text('Retry'),
+        ),
+      ),
+    ],
+  );
 }
 
 class _SendStatsGrid extends StatelessWidget {

@@ -1,11 +1,11 @@
 use drift_core::lan::LanReceiveAdvertisement;
 use drift_core::rendezvous::{RendezvousClient, resolve_server_url};
 use drift_core::util::make_ticket;
+use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointId};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use tokio::sync::{broadcast, watch};
-use tokio::task::JoinHandle;
 use tracing::warn;
 
 use crate::error::{AppError, AppResult};
@@ -17,7 +17,12 @@ use super::{OfferDecision, ReceiverEvent, parse_device_type};
 pub(super) struct ReceiverRuntime {
     config: ReceiverConfig,
     endpoint: Endpoint,
-    listener_task: JoinHandle<()>,
+    /// Router that multiplexes inbound ALPNs on `endpoint`.  Held here so
+    /// shutdown can tear it down (and stop accepting) before closing the
+    /// endpoint.  Wrapped in `Option` only so tests using the bare
+    /// `ReceiverRuntime::new` constructor (which doesn't go through
+    /// `ReceiverService::start`) can supply a stub.
+    router: Option<Router>,
     server_url: Option<String>,
     registration: Option<ReceiverRegistration>,
     pub(super) discoverable_requested: bool,
@@ -49,12 +54,28 @@ impl ReceiverRuntime {
     pub(super) fn new(
         config: ReceiverConfig,
         endpoint: Endpoint,
-        listener_task: JoinHandle<()>,
+        router: Router,
     ) -> Self {
         Self {
             config,
             endpoint,
-            listener_task,
+            router: Some(router),
+            server_url: None,
+            registration: None,
+            discoverable_requested: false,
+            advertising: None,
+            offer_state: OfferState::Idle,
+        }
+    }
+
+    /// Test-only constructor for unit tests that just need a runtime to
+    /// poke at state — skips spinning up a real Router.
+    #[cfg(test)]
+    pub(super) fn new_for_test(config: ReceiverConfig, endpoint: Endpoint) -> Self {
+        Self {
+            config,
+            endpoint,
+            router: None,
             server_url: None,
             registration: None,
             discoverable_requested: false,
@@ -115,8 +136,19 @@ impl ReceiverRuntime {
         self.endpoint.close().await;
     }
 
-    pub(super) fn abort_listener(&self) {
-        self.listener_task.abort();
+    /// Tear down the inbound-ALPN router so no new connections are accepted.
+    /// Idempotent — safe to call multiple times.  We `take()` the router so
+    /// a follow-up shutdown call doesn't double-shutdown.
+    pub(super) async fn shutdown_router(&mut self) {
+        if let Some(router) = self.router.take() {
+            if let Err(err) = router.shutdown().await {
+                tracing::warn!(
+                    target: "drift_app::receiver::runtime",
+                    %err,
+                    "router shutdown returned an error; ignoring"
+                );
+            }
+        }
     }
 
     pub(super) async fn handle_setup(

@@ -159,10 +159,39 @@ impl SendSession {
         destination_label = resolved.destination_label;
 
         let device_type = parse_device_type(&self.draft.config().device_type)?;
-        let endpoint = if let Some(shared) = self.endpoint.clone() {
-            shared
+        // Two paths for the iroh endpoint we send over:
+        //
+        // - **Shared (preferred):** the caller (the Flutter bridge in
+        //   production) passes the receiver service's endpoint via
+        //   `with_endpoint`.  Reusing that endpoint means we register on
+        //   the relay only once per process, so the receiver service and
+        //   the active sender don't fight for the same `EndpointId` /
+        //   relay slot.  Blob serving runs against the shared endpoint's
+        //   `Router` through `BlobDispatcher::global()`.
+        //
+        // - **Fallback (tests, CLI):** if no shared endpoint was supplied
+        //   we bind our own.  Blob serving then uses an internal Router
+        //   spawned by `BlobService`.  This path is fine when nothing else
+        //   in the process is bound to the same secret key, e.g. unit
+        //   tests with a fresh key.
+        let (endpoint, blob_strategy) = if let Some(shared) = self.endpoint.clone() {
+            tracing::info!(
+                target: "drift_app::send::session",
+                endpoint_id = %shared.addr().id,
+                "using shared receiver-service endpoint + BlobDispatcher (External strategy)"
+            );
+            (
+                shared,
+                drift_core::blobs::BlobServingStrategy::External(Arc::new(
+                    crate::blob_dispatcher::BlobDispatcher::global(),
+                )),
+            )
         } else {
-            Endpoint::builder(presets::N0)
+            tracing::info!(
+                target: "drift_app::send::session",
+                "no shared endpoint available; binding private sender endpoint (Internal strategy)"
+            );
+            let endpoint = Endpoint::builder(presets::N0)
                 .alpns(vec![
                     drift_core::protocol::ALPN.to_vec(),
                     iroh_blobs::ALPN.to_vec(),
@@ -174,7 +203,8 @@ impl SendSession {
                 .await
                 .map_err(|e| AppError::BindingFailed {
                     context: format!("sender endpoint: {e}"),
-                })?
+                })?;
+            (endpoint, drift_core::blobs::BlobServingStrategy::Internal)
         };
         let identity = Identity {
             role: TransferRole::Sender,
@@ -201,7 +231,8 @@ impl SendSession {
                 peer_endpoint_id: resolved.peer_endpoint_id,
                 files: self.draft.paths().to_vec(),
             },
-        );
+        )
+        .with_blob_strategy(blob_strategy);
 
         let sender_run = sender.run_with_events();
         let (mut core_events, cancel_tx, outcome_rx) = sender_run.into_parts();

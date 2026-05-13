@@ -122,6 +122,21 @@ class SendController extends _$SendController {
     }
   }
 
+  /// Roll a finished transfer back into [SendStateDrafting] so the user can
+  /// retry without re-picking files.  Used by the failed/cancelled/declined
+  /// result card's "Retry" action.  Deliberately does NOT clear the Android
+  /// file picker cache (which `clearDraft` does) — the cached file URIs are
+  /// what the next attempt will re-read from.  No-op on any other state.
+  void restoreDraftFromResult() {
+    final current = state;
+    if (current is! SendStateResult) return;
+    state = SendStateDrafting(
+      items: current.items,
+      destination: current.destination,
+      resolvedDirectorySizes: current.resolvedDirectorySizes,
+    );
+  }
+
   SendRequestData? buildSendRequest() {
     final currentState = state;
     final (items, destination) = switch (currentState) {
