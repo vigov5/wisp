@@ -239,4 +239,3 @@ fn publish_snapshot(
         .map_err(|_| AppError::SnapshotChannelClosed)?;
     Ok(())
 }
-

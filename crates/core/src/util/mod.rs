@@ -357,7 +357,10 @@ pub fn make_qr_payload(
         device_type: device_type.to_owned(),
     };
     let json = serde_json::to_vec(&payload).map_err(|_| TicketError::InvalidPayload)?;
-    Ok(format!("{QR_PAYLOAD_PREFIX}{}", URL_SAFE_NO_PAD.encode(json)))
+    Ok(format!(
+        "{QR_PAYLOAD_PREFIX}{}",
+        URL_SAFE_NO_PAD.encode(json)
+    ))
 }
 
 /// Returns the LAN-routable direct socket addresses for this endpoint.
@@ -399,9 +402,7 @@ pub fn lan_direct_addrs(endpoint: &Endpoint) -> Vec<std::net::SocketAddr> {
     for iface in interfaces {
         let ip = iface.ip();
         let usable = match ip {
-            IpAddr::V4(v4) => {
-                !v4.is_loopback() && !v4.is_unspecified() && !v4.is_link_local()
-            }
+            IpAddr::V4(v4) => !v4.is_loopback() && !v4.is_unspecified() && !v4.is_link_local(),
             IpAddr::V6(v6) => {
                 !v6.is_loopback()
                     && !v6.is_unspecified()
@@ -456,20 +457,18 @@ pub fn synthesize_ticket(
 
     if let Some(s) = direct_addr.map(str::trim).filter(|s| !s.is_empty()) {
         // Validate via parse; the on-the-wire form keeps the original string.
-        let _: std::net::SocketAddr =
-            s.parse().map_err(|source| TicketError::ParseSocketAddr {
-                value: s.to_owned(),
-                source,
-            })?;
+        let _: std::net::SocketAddr = s.parse().map_err(|source| TicketError::ParseSocketAddr {
+            value: s.to_owned(),
+            source,
+        })?;
         addrs.push(EncodedTransportAddr::Ip(s.to_owned()));
     }
 
     if let Some(s) = relay_url.map(str::trim).filter(|s| !s.is_empty()) {
-        let _: iroh::RelayUrl =
-            s.parse().map_err(|source| TicketError::ParseRelayUrl {
-                value: s.to_owned(),
-                source: Box::new(source),
-            })?;
+        let _: iroh::RelayUrl = s.parse().map_err(|source| TicketError::ParseRelayUrl {
+            value: s.to_owned(),
+            source: Box::new(source),
+        })?;
         addrs.push(EncodedTransportAddr::Relay(s.to_owned()));
     }
 
@@ -489,9 +488,7 @@ pub fn synthesize_ticket(
 /// Accepted inputs:
 /// - `"drift-pair:<base64url(json{ticket, device_name, device_type})>"` — new QR format.
 /// - Plain ticket string (base64url of bincode `TransferTicket`) — older QR / paste.
-pub fn decode_ticket_info(
-    input: &str,
-) -> std::result::Result<DecodedTicketInfo, TicketError> {
+pub fn decode_ticket_info(input: &str) -> std::result::Result<DecodedTicketInfo, TicketError> {
     let trimmed = input.trim();
 
     if let Some(rest) = trimmed.strip_prefix(QR_PAYLOAD_PREFIX) {
@@ -709,10 +706,9 @@ mod synthetic_ticket_tests {
         let ticket = synthesize_ticket(id, Some("https://relay.example/"), None).expect("ticket");
         let decoded = decode_ticket(&ticket).expect("decode");
         assert_eq!(decoded.id, id);
-        let has_relay = decoded
-            .addrs
-            .iter()
-            .any(|a| matches!(a, TransportAddr::Relay(url) if url.as_str() == "https://relay.example/"));
+        let has_relay = decoded.addrs.iter().any(
+            |a| matches!(a, TransportAddr::Relay(url) if url.as_str() == "https://relay.example/"),
+        );
         assert!(has_relay, "decoded ticket missing relay addr");
     }
 
@@ -732,12 +728,8 @@ mod synthetic_ticket_tests {
     #[test]
     fn both_hints_round_trip() {
         let id = sample_id();
-        let ticket = synthesize_ticket(
-            id,
-            Some("https://relay.example/"),
-            Some("10.0.0.1:1234"),
-        )
-        .expect("ticket");
+        let ticket = synthesize_ticket(id, Some("https://relay.example/"), Some("10.0.0.1:1234"))
+            .expect("ticket");
         let decoded = decode_ticket(&ticket).expect("decode");
         assert_eq!(decoded.id, id);
         assert_eq!(decoded.addrs.len(), 2);
@@ -780,8 +772,7 @@ mod qr_payload_tests {
     #[test]
     fn decode_ticket_info_round_trips_qr_payload_fields() {
         let id = sample_id();
-        let inner =
-            synthesize_ticket(id, None, Some("192.168.1.5:5000")).expect("inner ticket");
+        let inner = synthesize_ticket(id, None, Some("192.168.1.5:5000")).expect("inner ticket");
         let qr = build_qr_payload(inner, "Maya MacBook", "laptop");
 
         let info = decode_ticket_info(&qr).expect("decode info");
@@ -804,15 +795,14 @@ mod qr_payload_tests {
     #[test]
     fn decode_ticket_accepts_drift_pair_prefix_and_unwraps() {
         let id = sample_id();
-        let inner =
-            synthesize_ticket(id, Some("https://relay.example/"), None).expect("inner");
+        let inner = synthesize_ticket(id, Some("https://relay.example/"), None).expect("inner");
         let qr = build_qr_payload(inner, "Phone", "phone");
 
         let addr = decode_ticket(&qr).expect("decode");
         assert_eq!(addr.id, id);
-        let has_relay = addr.addrs.iter().any(|a| {
-            matches!(a, TransportAddr::Relay(url) if url.as_str() == "https://relay.example/")
-        });
+        let has_relay = addr.addrs.iter().any(
+            |a| matches!(a, TransportAddr::Relay(url) if url.as_str() == "https://relay.example/"),
+        );
         assert!(has_relay, "expected relay addr to survive QR-wrap unwrap");
     }
 
@@ -850,7 +840,10 @@ mod qr_payload_tests {
         let id = sample_id();
         let inner = synthesize_ticket(id, None, Some("10.0.0.1:1234")).expect("ticket");
         let json = format!(r#"{{"ticket":"{}"}}"#, inner);
-        let qr = format!("{QR_PAYLOAD_PREFIX}{}", URL_SAFE_NO_PAD.encode(json.as_bytes()));
+        let qr = format!(
+            "{QR_PAYLOAD_PREFIX}{}",
+            URL_SAFE_NO_PAD.encode(json.as_bytes())
+        );
 
         let info = decode_ticket_info(&qr).expect("decode legacy");
         assert_eq!(info.endpoint_addr.id, id);
@@ -876,12 +869,9 @@ mod encode_ticket_tests {
         // `decode_ticket` and back must preserve both the EndpointId and the
         // addr set without loss.
         let id = sample_id();
-        let original = synthesize_ticket(
-            id,
-            Some("https://relay.example/"),
-            Some("192.168.1.5:5000"),
-        )
-        .expect("synth");
+        let original =
+            synthesize_ticket(id, Some("https://relay.example/"), Some("192.168.1.5:5000"))
+                .expect("synth");
         let decoded = decode_ticket(&original).expect("decode");
 
         let encoded = encode_ticket(decoded.clone()).expect("encode");
@@ -889,14 +879,17 @@ mod encode_ticket_tests {
 
         assert_eq!(decoded_again.id, id);
         assert_eq!(decoded_again.addrs.len(), decoded.addrs.len());
-        let has_relay = decoded_again.addrs.iter().any(|a| {
-            matches!(a, TransportAddr::Relay(url) if url.as_str() == "https://relay.example/")
-        });
+        let has_relay = decoded_again.addrs.iter().any(
+            |a| matches!(a, TransportAddr::Relay(url) if url.as_str() == "https://relay.example/"),
+        );
         let has_ip = decoded_again
             .addrs
             .iter()
             .any(|a| matches!(a, TransportAddr::Ip(s) if s.to_string() == "192.168.1.5:5000"));
-        assert!(has_relay, "relay hint must survive encode_ticket round-trip");
+        assert!(
+            has_relay,
+            "relay hint must survive encode_ticket round-trip"
+        );
         assert!(has_ip, "ip hint must survive encode_ticket round-trip");
     }
 

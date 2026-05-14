@@ -72,9 +72,7 @@ pub trait ExternalBlobRegistrar: std::fmt::Debug + Send + Sync + 'static {
         protocol: BlobsProtocol,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
-    fn unregister_blob_protocol(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
+    fn unregister_blob_protocol(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
 }
 
 #[derive(Debug)]
@@ -258,7 +256,10 @@ impl BlobRegistration {
                     .await
                     .map_err(|source| BlobError::store_shutdown("blob registration", source))?;
             }
-            BlobRegistrationInner::External { registrar, _protocol } => {
+            BlobRegistrationInner::External {
+                registrar,
+                _protocol,
+            } => {
                 registrar.unregister_blob_protocol().await;
                 drop(_protocol);
             }
@@ -347,9 +348,8 @@ mod tests {
             fn register_blob_protocol(
                 &self,
                 protocol: BlobsProtocol,
-            ) -> std::pin::Pin<
-                Box<dyn std::future::Future<Output = BlobResult<()>> + Send + '_>,
-            > {
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = BlobResult<()>> + Send + '_>>
+            {
                 Box::pin(async move {
                     self.call_log.lock().unwrap().push("register");
                     self.register_count
@@ -361,8 +361,7 @@ mod tests {
 
             fn unregister_blob_protocol(
                 &self,
-            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>>
-            {
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
                 Box::pin(async move {
                     self.call_log.lock().unwrap().push("unregister");
                     self.unregister_count
@@ -395,18 +394,22 @@ mod tests {
         };
 
         let registrar = Arc::new(RecordingRegistrar::default());
-        let strategy = BlobServingStrategy::External(Arc::clone(&registrar)
-            as Arc<dyn ExternalBlobRegistrar>);
+        let strategy =
+            BlobServingStrategy::External(Arc::clone(&registrar) as Arc<dyn ExternalBlobRegistrar>);
         let service = BlobService::new(endpoint.clone());
         let registration = service.register_with_strategy(prepared, &strategy).await?;
 
         assert_eq!(
-            registrar.register_count.load(std::sync::atomic::Ordering::SeqCst),
+            registrar
+                .register_count
+                .load(std::sync::atomic::Ordering::SeqCst),
             1,
             "register_blob_protocol must be called exactly once"
         );
         assert_eq!(
-            registrar.unregister_count.load(std::sync::atomic::Ordering::SeqCst),
+            registrar
+                .unregister_count
+                .load(std::sync::atomic::Ordering::SeqCst),
             0,
             "unregister_blob_protocol must not be called during registration"
         );
@@ -418,7 +421,9 @@ mod tests {
         registration.shutdown().await?;
 
         assert_eq!(
-            registrar.unregister_count.load(std::sync::atomic::Ordering::SeqCst),
+            registrar
+                .unregister_count
+                .load(std::sync::atomic::Ordering::SeqCst),
             1,
             "unregister_blob_protocol must be called exactly once on shutdown"
         );

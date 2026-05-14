@@ -166,14 +166,19 @@ async fn maintain_registration_is_noop_when_no_server_url_configured() -> AppRes
     // Mark "no new value" baseline so we can assert nothing was sent.
     pairing_rx.borrow_and_update();
 
-    runtime.maintain_registration(&pairing_tx, &event_tx).await?;
+    runtime
+        .maintain_registration(&pairing_tx, &event_tx)
+        .await?;
 
     assert!(
         !pairing_rx.has_changed().unwrap(),
         "pairing_tx must not be touched when no server URL is configured"
     );
     assert!(
-        matches!(event_rx.try_recv(), Err(broadcast::error::TryRecvError::Empty)),
+        matches!(
+            event_rx.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ),
         "event_tx must not receive anything when no server URL is configured"
     );
     Ok(())
@@ -213,7 +218,9 @@ async fn maintain_registration_does_not_rotate_fresh_code_after_claim() -> AppRe
     let (event_tx, mut event_rx) = broadcast::channel::<ReceiverEvent>(8);
     pairing_rx.borrow_and_update();
 
-    runtime.maintain_registration(&pairing_tx, &event_tx).await?;
+    runtime
+        .maintain_registration(&pairing_tx, &event_tx)
+        .await?;
 
     assert_eq!(
         runtime.registration_for_test(),
@@ -227,7 +234,10 @@ async fn maintain_registration_does_not_rotate_fresh_code_after_claim() -> AppRe
          registration is still fresh"
     );
     assert!(
-        matches!(event_rx.try_recv(), Err(broadcast::error::TryRecvError::Empty)),
+        matches!(
+            event_rx.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ),
         "no RegistrationUpdated event should be emitted when the existing \
          registration is still fresh"
     );

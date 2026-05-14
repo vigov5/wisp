@@ -51,11 +51,7 @@ pub(super) struct PendingOfferState {
 }
 
 impl ReceiverRuntime {
-    pub(super) fn new(
-        config: ReceiverConfig,
-        endpoint: Endpoint,
-        router: Router,
-    ) -> Self {
+    pub(super) fn new(config: ReceiverConfig, endpoint: Endpoint, router: Router) -> Self {
         Self {
             config,
             endpoint,
@@ -100,10 +96,7 @@ impl ReceiverRuntime {
     }
 
     #[cfg(test)]
-    pub(super) fn set_registration_for_test(
-        &mut self,
-        registration: Option<ReceiverRegistration>,
-    ) {
+    pub(super) fn set_registration_for_test(&mut self, registration: Option<ReceiverRegistration>) {
         self.registration = registration;
     }
 

@@ -709,7 +709,10 @@ mod tests {
     #[test]
     fn demote_connecting_with_unknown_path_yields_unreachable() {
         // Connecting phase reached but the watcher never saw any active path.
-        let prior = synthetic_event_with_path(SendPhase::Connecting, drift_core::util::ConnectionPath::unknown());
+        let prior = synthetic_event_with_path(
+            SendPhase::Connecting,
+            drift_core::util::ConnectionPath::unknown(),
+        );
         let last = Arc::new(StdMutex::new(Some(prior)));
         let event = maybe_demote_pre_handshake_failure(&last, synthetic_event(SendPhase::Failed));
         let kind = event.error.expect("error").kind();
@@ -778,7 +781,10 @@ mod tests {
     fn passthrough_non_failed_events_unchanged() {
         let last = Arc::new(StdMutex::new(None));
         let event = maybe_demote_pre_handshake_failure(&last, synthetic_event(SendPhase::Sending));
-        assert!(event.error.is_none(), "non-Failed events must not gain an error");
+        assert!(
+            event.error.is_none(),
+            "non-Failed events must not gain an error"
+        );
     }
 
     #[test]

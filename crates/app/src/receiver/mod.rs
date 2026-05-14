@@ -52,7 +52,10 @@ pub enum OfferDecision {
 pub enum ReceiverEvent {
     RegistrationUpdated(ReceiverRegistration),
     SetupCompleted(ReceiverRegistration),
-    DiscoverabilityChanged { requested: bool, active: bool },
+    DiscoverabilityChanged {
+        requested: bool,
+        active: bool,
+    },
     OfferUpdated(ReceiverOfferEvent),
     ConnectionPathChanged {
         offer_id: u64,
