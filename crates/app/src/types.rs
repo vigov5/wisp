@@ -78,6 +78,13 @@ pub struct QrPairingInfo {
 pub enum PairingCodeState {
     Unavailable,
     Active(ReceiverRegistration),
+    /// Server says the code is no longer claimable (likely the previous
+    /// sender already claimed it) but the receiver couldn't immediately
+    /// register a fresh one — either the rendezvous call errored or we're
+    /// still observing the previous registration.  UI should keep showing
+    /// the stale code grey'd out plus a "may have been used, tap Refresh"
+    /// hint so the user has an explicit recovery action.
+    Stale(ReceiverRegistration),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

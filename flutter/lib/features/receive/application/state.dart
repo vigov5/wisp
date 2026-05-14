@@ -23,12 +23,24 @@ class ReceiverSnapshot {
 
 @immutable
 class PairingCodeState {
-  const PairingCodeState.unavailable() : code = null, expiresAt = null;
+  const PairingCodeState.unavailable()
+    : code = null,
+      expiresAt = null,
+      isStale = false;
 
-  const PairingCodeState.active({required this.code, this.expiresAt});
+  const PairingCodeState.active({required this.code, this.expiresAt})
+    : isStale = false;
+
+  /// Server reports the code is no longer claimable (probably the previous
+  /// sender already pulled the ticket) but background re-registration has
+  /// not yet succeeded.  Keep showing the existing code so the user has
+  /// context, but prompt them to tap Refresh.
+  const PairingCodeState.stale({required this.code, this.expiresAt})
+    : isStale = true;
 
   final String? code;
   final String? expiresAt;
+  final bool isStale;
 
   bool get isAvailable => code != null && code!.trim().isNotEmpty;
 
@@ -109,6 +121,8 @@ class ReceiverIdleViewState {
     required this.code,
     required this.clipboardCode,
     required this.lifecycle,
+    this.expiresAt,
+    this.isStale = false,
   });
 
   final String deviceName;
@@ -117,6 +131,17 @@ class ReceiverIdleViewState {
   final String code;
   final String clipboardCode;
   final ReceiverLifecycle lifecycle;
+
+  /// RFC3339 timestamp parsed from the rendezvous-server registration.  Used
+  /// by the idle card to render a TTL countdown indicator below the code.
+  /// `null` when the receiver is unregistered (no countdown to show).
+  final DateTime? expiresAt;
+
+  /// `true` when the rendezvous server reports the code is no longer
+  /// claimable but background re-registration hasn't succeeded yet.  UI
+  /// surfaces a "Code may have been used. Tap to refresh" hint and styles
+  /// the code area as muted.
+  final bool isStale;
 }
 
 @immutable
@@ -139,6 +164,25 @@ class ReceiverServiceState {
         hasPendingOffer: false,
       ),
       pairingCode: PairingCodeState.active(code: code, expiresAt: expiresAt),
+    );
+  }
+
+  /// Same as [ready] but flags the pairing code as stale — UI uses this to
+  /// show a "may have been used, tap Refresh" hint.  The code itself stays
+  /// visible so the user has context for the warning.
+  factory ReceiverServiceState.stale({
+    required String code,
+    String? expiresAt,
+  }) {
+    return ReceiverServiceState(
+      snapshot: const ReceiverSnapshot(
+        lifecycle: ReceiverLifecycle.ready,
+        discoverableRequested: false,
+        advertisingActive: false,
+        hasRegistration: true,
+        hasPendingOffer: false,
+      ),
+      pairingCode: PairingCodeState.stale(code: code, expiresAt: expiresAt),
     );
   }
 

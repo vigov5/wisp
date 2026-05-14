@@ -260,24 +260,70 @@ impl ReceiverRuntime {
             let _ = pairing_tx.send(PairingCodeState::Active(registration.clone()));
             let _ = event_tx.send(ReceiverEvent::RegistrationUpdated(registration));
             self.publish_discoverability_change_if_needed(was_active, event_tx);
+            return Ok(());
         }
 
-        // Intentionally do NOT rotate the code here based on `pair_status`.
-        // Once a sender claims the code, the server flips the session state
-        // from `Open` to `Claimed` and `get_pair_status` starts returning 404
-        // (claimed != open).  An earlier version of this loop took that 404
-        // as "session vanished, mint a new one" and rotated, which made the
-        // displayed code change *while the sender was still in the connect
-        // phase* — confusing the user and breaking the one-shot retry
-        // window before the offer actually arrived.  Rotation is owned by
-        // exactly two events now:
-        //   1. TTL expiry (handled by `registration_needs_refresh` above).
-        //   2. `OfferPrepared` (handled in `refresh_registration_after_offer`
-        //      from the actor loop), which fires the moment the sender's
-        //      offer reaches us — the correct user-visible "pairing done"
-        //      moment.  Server still enforces one-shot via 409 on re-claim,
-        //      so leaving the visible code stale here is safe.
-        Ok(())
+        // Poll the rendezvous server for the current claim status of our
+        // pairing code.  Two outcomes that matter to us:
+        //
+        // 1. `Some(_)` — server still has an Open session under our code.
+        //    Nothing to do; the code is still usable for a new sender.
+        // 2. `None` — server returned 404, meaning the session was either
+        //    claimed (sender pulled the ticket) or purged (TTL).  Either
+        //    way the visible code is dead; we mint a new one immediately
+        //    so the user always sees a usable code, regardless of whether
+        //    the previous sender ever successfully connected.  This is
+        //    the "no grace period" policy: if a sender claims and then
+        //    fails to dial us, the previously-claimed code is gone and
+        //    we'd rather show a fresh one than leave the user staring at
+        //    a code that can never be claimed again until TTL.
+        //
+        // If the rotation itself fails (network blip, server 5xx, …) we
+        // emit `Stale(existing)` so the UI can prompt the user to tap
+        // Refresh manually — keeping the user informed without retrying
+        // aggressively on a flaky network.
+        let pair_status = RendezvousClient::new(server_url.clone())
+            .pair_status(&existing.code)
+            .await;
+
+        match pair_status {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => {
+                let was_active = self.advertising_active();
+                match self.ensure_registered_with_current_server().await {
+                    Ok(registration) => {
+                        let _ = pairing_tx.send(PairingCodeState::Active(registration.clone()));
+                        let _ = event_tx.send(ReceiverEvent::RegistrationUpdated(registration));
+                        self.publish_discoverability_change_if_needed(was_active, event_tx);
+                        Ok(())
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "drift_app::receiver::runtime",
+                            %err,
+                            code = %existing.code,
+                            "pair status returned 404 but auto-rotation failed; \
+                             marking pairing code as Stale and waiting for the \
+                             user to tap Refresh"
+                        );
+                        let _ = pairing_tx.send(PairingCodeState::Stale(existing.clone()));
+                        Ok(())
+                    }
+                }
+            }
+            Err(err) => {
+                // Network/transport error talking to the rendezvous server.
+                // Don't downgrade visible state to Stale on a single failure —
+                // that would flicker the UI on flaky connections.  Just log
+                // and try again on the next tick.
+                tracing::debug!(
+                    target: "drift_app::receiver::runtime",
+                    %err,
+                    "pair_status request failed; will retry on next maintenance tick"
+                );
+                Ok(())
+            }
+        }
     }
 
     pub(super) async fn set_discoverable(&mut self, enabled: bool) -> AppResult<()> {

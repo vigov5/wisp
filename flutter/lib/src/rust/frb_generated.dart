@@ -1124,11 +1124,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ReceiverPairingState dco_decode_receiver_pairing_state(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 2)
-      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return ReceiverPairingState(
       code: dco_decode_opt_String(arr[0]),
       expiresAt: dco_decode_opt_String(arr[1]),
+      stale: dco_decode_bool(arr[2]),
     );
   }
 
@@ -1756,7 +1757,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_code = sse_decode_opt_String(deserializer);
     var var_expiresAt = sse_decode_opt_String(deserializer);
-    return ReceiverPairingState(code: var_code, expiresAt: var_expiresAt);
+    var var_stale = sse_decode_bool(deserializer);
+    return ReceiverPairingState(
+      code: var_code,
+      expiresAt: var_expiresAt,
+      stale: var_stale,
+    );
   }
 
   @protected
@@ -2463,6 +2469,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_opt_String(self.code, serializer);
     sse_encode_opt_String(self.expiresAt, serializer);
+    sse_encode_bool(self.stale, serializer);
   }
 
   @protected

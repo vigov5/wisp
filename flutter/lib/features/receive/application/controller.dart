@@ -25,6 +25,15 @@ ReceiverIdleViewState receiverIdleViewState(Ref ref) {
   final code = pairingCode.isAvailable ? pairingCode.formattedCode : '......';
   final deviceName = ref.watch(settingsControllerProvider).settings.deviceName;
 
+  // Parse the expiry timestamp once so the widget can compute remaining TTL
+  // without re-parsing on every animation tick.  Bad/missing values fall
+  // through as `null` — the idle card just hides the countdown bar.
+  DateTime? expiresAt;
+  final raw = pairingCode.expiresAt;
+  if (raw != null && raw.isNotEmpty) {
+    expiresAt = DateTime.tryParse(raw)?.toUtc();
+  }
+
   return ReceiverIdleViewState(
     deviceName: deviceName,
     badge: badge,
@@ -32,5 +41,7 @@ ReceiverIdleViewState receiverIdleViewState(Ref ref) {
     code: code,
     clipboardCode: pairingCode.clipboardCode,
     lifecycle: snapshot.lifecycle,
+    expiresAt: expiresAt,
+    isStale: pairingCode.isStale,
   );
 }

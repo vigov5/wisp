@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../application/controller.dart';
+import '../application/service.dart';
 import '../../settings/presentation/view.dart';
 import 'qr_pairing_page.dart';
 import 'receive_transfer_route_gate.dart';
@@ -50,6 +53,13 @@ class ReceiveFeature extends ConsumerWidget {
                     MaterialPageRoute<void>(
                       builder: (_) => const QrPairingPage(),
                     ),
+                  );
+                },
+                onRefreshCode: () {
+                  unawaited(
+                    ref
+                        .read(receiverServiceProvider.notifier)
+                        .ensureRegistered(),
                   );
                 },
               ),

@@ -50,6 +50,11 @@ pub struct ReceiverRegistration {
 pub struct ReceiverPairingState {
     pub code: Option<String>,
     pub expires_at: Option<String>,
+    /// `true` when the rendezvous server has told us the code is no longer
+    /// claimable (likely a sender has already consumed it) but background
+    /// re-registration is currently failing.  Dart UI should keep the code
+    /// visible but prompt the user to tap Refresh.
+    pub stale: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +114,27 @@ pub fn ensure_receiver_registration(
     device_name: String,
 ) -> Result<ReceiverRegistration, crate::api::error::UserFacingErrorData> {
     RUNTIME.block_on(async move {
+        // Prefer the live service so a UI-driven refresh (Refresh button)
+        // rotates the visible code without shutting down the endpoint or
+        // tearing down the pairing/offer relay tasks.  Building a synthetic
+        // config here would have a different `device_type`/`download_root`
+        // than `watch_receiver_pairing` set up, causing `ensure_receiver_service`
+        // to treat it as a new identity and rebuild from scratch.
+        if let Some(service) = current_service() {
+            return service
+                .ensure_registered(server_url)
+                .await
+                .map(map_registration)
+                .map_err(|e| {
+                    internal_user_facing_error("Receiver registration failed", e.to_string())
+                });
+        }
+
+        // Cold-start fallback: the bridge state hasn't been populated yet
+        // (no `watch_receiver_pairing` call).  Spin one up so the very first
+        // explicit registration request still works.  device_type / download_root
+        // are placeholders here — the subsequent `watch_receiver_pairing` call
+        // will provide the real values and reuse the same service.
         let service = ensure_receiver_service(BridgeReceiverConfig {
             device_name,
             device_type: "laptop".to_owned(),
@@ -517,7 +543,8 @@ fn set_discoverable(enabled: bool) -> Result<(), crate::api::error::UserFacingEr
 fn pairing_registration(state: &PairingCodeState) -> Option<AppReceiverRegistration> {
     match state {
         PairingCodeState::Unavailable => None,
-        PairingCodeState::Active(registration) => Some(registration.clone()),
+        PairingCodeState::Active(registration)
+        | PairingCodeState::Stale(registration) => Some(registration.clone()),
     }
 }
 
@@ -533,10 +560,17 @@ fn map_pairing_state(state: &PairingCodeState) -> ReceiverPairingState {
         PairingCodeState::Unavailable => ReceiverPairingState {
             code: None,
             expires_at: None,
+            stale: false,
         },
         PairingCodeState::Active(registration) => ReceiverPairingState {
             code: Some(registration.code.clone()),
             expires_at: Some(registration.expires_at.clone()),
+            stale: false,
+        },
+        PairingCodeState::Stale(registration) => ReceiverPairingState {
+            code: Some(registration.code.clone()),
+            expires_at: Some(registration.expires_at.clone()),
+            stale: true,
         },
     }
 }

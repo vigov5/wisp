@@ -118,11 +118,12 @@ class ReceiverConnectionPath {
 class ReceiverPairingState {
   final String? code;
   final String? expiresAt;
+  final bool stale;
 
-  const ReceiverPairingState({this.code, this.expiresAt});
+  const ReceiverPairingState({this.code, this.expiresAt, this.stale = false});
 
   @override
-  int get hashCode => code.hashCode ^ expiresAt.hashCode;
+  int get hashCode => code.hashCode ^ expiresAt.hashCode ^ stale.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -130,7 +131,8 @@ class ReceiverPairingState {
       other is ReceiverPairingState &&
           runtimeType == other.runtimeType &&
           code == other.code &&
-          expiresAt == other.expiresAt;
+          expiresAt == other.expiresAt &&
+          stale == other.stale;
 }
 
 class ReceiverRegistration {

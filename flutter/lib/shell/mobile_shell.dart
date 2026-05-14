@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/receive/application/controller.dart';
+import '../features/receive/application/service.dart';
 import '../features/receive/presentation/qr_pairing_page.dart';
 import '../features/receive/presentation/receive_transfer_route_gate.dart';
 import '../features/send/presentation/send_selection_source_sheet.dart';
@@ -58,7 +61,16 @@ class MobileShell extends ConsumerWidget with ShellPickingActions {
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
                   const SizedBox(height: 8),
-                  MobileIdentityCard(state: receiverState),
+                  MobileIdentityCard(
+                    state: receiverState,
+                    onRefreshCode: () {
+                      unawaited(
+                        ref
+                            .read(receiverServiceProvider.notifier)
+                            .ensureRegistered(),
+                      );
+                    },
+                  ),
                   const SizedBox(height: 32),
                   SelectFilesCard(
                     onTap: () {

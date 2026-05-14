@@ -1104,9 +1104,11 @@ impl SseDecode for crate::api::receiver::ReceiverPairingState {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_code = <Option<String>>::sse_decode(deserializer);
         let mut var_expiresAt = <Option<String>>::sse_decode(deserializer);
+        let mut var_stale = <bool>::sse_decode(deserializer);
         return crate::api::receiver::ReceiverPairingState {
             code: var_code,
             expires_at: var_expiresAt,
+            stale: var_stale,
         };
     }
 }
@@ -1655,6 +1657,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::receiver::ReceiverPairingStat
         [
             self.code.into_into_dart().into_dart(),
             self.expires_at.into_into_dart().into_dart(),
+            self.stale.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -2341,6 +2344,7 @@ impl SseEncode for crate::api::receiver::ReceiverPairingState {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <Option<String>>::sse_encode(self.code, serializer);
         <Option<String>>::sse_encode(self.expires_at, serializer);
+        <bool>::sse_encode(self.stale, serializer);
     }
 }
 

@@ -9,6 +9,10 @@ ReceiverServiceState mapReceiverPairingState(
     return const ReceiverServiceState.unavailable();
   }
 
+  if (state.stale) {
+    return ReceiverServiceState.stale(code: code, expiresAt: state.expiresAt);
+  }
+
   return ReceiverServiceState.ready(code: code, expiresAt: state.expiresAt);
 }
 
