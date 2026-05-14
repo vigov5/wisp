@@ -24,29 +24,29 @@ It is designed to feel as simple as AirDrop, but without being limited to Apple 
 
 ## Features
 
-- **Send files between devices, near or far**  
+- **Send files between devices, near or far**
   Discover nearby devices on your local network, or connect using a 6-character pairing code.
 
-- **Resumable transfers**  
+- **Resumable transfers**
   Connection died mid-transfer? Send the same files again and Drift will resume from where the transfer stopped instead of starting over.
 
-- **Cross-platform**  
+- **Cross-platform**
   Drift currently provides builds for macOS, Windows, Linux, and Android. iOS support is planned.
 
-- **End-to-end encrypted connections**  
+- **End-to-end encrypted connections**
   Files are sent over an end-to-end encrypted peer-to-peer connection. Files are never stored in the cloud, and only the sender and receiver can read them.
 
-- **Free and open source**  
+- **Free and open source**
   Drift is MIT-licensed and open to contributions. No ads, accounts, or limits on what you send.
 
 ## Installation
 
 | Platform | Download |
 | --- | --- |
-| macOS | [drift-macos-v0.3.6.dmg](https://github.com/vsamarth/drift/releases/download/v0.3.6/drift-macos-v0.3.6.dmg) |
-| Windows | [drift-windows-setup-v0.3.6.exe](https://github.com/vsamarth/drift/releases/download/v0.3.6/drift-windows-setup-v0.3.6.exe) |
-| Linux | [drift-linux-v0.3.6.deb](https://github.com/vsamarth/drift/releases/download/v0.3.6/drift-linux-v0.3.6.deb) |
-| Android | [drift-android-v0.3.6.apk](https://github.com/vsamarth/drift/releases/download/v0.3.6/drift-android-v0.3.6.apk) |
+| macOS | [drift-macos-v0.4.0.dmg](https://github.com/vsamarth/drift/releases/download/v0.4.0/drift-macos-v0.4.0.dmg) |
+| Windows | [drift-windows-setup-v0.4.0.exe](https://github.com/vsamarth/drift/releases/download/v0.4.0/drift-windows-setup-v0.4.0.exe) |
+| Linux | [drift-linux-v0.4.0.deb](https://github.com/vsamarth/drift/releases/download/v0.4.0/drift-linux-v0.4.0.deb) |
+| Android | [drift-android-v0.4.0.apk](https://github.com/vsamarth/drift/releases/download/v0.4.0/drift-android-v0.4.0.apk) |
 | iOS | Coming soon |
 
 > [!TIP]
