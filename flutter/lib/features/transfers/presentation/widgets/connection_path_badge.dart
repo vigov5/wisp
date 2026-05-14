@@ -4,7 +4,7 @@ import '../../../../theme/drift_theme.dart';
 import '../../application/connection_path.dart';
 
 /// Compact pill showing whether the active iroh transfer is "P2P direct" or
-/// "Via relay: <host>". Tapping/long-pressing reveals the full relay URL.
+/// "Via relay: &lt;host&gt;". Tapping/long-pressing reveals the full relay URL.
 class ConnectionPathBadge extends StatelessWidget {
   const ConnectionPathBadge({super.key, required this.path, this.dense = true});
 

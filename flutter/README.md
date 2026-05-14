@@ -77,6 +77,28 @@ flutter pub run build_runner build --delete-conflicting-outputs
 - **Widget & Unit Tests:** `flutter test`
 - **Integration Tests:** `flutter test integration_test/transfer_test.dart`
 
+### Build Cache Cleanup
+
+Flutter + Rust bridge builds can consume a lot of disk space due to generated build artifacts.
+
+- **Standard cleanup (PowerShell, no make required):**
+    ```powershell
+    pwsh -File .\scripts\clean-flutter-cache.ps1
+    ```
+    This runs `flutter clean` and `cargo clean` for `flutter/rust`.
+
+- **Standard cleanup (if make is available):**
+    ```bash
+    cd ..
+    make clean-flutter
+    ```
+
+- **Deep cleanup (more disk reclaimed):**
+    ```powershell
+    pwsh -File .\scripts\clean-flutter-cache.ps1 -Deep
+    ```
+    This also removes `flutter/.dart_tool` and `flutter/android/.gradle` (next build will be slower).
+
 ---
 
 ## Useful Resources
