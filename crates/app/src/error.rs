@@ -203,12 +203,17 @@ impl UserFacingError {
             UserFacingErrorKind::Cancelled => {
                 Self::new(kind, "Transfer cancelled", "The transfer was cancelled.")
             }
-            UserFacingErrorKind::Internal => {
-                Self::internal("Something went wrong", "Please try again.")
-            }
-            UserFacingErrorKind::Other => {
-                Self::new(kind, "Transfer failed", "An unexpected error occurred.")
-            }
+            UserFacingErrorKind::Internal => Self::internal(
+                "Drift internal error",
+                "Drift hit an unexpected condition with no specific cause attached. \
+                 Check the logs for the underlying error and reopen the relevant tab to retry.",
+            ),
+            UserFacingErrorKind::Other => Self::new(
+                kind,
+                "Transfer failed (uncategorized)",
+                "Transfer ended with an error that Drift couldn't classify. \
+                 Check the logs for the underlying message.",
+            ),
         }
     }
 }
@@ -218,69 +223,101 @@ impl From<AppError> for UserFacingError {
         match error {
             AppError::ReceiverSetupIncomplete => UserFacingError::new(
                 UserFacingErrorKind::Internal,
-                "Receiver not ready",
-                "Open the receiver setup before trying that again.",
+                "Receiver setup not finished",
+                "Drift tried to use the receiver before its setup step completed. \
+                 Reopen the Receive tab to retry setup.",
             ),
             AppError::NoPendingOffer => UserFacingError::new(
                 UserFacingErrorKind::Internal,
-                "No pending offer",
-                "There is no pending offer to respond to.",
+                "No incoming offer to respond to",
+                "The sender either cancelled the offer or it expired before you responded.",
             ),
             AppError::OfferNoLongerActive => UserFacingError::new(
                 UserFacingErrorKind::Internal,
                 "Offer no longer active",
-                "That offer is no longer active.",
+                "The offer was cancelled or replaced by a newer one before your response arrived.",
             ),
             AppError::NoActiveTransfer => UserFacingError::new(
                 UserFacingErrorKind::Internal,
-                "No active transfer",
-                "There is no active transfer to cancel.",
+                "Nothing to cancel — no active transfer",
+                "The transfer finished or was already cancelled before the cancel reached the runtime.",
             ),
             AppError::UnsupportedLocalOperation { operation } => UserFacingError::new(
                 UserFacingErrorKind::Internal,
-                "Unsupported operation",
-                format!("Drift does not support {operation} yet."),
+                "Operation not supported on this platform",
+                format!("Drift does not support {operation} on this device yet."),
             ),
-            AppError::ReceiverUnavailable { .. } | AppError::SnapshotChannelClosed => {
-                UserFacingError::new(
-                    UserFacingErrorKind::Internal,
-                    "Receiver unavailable",
-                    "The receiver is not available right now.",
-                )
-            }
+            AppError::ReceiverUnavailable { action } => UserFacingError::new(
+                UserFacingErrorKind::Internal,
+                "Receiver service unavailable",
+                format!(
+                    "The receiver service was not running while {action}. \
+                     Reopen the Receive tab so Drift can restart it."
+                ),
+            ),
+            AppError::SnapshotChannelClosed => UserFacingError::new(
+                UserFacingErrorKind::Internal,
+                "Receiver state channel closed",
+                "The receiver's state-broadcast channel was dropped — the actor likely panicked. \
+                 Restart Drift to recover.",
+            ),
             AppError::DiscoveryFailed => UserFacingError::new(
                 UserFacingErrorKind::NetworkUnavailable,
-                "Discovery failed",
-                "Drift could not search for nearby devices.",
+                "Couldn't reach the rendezvous / LAN discovery layer",
+                "Drift could not look up the peer via the rendezvous server or LAN discovery. \
+                 Check that you have internet access and that the device is on the same Wi-Fi.",
             ),
-            AppError::InvalidDeviceType { .. } => UserFacingError::new(
+            AppError::InvalidDeviceType { value } => UserFacingError::new(
                 UserFacingErrorKind::Internal,
-                "Invalid device type",
-                "Please try again.",
+                "Unknown device type",
+                format!(
+                    "Drift received an unrecognized device-type marker (\"{value}\") from the peer. \
+                     They may be running an incompatible Drift build."
+                ),
             ),
-            AppError::InvalidCode { .. } => UserFacingError::new(
+            AppError::InvalidCode { code } => UserFacingError::new(
                 UserFacingErrorKind::InvalidInput,
-                "Invalid code",
-                "Check the code and try again.",
+                "Pairing code format invalid",
+                format!(
+                    "\"{code}\" doesn't look like a Drift pairing code. \
+                     Codes are 6 alphanumeric characters."
+                ),
             ),
-            AppError::Cancelled { reason } => {
-                UserFacingError::new(UserFacingErrorKind::Cancelled, "Transfer cancelled", reason)
-            }
+            AppError::Cancelled { reason } => UserFacingError::new(
+                UserFacingErrorKind::Cancelled,
+                "Transfer cancelled",
+                format!("Cancelled: {reason}"),
+            ),
+            // Don't collapse the underlying message into "Please try again" —
+            // that hides the actual failure (relay disconnect, pkarr publish
+            // failed, etc.) and forces the user to dig through logs.
             AppError::Internal { message } => {
-                UserFacingError::internal("Something went wrong", message)
+                UserFacingError::internal("Drift internal error", message)
             }
-            AppError::BindingFailed { context } => UserFacingError::new(
+            AppError::BindingFailed { context } => UserFacingError::with_recovery(
                 UserFacingErrorKind::NetworkUnavailable,
-                format!("Failed to bind {context}"),
-                "Drift could not start the receiver because the network port is already in use or unavailable.",
+                "Couldn't bind network port",
+                format!("Drift couldn't bind {context} — the port is already in use or blocked."),
+                "Quit other apps that might be using the same port, then retry. \
+                 On Windows, also check the firewall rule for Drift.exe.",
+                true,
             ),
-            AppError::ActorStopped { action } | AppError::ActorDroppedReply { action } => {
-                UserFacingError::new(
-                    UserFacingErrorKind::Internal,
-                    "Receiver error",
-                    format!("The receiver component failed while {action}."),
-                )
-            }
+            AppError::ActorStopped { action } => UserFacingError::new(
+                UserFacingErrorKind::Internal,
+                "Receiver runtime stopped",
+                format!(
+                    "The receiver background task exited before completing \"{action}\". \
+                     Restart Drift to recover."
+                ),
+            ),
+            AppError::ActorDroppedReply { action } => UserFacingError::new(
+                UserFacingErrorKind::Internal,
+                "Receiver dropped reply",
+                format!(
+                    "The receiver started \"{action}\" but never sent back a result. \
+                     Restart Drift to recover."
+                ),
+            ),
         }
     }
 }

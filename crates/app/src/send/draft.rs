@@ -245,7 +245,7 @@ mod tests {
 
         let error = event.error.expect("structured error");
         assert_eq!(error.kind(), UserFacingErrorKind::Internal);
-        assert_eq!(error.title(), "Something went wrong");
+        assert_eq!(error.title(), "Drift internal error");
         assert!(error.message().contains("boom"));
     }
 

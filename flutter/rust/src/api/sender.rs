@@ -171,13 +171,17 @@ pub fn start_send_transfer(
 }
 
 pub fn cancel_active_send_transfer() -> Result<(), crate::api::error::UserFacingErrorData> {
-    let guard = ACTIVE_SEND_CANCEL
-        .lock()
-        .map_err(|_| internal_user_facing_error("Send transfer unavailable", "mutex poisoned"))?;
+    let guard = ACTIVE_SEND_CANCEL.lock().map_err(|_| {
+        internal_user_facing_error(
+            "Couldn't cancel send — internal state corrupted",
+            "The send-cancel handle mutex was poisoned by a panic in another task. \
+             Restart Drift to recover.",
+        )
+    })?;
     let Some(cancel_handle) = guard.as_ref().cloned() else {
         return Err(internal_user_facing_error(
-            "No active send transfer",
-            "There is no active send transfer to cancel.",
+            "Nothing to cancel — no active send",
+            "The send finished or was already cancelled before the cancel reached the runtime.",
         ));
     };
     drop(guard);
@@ -186,12 +190,12 @@ pub fn cancel_active_send_transfer() -> Result<(), crate::api::error::UserFacing
         .block_on(cancel_handle.cancel_transfer())
         .map_err(|error| match error {
             AppError::NoActiveTransfer => internal_user_facing_error(
-                "No active send transfer",
-                "There is no active send transfer to cancel.",
+                "Nothing to cancel — no active send",
+                "The send finished before the cancel reached the runtime.",
             ),
             _ => internal_user_facing_error(
-                "Send transfer unavailable",
-                format!("The active send transfer could not be cancelled: {error}"),
+                "Couldn't cancel send",
+                format!("The send transfer rejected the cancel: {error}"),
             ),
         })
 }
@@ -203,16 +207,50 @@ fn cancel_send_session(cancel_handle: SendCancelHandle) {
 }
 
 fn terminal_event_for_app_error(destination_label: String, error: AppError) -> SendTransferEvent {
-    let (phase, status_message, title) = match &error {
+    // Map AppError variants to user-facing titles that name WHERE in the send
+    // pipeline things broke, so the user can tell e.g. "I never reached the
+    // receiver" from "the receiver disconnected mid-transfer" without having
+    // to parse the technical message.
+    let (phase, status_message, title): (SendTransferPhase, &str, &str) = match &error {
         AppError::Cancelled { .. } => (
             SendTransferPhase::Cancelled,
             "Transfer cancelled.",
-            "Transfer cancelled",
+            "Send cancelled",
+        ),
+        AppError::InvalidCode { .. } => (
+            SendTransferPhase::Failed,
+            "Pairing code rejected by rendezvous server.",
+            "Invalid pairing code",
+        ),
+        AppError::DiscoveryFailed => (
+            SendTransferPhase::Failed,
+            "Couldn't claim the pairing code from the rendezvous server.",
+            "Pairing code not found or expired",
+        ),
+        AppError::BindingFailed { .. } => (
+            SendTransferPhase::Failed,
+            "Couldn't open a network port for the send.",
+            "Network port unavailable",
+        ),
+        AppError::ActorStopped { .. } | AppError::ActorDroppedReply { .. } => (
+            SendTransferPhase::Failed,
+            "Send runtime stopped before the transfer completed.",
+            "Send runtime stopped",
+        ),
+        AppError::ReceiverUnavailable { .. } => (
+            SendTransferPhase::Failed,
+            "Receiver side became unavailable during the send.",
+            "Receiver disconnected",
+        ),
+        AppError::Internal { .. } => (
+            SendTransferPhase::Failed,
+            "Internal send error — see message for details.",
+            "Send failed (internal)",
         ),
         _ => (
             SendTransferPhase::Failed,
-            "Transfer failed.",
-            "Transfer failed",
+            "Send failed before completion.",
+            "Send failed",
         ),
     };
 
@@ -237,7 +275,7 @@ fn terminal_internal_failure_event(destination_label: String, detail: String) ->
     SendTransferEvent {
         phase: SendTransferPhase::Failed,
         destination_label,
-        status_message: "Transfer failed.".to_owned(),
+        status_message: "Send runtime crashed before reporting an outcome.".to_owned(),
         item_count: 0,
         total_size: 0,
         bytes_sent: 0,
@@ -247,7 +285,7 @@ fn terminal_internal_failure_event(destination_label: String, detail: String) ->
         remote_endpoint_id: None,
         remote_ticket: None,
         connection_path: None,
-        error: Some(internal_user_facing_error("Transfer failed", detail)),
+        error: Some(internal_user_facing_error("Send runtime crashed", detail)),
     }
 }
 
@@ -358,8 +396,7 @@ mod tests {
     use drift_app::{ConnectionPath, ConnectionPathKind, SendEvent as AppSendEvent, SendPhase};
 
     use super::{
-        map_event, terminal_event_for_app_error, terminal_internal_failure_event,
-        SendTransferPhase,
+        map_event, terminal_event_for_app_error, terminal_internal_failure_event, SendTransferPhase,
     };
 
     #[test]

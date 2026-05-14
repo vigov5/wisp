@@ -2,11 +2,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use drift_app::{
-    ConflictPolicy, ConnectionPath as AppConnectionPath, OfferDecision, PairingCodeState,
-    QrPairingInfo as AppQrPairingInfo, ReceiverConfig, ReceiverEvent as AppReceiverEvent,
-    ReceiverOfferEvent as AppReceiverOfferEvent, ReceiverOfferFile as AppReceiverOfferFile,
-    ReceiverOfferPhase as AppReceiverOfferPhase, ReceiverRegistration as AppReceiverRegistration,
-    ReceiverService, identity as app_identity,
+    identity as app_identity, ConflictPolicy, ConnectionPath as AppConnectionPath, OfferDecision,
+    PairingCodeState, QrPairingInfo as AppQrPairingInfo, ReceiverConfig,
+    ReceiverEvent as AppReceiverEvent, ReceiverOfferEvent as AppReceiverOfferEvent,
+    ReceiverOfferFile as AppReceiverOfferFile, ReceiverOfferPhase as AppReceiverOfferPhase,
+    ReceiverRegistration as AppReceiverRegistration, ReceiverService,
 };
 use drift_core::transfer::{TransferPhase, TransferPlan, TransferPlanFile, TransferSnapshot};
 use tokio::sync::Mutex as AsyncMutex;
@@ -143,13 +143,18 @@ pub fn ensure_receiver_registration(
             conflict_policy: ConflictPolicy::Rename,
         })
         .await
-        .map_err(|e| internal_user_facing_error("Receiver unavailable", e))?;
+        .map_err(|e| internal_user_facing_error("Couldn't start receiver service", e))?;
 
         service
             .ensure_registered(server_url)
             .await
             .map(map_registration)
-            .map_err(|e| internal_user_facing_error("Receiver registration failed", e.to_string()))
+            .map_err(|e| {
+                internal_user_facing_error(
+                    "Couldn't register receive code with rendezvous server",
+                    e.to_string(),
+                )
+            })
     })
 }
 
@@ -169,12 +174,12 @@ pub struct QrPairingInfoData {
 /// The receiver service must already be running.  Designed for the QR
 /// pairing screen — the ticket is built from currently-known addresses
 /// without waiting on relay handshake, so it works on offline-LAN.
-pub fn current_qr_pairing_info()
--> Result<QrPairingInfoData, crate::api::error::UserFacingErrorData> {
+pub fn current_qr_pairing_info() -> Result<QrPairingInfoData, crate::api::error::UserFacingErrorData>
+{
     let Some(service) = current_service() else {
         return Err(internal_user_facing_error(
-            "Receiver unavailable",
-            "The receiver is not running.",
+            "Can't build QR pairing — receiver not running",
+            "Open the Receive tab so the receiver service starts, then try the QR code again.",
         ));
     };
     service
@@ -205,9 +210,9 @@ pub fn watch_receiver_pairing(
             server_url: server_url.clone(),
             conflict_policy: ConflictPolicy::Rename,
         };
-        let service = ensure_receiver_service(config.clone())
-            .await
-            .map_err(|e| internal_user_facing_error("Receiver unavailable", e))?;
+        let service = ensure_receiver_service(config.clone()).await.map_err(|e| {
+            internal_user_facing_error("Couldn't start receiver service for pairing", e)
+        })?;
         if let Some(server_url) = config.server_url.clone() {
             if let Err(error) = service.ensure_registered(Some(server_url)).await {
                 println!(
@@ -216,10 +221,12 @@ pub fn watch_receiver_pairing(
                 );
             }
         }
-        service
-            .set_discoverable(true)
-            .await
-            .map_err(|e| internal_user_facing_error("Receiver unavailable", e.to_string()))?;
+        service.set_discoverable(true).await.map_err(|e| {
+            internal_user_facing_error(
+                "Couldn't enable receiver discovery for pairing",
+                e.to_string(),
+            )
+        })?;
 
         replace_pairing_task(config, service, updates);
         Ok(())
@@ -252,9 +259,9 @@ pub fn start_receiver_transfer_listener(
             server_url: server_url.clone(),
             conflict_policy: ConflictPolicy::Rename,
         };
-        let service = ensure_receiver_service(config.clone())
-            .await
-            .map_err(|e| internal_user_facing_error("Receiver unavailable", e))?;
+        let service = ensure_receiver_service(config.clone()).await.map_err(|e| {
+            internal_user_facing_error("Couldn't start receiver service for incoming transfers", e)
+        })?;
         if let Some(server_url) = config.server_url.clone() {
             if let Err(error) = service.ensure_registered(Some(server_url)).await {
                 println!(
@@ -263,10 +270,12 @@ pub fn start_receiver_transfer_listener(
                 );
             }
         }
-        service
-            .set_discoverable(true)
-            .await
-            .map_err(|e| internal_user_facing_error("Receiver unavailable", e.to_string()))?;
+        service.set_discoverable(true).await.map_err(|e| {
+            internal_user_facing_error(
+                "Couldn't enable receiver discovery for incoming transfers",
+                e.to_string(),
+            )
+        })?;
 
         replace_updates_task(config, service, updates);
         Ok(())
@@ -279,10 +288,11 @@ pub fn respond_to_receiver_offer(
     RUNTIME.block_on(async move {
         let Some(service) = current_service() else {
             return Err(internal_user_facing_error(
-                "Receiver unavailable",
-                "The receiver is not running.",
+                "Can't respond to offer — receiver not running",
+                "The receiver service stopped before you accepted or declined. Reopen the Receive tab to restart it.",
             ));
         };
+        let action_label = if accept { "accept" } else { "decline" };
         service
             .respond_to_offer(if accept {
                 OfferDecision::Accept
@@ -290,7 +300,10 @@ pub fn respond_to_receiver_offer(
                 OfferDecision::Decline
             })
             .await
-            .map_err(|e| internal_user_facing_error("Receiver unavailable", e.to_string()))
+            .map_err(|e| internal_user_facing_error(
+                format!("Couldn't {action_label} incoming transfer"),
+                e.to_string(),
+            ))
     })
 }
 
@@ -298,14 +311,13 @@ pub fn cancel_receiver_transfer() -> Result<(), crate::api::error::UserFacingErr
     RUNTIME.block_on(async move {
         let Some(service) = current_service() else {
             return Err(internal_user_facing_error(
-                "Receiver unavailable",
-                "The receiver is not running.",
+                "Can't cancel — receiver not running",
+                "The receiver service stopped, so there's nothing to cancel.",
             ));
         };
-        service
-            .cancel_transfer()
-            .await
-            .map_err(|e| internal_user_facing_error("Receiver unavailable", e.to_string()))
+        service.cancel_transfer().await.map_err(|e| {
+            internal_user_facing_error("Couldn't cancel incoming transfer", e.to_string())
+        })
     })
 }
 
@@ -328,11 +340,15 @@ pub(crate) async fn scan_nearby_with_receiver(
                 secret_key: app_identity::current_secret_key(),
             })
             .await
-            .map_err(|e| internal_user_facing_error("Receiver unavailable", e.to_string()))?;
-            let receivers = temp
-                .scan_nearby(timeout_secs)
-                .await
-                .map_err(|e| internal_user_facing_error("Receiver unavailable", e.to_string()))?;
+            .map_err(|e| {
+                internal_user_facing_error(
+                    "Couldn't start temporary receiver for nearby scan",
+                    e.to_string(),
+                )
+            })?;
+            let receivers = temp.scan_nearby(timeout_secs).await.map_err(|e| {
+                internal_user_facing_error("Couldn't scan for nearby devices", e.to_string())
+            })?;
             println!("[bridge] scan found {} receivers", receivers.len());
             for r in &receivers {
                 println!(
@@ -348,10 +364,9 @@ pub(crate) async fn scan_nearby_with_receiver(
         }
     };
 
-    let receivers = service
-        .scan_nearby(timeout_secs)
-        .await
-        .map_err(|e| internal_user_facing_error("Receiver unavailable", e.to_string()))?;
+    let receivers = service.scan_nearby(timeout_secs).await.map_err(|e| {
+        internal_user_facing_error("Couldn't scan for nearby devices", e.to_string())
+    })?;
 
     println!("[bridge] scan found {} receivers", receivers.len());
     for r in &receivers {
@@ -533,18 +548,25 @@ fn set_discoverable(enabled: bool) -> Result<(), crate::api::error::UserFacingEr
             println!("[bridge] WARNING: set_discoverable called but no service running");
             return Ok(());
         };
-        service
-            .set_discoverable(enabled)
-            .await
-            .map_err(|e| internal_user_facing_error("Receiver unavailable", e.to_string()))
+        service.set_discoverable(enabled).await.map_err(|e| {
+            internal_user_facing_error(
+                if enabled {
+                    "Couldn't make receiver discoverable on LAN"
+                } else {
+                    "Couldn't stop receiver LAN advertising"
+                },
+                e.to_string(),
+            )
+        })
     })
 }
 
 fn pairing_registration(state: &PairingCodeState) -> Option<AppReceiverRegistration> {
     match state {
         PairingCodeState::Unavailable => None,
-        PairingCodeState::Active(registration)
-        | PairingCodeState::Stale(registration) => Some(registration.clone()),
+        PairingCodeState::Active(registration) | PairingCodeState::Stale(registration) => {
+            Some(registration.clone())
+        }
     }
 }
 

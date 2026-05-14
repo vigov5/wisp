@@ -50,9 +50,6 @@ pub fn decode_ticket_info(
             device_type: info.device_type,
         })
         .map_err(|e| {
-            crate::api::error::internal_user_facing_error(
-                "Couldn't read QR ticket",
-                e.to_string(),
-            )
+            crate::api::error::internal_user_facing_error("Couldn't read QR ticket", e.to_string())
         })
 }
