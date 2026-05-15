@@ -6,7 +6,7 @@ import 'package:app/src/rust/api/receiver.dart' as rust_receiver;
 void main() {
   test('maps an empty pairing state to an unavailable receiver state', () {
     final state = mapReceiverPairingState(
-      const rust_receiver.ReceiverPairingState(),
+      const rust_receiver.ReceiverPairingState(stale: false),
     );
 
     expect(state.snapshot.hasRegistration, isFalse);
@@ -19,6 +19,7 @@ void main() {
       const rust_receiver.ReceiverPairingState(
         code: 'abc123',
         expiresAt: '2099-01-01T00:00:00Z',
+        stale: false,
       ),
     );
 
