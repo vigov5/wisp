@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/device.dart';
+import 'api/diagnostics.dart';
 import 'api/error.dart';
 import 'api/lan.dart';
 import 'api/preview.dart';
@@ -73,7 +74,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 104723712;
+  int get rustContentHash => 2121477522;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -128,6 +129,11 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<void> crateApiReceiverRespondToReceiverOffer({required bool accept});
+
+  Stream<DiagnosticsCheckData> crateApiDiagnosticsRunConnectionTest({
+    String? serverUrl,
+    required String downloadRoot,
+  });
 
   Future<List<NearbyReceiverInfo>> crateApiLanScanNearbyReceivers({
     required BigInt timeoutSecs,
@@ -598,6 +604,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Stream<DiagnosticsCheckData> crateApiDiagnosticsRunConnectionTest({
+    String? serverUrl,
+    required String downloadRoot,
+  }) {
+    final sink = RustStreamSink<DiagnosticsCheckData>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_opt_String(serverUrl, serializer);
+            sse_encode_String(downloadRoot, serializer);
+            sse_encode_StreamSink_diagnostics_check_data_Sse(sink, serializer);
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 16,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: null,
+          ),
+          constMeta: kCrateApiDiagnosticsRunConnectionTestConstMeta,
+          argValues: [serverUrl, downloadRoot, sink],
+          apiImpl: this,
+        ),
+      ),
+    );
+    return sink.stream;
+  }
+
+  TaskConstMeta get kCrateApiDiagnosticsRunConnectionTestConstMeta =>
+      const TaskConstMeta(
+        debugName: "run_connection_test",
+        argNames: ["serverUrl", "downloadRoot", "sink"],
+      );
+
+  @override
   Future<List<NearbyReceiverInfo>> crateApiLanScanNearbyReceivers({
     required BigInt timeoutSecs,
   }) {
@@ -609,7 +655,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 17,
             port: port_,
           );
         },
@@ -637,7 +683,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(secretKeyBytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -668,7 +714,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 18,
+            funcId: 19,
             port: port_,
           );
         },
@@ -713,7 +759,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 19,
+              funcId: 20,
               port: port_,
             );
           },
@@ -757,7 +803,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 20,
+              funcId: 21,
               port: port_,
             );
           },
@@ -804,7 +850,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 21,
+              funcId: 22,
               port: port_,
             );
           },
@@ -840,6 +886,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RustStreamSink<DiagnosticsCheckData>
+  dco_decode_StreamSink_diagnostics_check_data_Sse(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    throw UnimplementedError();
+  }
+
+  @protected
   RustStreamSink<ReceiverPairingState>
   dco_decode_StreamSink_receiver_pairing_state_Sse(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -870,6 +923,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   bool dco_decode_bool(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as bool;
+  }
+
+  @protected
+  DiagnosticsActionData dco_decode_box_autoadd_diagnostics_action_data(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_diagnostics_action_data(raw);
   }
 
   @protected
@@ -950,6 +1011,54 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DiagnosticsActionData dco_decode_diagnostics_action_data(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return DiagnosticsActionData(
+      label: dco_decode_String(arr[0]),
+      kind: dco_decode_diagnostics_action_kind(arr[1]),
+      target: dco_decode_opt_String(arr[2]),
+    );
+  }
+
+  @protected
+  DiagnosticsActionKind dco_decode_diagnostics_action_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DiagnosticsActionKind.values[raw as int];
+  }
+
+  @protected
+  DiagnosticsCheckData dco_decode_diagnostics_check_data(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return DiagnosticsCheckData(
+      id: dco_decode_String(arr[0]),
+      group: dco_decode_diagnostics_check_group(arr[1]),
+      status: dco_decode_diagnostics_check_status(arr[2]),
+      label: dco_decode_String(arr[3]),
+      detail: dco_decode_String(arr[4]),
+      hint: dco_decode_opt_String(arr[5]),
+      action: dco_decode_opt_box_autoadd_diagnostics_action_data(arr[6]),
+    );
+  }
+
+  @protected
+  DiagnosticsCheckGroup dco_decode_diagnostics_check_group(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DiagnosticsCheckGroup.values[raw as int];
+  }
+
+  @protected
+  DiagnosticsCheckStatus dco_decode_diagnostics_check_status(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DiagnosticsCheckStatus.values[raw as int];
+  }
+
+  @protected
   int dco_decode_i_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
@@ -1025,6 +1134,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   String? dco_decode_opt_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  DiagnosticsActionData? dco_decode_opt_box_autoadd_diagnostics_action_data(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_diagnostics_action_data(raw);
   }
 
   @protected
@@ -1385,6 +1504,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RustStreamSink<DiagnosticsCheckData>
+  sse_decode_StreamSink_diagnostics_check_data_Sse(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    throw UnimplementedError('Unreachable ()');
+  }
+
+  @protected
   RustStreamSink<ReceiverPairingState>
   sse_decode_StreamSink_receiver_pairing_state_Sse(
     SseDeserializer deserializer,
@@ -1420,6 +1548,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   bool sse_decode_bool(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  DiagnosticsActionData sse_decode_box_autoadd_diagnostics_action_data(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_diagnostics_action_data(deserializer));
   }
 
   @protected
@@ -1503,6 +1639,73 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       deviceName: var_deviceName,
       deviceType: var_deviceType,
     );
+  }
+
+  @protected
+  DiagnosticsActionData sse_decode_diagnostics_action_data(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_label = sse_decode_String(deserializer);
+    var var_kind = sse_decode_diagnostics_action_kind(deserializer);
+    var var_target = sse_decode_opt_String(deserializer);
+    return DiagnosticsActionData(
+      label: var_label,
+      kind: var_kind,
+      target: var_target,
+    );
+  }
+
+  @protected
+  DiagnosticsActionKind sse_decode_diagnostics_action_kind(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return DiagnosticsActionKind.values[inner];
+  }
+
+  @protected
+  DiagnosticsCheckData sse_decode_diagnostics_check_data(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_String(deserializer);
+    var var_group = sse_decode_diagnostics_check_group(deserializer);
+    var var_status = sse_decode_diagnostics_check_status(deserializer);
+    var var_label = sse_decode_String(deserializer);
+    var var_detail = sse_decode_String(deserializer);
+    var var_hint = sse_decode_opt_String(deserializer);
+    var var_action = sse_decode_opt_box_autoadd_diagnostics_action_data(
+      deserializer,
+    );
+    return DiagnosticsCheckData(
+      id: var_id,
+      group: var_group,
+      status: var_status,
+      label: var_label,
+      detail: var_detail,
+      hint: var_hint,
+      action: var_action,
+    );
+  }
+
+  @protected
+  DiagnosticsCheckGroup sse_decode_diagnostics_check_group(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return DiagnosticsCheckGroup.values[inner];
+  }
+
+  @protected
+  DiagnosticsCheckStatus sse_decode_diagnostics_check_status(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return DiagnosticsCheckStatus.values[inner];
   }
 
   @protected
@@ -1620,6 +1823,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  DiagnosticsActionData? sse_decode_opt_box_autoadd_diagnostics_action_data(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_diagnostics_action_data(deserializer));
     } else {
       return null;
     }
@@ -2085,6 +2301,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_StreamSink_diagnostics_check_data_Sse(
+    RustStreamSink<DiagnosticsCheckData> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(
+      self.setupAndSerialize(
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_diagnostics_check_data,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+      ),
+      serializer,
+    );
+  }
+
+  @protected
   void sse_encode_StreamSink_receiver_pairing_state_Sse(
     RustStreamSink<ReceiverPairingState> self,
     SseSerializer serializer,
@@ -2145,6 +2378,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_bool(bool self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_diagnostics_action_data(
+    DiagnosticsActionData self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_diagnostics_action_data(self, serializer);
   }
 
   @protected
@@ -2231,6 +2473,59 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.endpointId, serializer);
     sse_encode_String(self.deviceName, serializer);
     sse_encode_String(self.deviceType, serializer);
+  }
+
+  @protected
+  void sse_encode_diagnostics_action_data(
+    DiagnosticsActionData self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.label, serializer);
+    sse_encode_diagnostics_action_kind(self.kind, serializer);
+    sse_encode_opt_String(self.target, serializer);
+  }
+
+  @protected
+  void sse_encode_diagnostics_action_kind(
+    DiagnosticsActionKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_diagnostics_check_data(
+    DiagnosticsCheckData self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.id, serializer);
+    sse_encode_diagnostics_check_group(self.group, serializer);
+    sse_encode_diagnostics_check_status(self.status, serializer);
+    sse_encode_String(self.label, serializer);
+    sse_encode_String(self.detail, serializer);
+    sse_encode_opt_String(self.hint, serializer);
+    sse_encode_opt_box_autoadd_diagnostics_action_data(self.action, serializer);
+  }
+
+  @protected
+  void sse_encode_diagnostics_check_group(
+    DiagnosticsCheckGroup self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_diagnostics_check_status(
+    DiagnosticsCheckStatus self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -2339,6 +2634,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_diagnostics_action_data(
+    DiagnosticsActionData? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_diagnostics_action_data(self, serializer);
     }
   }
 

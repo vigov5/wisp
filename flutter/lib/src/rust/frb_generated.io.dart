@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/device.dart';
+import 'api/diagnostics.dart';
 import 'api/error.dart';
 import 'api/lan.dart';
 import 'api/preview.dart';
@@ -29,6 +30,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
   @protected
+  RustStreamSink<DiagnosticsCheckData>
+  dco_decode_StreamSink_diagnostics_check_data_Sse(dynamic raw);
+
+  @protected
   RustStreamSink<ReceiverPairingState>
   dco_decode_StreamSink_receiver_pairing_state_Sse(dynamic raw);
 
@@ -45,6 +50,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool dco_decode_bool(dynamic raw);
+
+  @protected
+  DiagnosticsActionData dco_decode_box_autoadd_diagnostics_action_data(
+    dynamic raw,
+  );
 
   @protected
   ReceiverConnectionPath dco_decode_box_autoadd_receiver_connection_path(
@@ -85,6 +95,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DecodedTicketData dco_decode_decoded_ticket_data(dynamic raw);
 
   @protected
+  DiagnosticsActionData dco_decode_diagnostics_action_data(dynamic raw);
+
+  @protected
+  DiagnosticsActionKind dco_decode_diagnostics_action_kind(dynamic raw);
+
+  @protected
+  DiagnosticsCheckData dco_decode_diagnostics_check_data(dynamic raw);
+
+  @protected
+  DiagnosticsCheckGroup dco_decode_diagnostics_check_group(dynamic raw);
+
+  @protected
+  DiagnosticsCheckStatus dco_decode_diagnostics_check_status(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
@@ -117,6 +142,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  DiagnosticsActionData? dco_decode_opt_box_autoadd_diagnostics_action_data(
+    dynamic raw,
+  );
 
   @protected
   ReceiverConnectionPath? dco_decode_opt_box_autoadd_receiver_connection_path(
@@ -225,6 +255,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
+  RustStreamSink<DiagnosticsCheckData>
+  sse_decode_StreamSink_diagnostics_check_data_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   RustStreamSink<ReceiverPairingState>
   sse_decode_StreamSink_receiver_pairing_state_Sse(
     SseDeserializer deserializer,
@@ -245,6 +281,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  DiagnosticsActionData sse_decode_box_autoadd_diagnostics_action_data(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ReceiverConnectionPath sse_decode_box_autoadd_receiver_connection_path(
@@ -293,6 +334,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  DiagnosticsActionData sse_decode_diagnostics_action_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DiagnosticsActionKind sse_decode_diagnostics_action_kind(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DiagnosticsCheckData sse_decode_diagnostics_check_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DiagnosticsCheckGroup sse_decode_diagnostics_check_group(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DiagnosticsCheckStatus sse_decode_diagnostics_check_status(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
@@ -331,6 +397,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  DiagnosticsActionData? sse_decode_opt_box_autoadd_diagnostics_action_data(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ReceiverConnectionPath? sse_decode_opt_box_autoadd_receiver_connection_path(
@@ -476,6 +547,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_StreamSink_diagnostics_check_data_Sse(
+    RustStreamSink<DiagnosticsCheckData> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_StreamSink_receiver_pairing_state_Sse(
     RustStreamSink<ReceiverPairingState> self,
     SseSerializer serializer,
@@ -498,6 +575,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_diagnostics_action_data(
+    DiagnosticsActionData self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_receiver_connection_path(
@@ -554,6 +637,36 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_diagnostics_action_data(
+    DiagnosticsActionData self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_diagnostics_action_kind(
+    DiagnosticsActionKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_diagnostics_check_data(
+    DiagnosticsCheckData self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_diagnostics_check_group(
+    DiagnosticsCheckGroup self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_diagnostics_check_status(
+    DiagnosticsCheckStatus self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
@@ -600,6 +713,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_diagnostics_action_data(
+    DiagnosticsActionData? self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_opt_box_autoadd_receiver_connection_path(

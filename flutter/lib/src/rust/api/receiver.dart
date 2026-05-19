@@ -118,9 +118,14 @@ class ReceiverConnectionPath {
 class ReceiverPairingState {
   final String? code;
   final String? expiresAt;
+
+  /// `true` when the rendezvous server has told us the code is no longer
+  /// claimable (likely a sender has already consumed it) but background
+  /// re-registration is currently failing.  Dart UI should keep the code
+  /// visible but prompt the user to tap Refresh.
   final bool stale;
 
-  const ReceiverPairingState({this.code, this.expiresAt, this.stale = false});
+  const ReceiverPairingState({this.code, this.expiresAt, required this.stale});
 
   @override
   int get hashCode => code.hashCode ^ expiresAt.hashCode ^ stale.hashCode;

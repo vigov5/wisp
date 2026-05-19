@@ -341,6 +341,42 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                           ),
                         ),
                         const SizedBox(height: 18),
+                        SettingsSectionField(
+                          label: 'Connection Test',
+                          child: InkWell(
+                            onTap: () => context.pushConnectionTest(),
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
+                              decoration: BoxDecoration(
+                                color: kSurface,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: kBorder),
+                              ),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      'Self-diagnose pairing, LAN, and permissions',
+                                      style: driftSans(
+                                        fontSize: 13,
+                                        color: kInk,
+                                      ),
+                                    ),
+                                  ),
+                                  const Icon(
+                                    Icons.chevron_right_rounded,
+                                    color: kMuted,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
                         const ReliabilitySettingsSection(),
                         const SizedBox(height: 18),
                         SettingsSectionField(

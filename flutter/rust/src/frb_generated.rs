@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 104723712;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 2121477522;
 
 // Section: executor
 
@@ -544,6 +544,50 @@ fn wire__crate__api__receiver__respond_to_receiver_offer_impl(
         },
     )
 }
+fn wire__crate__api__diagnostics__run_connection_test_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "run_connection_test",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_server_url = <Option<String>>::sse_decode(&mut deserializer);
+            let api_download_root = <String>::sse_decode(&mut deserializer);
+            let api_sink = <StreamSink<
+                crate::api::diagnostics::DiagnosticsCheckData,
+                flutter_rust_bridge::for_generated::SseCodec,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Result::<_, ()>::Ok({
+                        crate::api::diagnostics::run_connection_test(
+                            api_server_url,
+                            api_download_root,
+                            api_sink,
+                        );
+                    })?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__lan__scan_nearby_receivers_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -789,6 +833,19 @@ impl SseDecode for flutter_rust_bridge::for_generated::anyhow::Error {
 
 impl SseDecode
     for StreamSink<
+        crate::api::diagnostics::DiagnosticsCheckData,
+        flutter_rust_bridge::for_generated::SseCodec,
+    >
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <String>::sse_decode(deserializer);
+        return StreamSink::deserialize(inner);
+    }
+}
+
+impl SseDecode
+    for StreamSink<
         crate::api::receiver::ReceiverPairingState,
         flutter_rust_bridge::for_generated::SseCodec,
     >
@@ -851,6 +908,90 @@ impl SseDecode for crate::api::lan::DecodedTicketData {
             endpoint_id: var_endpointId,
             device_name: var_deviceName,
             device_type: var_deviceType,
+        };
+    }
+}
+
+impl SseDecode for crate::api::diagnostics::DiagnosticsActionData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_label = <String>::sse_decode(deserializer);
+        let mut var_kind =
+            <crate::api::diagnostics::DiagnosticsActionKind>::sse_decode(deserializer);
+        let mut var_target = <Option<String>>::sse_decode(deserializer);
+        return crate::api::diagnostics::DiagnosticsActionData {
+            label: var_label,
+            kind: var_kind,
+            target: var_target,
+        };
+    }
+}
+
+impl SseDecode for crate::api::diagnostics::DiagnosticsActionKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::diagnostics::DiagnosticsActionKind::OpenAppSettings,
+            1 => crate::api::diagnostics::DiagnosticsActionKind::OpenUrl,
+            2 => crate::api::diagnostics::DiagnosticsActionKind::Retry,
+            _ => unreachable!("Invalid variant for DiagnosticsActionKind: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::diagnostics::DiagnosticsCheckData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_id = <String>::sse_decode(deserializer);
+        let mut var_group =
+            <crate::api::diagnostics::DiagnosticsCheckGroup>::sse_decode(deserializer);
+        let mut var_status =
+            <crate::api::diagnostics::DiagnosticsCheckStatus>::sse_decode(deserializer);
+        let mut var_label = <String>::sse_decode(deserializer);
+        let mut var_detail = <String>::sse_decode(deserializer);
+        let mut var_hint = <Option<String>>::sse_decode(deserializer);
+        let mut var_action =
+            <Option<crate::api::diagnostics::DiagnosticsActionData>>::sse_decode(deserializer);
+        return crate::api::diagnostics::DiagnosticsCheckData {
+            id: var_id,
+            group: var_group,
+            status: var_status,
+            label: var_label,
+            detail: var_detail,
+            hint: var_hint,
+            action: var_action,
+        };
+    }
+}
+
+impl SseDecode for crate::api::diagnostics::DiagnosticsCheckGroup {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::diagnostics::DiagnosticsCheckGroup::Network,
+            1 => crate::api::diagnostics::DiagnosticsCheckGroup::Rendezvous,
+            2 => crate::api::diagnostics::DiagnosticsCheckGroup::Lan,
+            3 => crate::api::diagnostics::DiagnosticsCheckGroup::P2p,
+            4 => crate::api::diagnostics::DiagnosticsCheckGroup::Permissions,
+            5 => crate::api::diagnostics::DiagnosticsCheckGroup::Local,
+            _ => unreachable!("Invalid variant for DiagnosticsCheckGroup: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::diagnostics::DiagnosticsCheckStatus {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::diagnostics::DiagnosticsCheckStatus::Running,
+            1 => crate::api::diagnostics::DiagnosticsCheckStatus::Pass,
+            2 => crate::api::diagnostics::DiagnosticsCheckStatus::Warn,
+            3 => crate::api::diagnostics::DiagnosticsCheckStatus::Fail,
+            4 => crate::api::diagnostics::DiagnosticsCheckStatus::Skipped,
+            _ => unreachable!("Invalid variant for DiagnosticsCheckStatus: {}", inner),
         };
     }
 }
@@ -967,6 +1108,19 @@ impl SseDecode for Option<String> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<String>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::diagnostics::DiagnosticsActionData> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(
+                <crate::api::diagnostics::DiagnosticsActionData>::sse_decode(deserializer),
+            );
         } else {
             return None;
         }
@@ -1518,21 +1672,27 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        16 => wire__crate__api__lan__scan_nearby_receivers_impl(port, ptr, rust_vec_len, data_len),
-        18 => wire__crate__api__receiver__set_receiver_discoverable_impl(
+        16 => wire__crate__api__diagnostics__run_connection_test_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        19 => wire__crate__api__receiver__start_receiver_transfer_listener_impl(
+        17 => wire__crate__api__lan__scan_nearby_receivers_impl(port, ptr, rust_vec_len, data_len),
+        19 => wire__crate__api__receiver__set_receiver_discoverable_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        20 => wire__crate__api__sender__start_send_transfer_impl(port, ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__receiver__watch_receiver_pairing_impl(
+        20 => wire__crate__api__receiver__start_receiver_transfer_listener_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        21 => wire__crate__api__sender__start_send_transfer_impl(port, ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__receiver__watch_receiver_pairing_impl(
             port,
             ptr,
             rust_vec_len,
@@ -1554,7 +1714,7 @@ fn pde_ffi_dispatcher_sync_impl(
         7 => wire__crate__api__lan__decode_ticket_info_impl(ptr, rust_vec_len, data_len),
         9 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
         12 => wire__crate__api__device__random_device_name_impl(ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__simple__set_app_identity_impl(ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__simple__set_app_identity_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1580,6 +1740,125 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::lan::DecodedTicketData>
     for crate::api::lan::DecodedTicketData
 {
     fn into_into_dart(self) -> crate::api::lan::DecodedTicketData {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::diagnostics::DiagnosticsActionData {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.label.into_into_dart().into_dart(),
+            self.kind.into_into_dart().into_dart(),
+            self.target.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::diagnostics::DiagnosticsActionData
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::diagnostics::DiagnosticsActionData>
+    for crate::api::diagnostics::DiagnosticsActionData
+{
+    fn into_into_dart(self) -> crate::api::diagnostics::DiagnosticsActionData {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::diagnostics::DiagnosticsActionKind {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::OpenAppSettings => 0.into_dart(),
+            Self::OpenUrl => 1.into_dart(),
+            Self::Retry => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::diagnostics::DiagnosticsActionKind
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::diagnostics::DiagnosticsActionKind>
+    for crate::api::diagnostics::DiagnosticsActionKind
+{
+    fn into_into_dart(self) -> crate::api::diagnostics::DiagnosticsActionKind {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::diagnostics::DiagnosticsCheckData {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.id.into_into_dart().into_dart(),
+            self.group.into_into_dart().into_dart(),
+            self.status.into_into_dart().into_dart(),
+            self.label.into_into_dart().into_dart(),
+            self.detail.into_into_dart().into_dart(),
+            self.hint.into_into_dart().into_dart(),
+            self.action.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::diagnostics::DiagnosticsCheckData
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::diagnostics::DiagnosticsCheckData>
+    for crate::api::diagnostics::DiagnosticsCheckData
+{
+    fn into_into_dart(self) -> crate::api::diagnostics::DiagnosticsCheckData {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::diagnostics::DiagnosticsCheckGroup {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Network => 0.into_dart(),
+            Self::Rendezvous => 1.into_dart(),
+            Self::Lan => 2.into_dart(),
+            Self::P2p => 3.into_dart(),
+            Self::Permissions => 4.into_dart(),
+            Self::Local => 5.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::diagnostics::DiagnosticsCheckGroup
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::diagnostics::DiagnosticsCheckGroup>
+    for crate::api::diagnostics::DiagnosticsCheckGroup
+{
+    fn into_into_dart(self) -> crate::api::diagnostics::DiagnosticsCheckGroup {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::diagnostics::DiagnosticsCheckStatus {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Running => 0.into_dart(),
+            Self::Pass => 1.into_dart(),
+            Self::Warn => 2.into_dart(),
+            Self::Fail => 3.into_dart(),
+            Self::Skipped => 4.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::diagnostics::DiagnosticsCheckStatus
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::diagnostics::DiagnosticsCheckStatus>
+    for crate::api::diagnostics::DiagnosticsCheckStatus
+{
+    fn into_into_dart(self) -> crate::api::diagnostics::DiagnosticsCheckStatus {
         self
     }
 }
@@ -2096,6 +2375,18 @@ impl SseEncode for flutter_rust_bridge::for_generated::anyhow::Error {
 
 impl SseEncode
     for StreamSink<
+        crate::api::diagnostics::DiagnosticsCheckData,
+        flutter_rust_bridge::for_generated::SseCodec,
+    >
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        unimplemented!("")
+    }
+}
+
+impl SseEncode
+    for StreamSink<
         crate::api::receiver::ReceiverPairingState,
         flutter_rust_bridge::for_generated::SseCodec,
     >
@@ -2150,6 +2441,87 @@ impl SseEncode for crate::api::lan::DecodedTicketData {
         <String>::sse_encode(self.endpoint_id, serializer);
         <String>::sse_encode(self.device_name, serializer);
         <String>::sse_encode(self.device_type, serializer);
+    }
+}
+
+impl SseEncode for crate::api::diagnostics::DiagnosticsActionData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.label, serializer);
+        <crate::api::diagnostics::DiagnosticsActionKind>::sse_encode(self.kind, serializer);
+        <Option<String>>::sse_encode(self.target, serializer);
+    }
+}
+
+impl SseEncode for crate::api::diagnostics::DiagnosticsActionKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::diagnostics::DiagnosticsActionKind::OpenAppSettings => 0,
+                crate::api::diagnostics::DiagnosticsActionKind::OpenUrl => 1,
+                crate::api::diagnostics::DiagnosticsActionKind::Retry => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::diagnostics::DiagnosticsCheckData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.id, serializer);
+        <crate::api::diagnostics::DiagnosticsCheckGroup>::sse_encode(self.group, serializer);
+        <crate::api::diagnostics::DiagnosticsCheckStatus>::sse_encode(self.status, serializer);
+        <String>::sse_encode(self.label, serializer);
+        <String>::sse_encode(self.detail, serializer);
+        <Option<String>>::sse_encode(self.hint, serializer);
+        <Option<crate::api::diagnostics::DiagnosticsActionData>>::sse_encode(
+            self.action,
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::diagnostics::DiagnosticsCheckGroup {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::diagnostics::DiagnosticsCheckGroup::Network => 0,
+                crate::api::diagnostics::DiagnosticsCheckGroup::Rendezvous => 1,
+                crate::api::diagnostics::DiagnosticsCheckGroup::Lan => 2,
+                crate::api::diagnostics::DiagnosticsCheckGroup::P2p => 3,
+                crate::api::diagnostics::DiagnosticsCheckGroup::Permissions => 4,
+                crate::api::diagnostics::DiagnosticsCheckGroup::Local => 5,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::diagnostics::DiagnosticsCheckStatus {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::diagnostics::DiagnosticsCheckStatus::Running => 0,
+                crate::api::diagnostics::DiagnosticsCheckStatus::Pass => 1,
+                crate::api::diagnostics::DiagnosticsCheckStatus::Warn => 2,
+                crate::api::diagnostics::DiagnosticsCheckStatus::Fail => 3,
+                crate::api::diagnostics::DiagnosticsCheckStatus::Skipped => 4,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -2238,6 +2610,16 @@ impl SseEncode for Option<String> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <String>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::diagnostics::DiagnosticsActionData> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::diagnostics::DiagnosticsActionData>::sse_encode(value, serializer);
         }
     }
 }

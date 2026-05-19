@@ -1,4 +1,5 @@
 pub mod blob_dispatcher;
+pub mod diagnostics;
 pub mod error;
 pub mod identity;
 pub mod nearby;
