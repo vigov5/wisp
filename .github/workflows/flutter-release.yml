@@ -49,6 +49,15 @@ jobs:
           channel: stable
           cache: true
 
+      # Force CocoaPods for plugin integration. Recent Flutter stables auto-add
+      # SPM on iOS builds, but flutter_secure_storage_darwin 0.3.0 ships a
+      # Package.swift declaring iOS 12 while using CryptoKit (iOS 13+), which
+      # then fails to compile under SPM regardless of the Runner target. The
+      # CocoaPods path picks up the Podfile's iOS 13 deployment override and
+      # builds clean.
+      - name: Disable Swift Package Manager for plugins
+        run: flutter config --no-enable-swift-package-manager
+
       - name: Get Flutter dependencies
         run: flutter pub get
 
