@@ -108,18 +108,25 @@ class _SelectionActionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      leading: Icon(icon, color: kInk),
-      title: Text(
-        label,
-        style: driftSans(
-          fontSize: 15,
-          fontWeight: FontWeight.w600,
-          color: kInk,
+    // The sheet wraps these tiles in a DecoratedBox with a background color,
+    // which would otherwise mask the ListTile's ink splash. A transparent
+    // Material satisfies the "Material ancestor" requirement without
+    // overriding the parent's appearance.
+    return Material(
+      color: Colors.transparent,
+      child: ListTile(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        leading: Icon(icon, color: kInk),
+        title: Text(
+          label,
+          style: driftSans(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: kInk,
+          ),
         ),
+        onTap: onTap,
       ),
-      onTap: onTap,
     );
   }
 }
