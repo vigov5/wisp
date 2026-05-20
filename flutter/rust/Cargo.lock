@@ -859,7 +859,7 @@ dependencies = [
 
 [[package]]
 name = "drift-app"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "drift-core",
@@ -879,7 +879,7 @@ dependencies = [
 
 [[package]]
 name = "drift-core"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "bincode",
@@ -905,7 +905,7 @@ dependencies = [
 
 [[package]]
 name = "drift_bridge"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "drift-app",

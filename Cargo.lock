@@ -876,7 +876,7 @@ dependencies = [
 
 [[package]]
 name = "drift"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -897,7 +897,7 @@ dependencies = [
 
 [[package]]
 name = "drift-app"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "drift-core",
@@ -917,7 +917,7 @@ dependencies = [
 
 [[package]]
 name = "drift-core"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "bincode",
@@ -945,7 +945,7 @@ dependencies = [
 
 [[package]]
 name = "drift-server"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "axum",
