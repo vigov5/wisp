@@ -62,4 +62,13 @@ class ReceiverServiceController extends Notifier<ReceiverServiceState> {
   Future<void> shutdown() {
     return ref.read(receiverServiceSourceProvider).shutdown();
   }
+
+  /// Clears any sticky [ReceiverServiceError] so the shell's error banner
+  /// hides. Invoked from the banner's dismiss/action buttons — the next real
+  /// state event from the source will repopulate `error` if the underlying
+  /// problem hasn't been fixed yet.
+  void clearError() {
+    if (state.error == null) return;
+    state = state.copyWith(clearError: true);
+  }
 }

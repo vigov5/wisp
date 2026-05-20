@@ -62,7 +62,11 @@ TransferResultViewData buildTransferResultViewData(TransferSessionState state) {
     TransferSessionPhase.completed => TransferResultViewData(
       outcome: TransferResultOutcome.success,
       title: 'Files saved',
-      message: 'Saved to ${offer.destinationLabel}',
+      // The Rust side reports the cache-relative root which on Android always
+      // looks like "Downloads", even when the user actually picked a SAF
+      // folder of their own. Keep the success message generic — the "Open
+      // folder" button shows the real location.
+      message: 'Transfer complete.',
       deviceName: deviceName,
       deviceType: deviceType,
       manifestItems: manifestItems,
@@ -72,7 +76,6 @@ TransferResultViewData buildTransferResultViewData(TransferSessionState state) {
       fileCountLabel: '${state.result?.completedFiles ?? 0} files',
       metrics: [
         ResultMetric(label: 'From', value: deviceName),
-        ResultMetric(label: 'Saved to', value: offer.destinationLabel),
         ResultMetric(label: 'Files', value: '${state.result!.completedFiles}'),
         ResultMetric(
           label: 'Size',

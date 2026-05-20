@@ -33,8 +33,15 @@ pub(super) async fn check_writable(download_root: &str) -> CheckResult {
     }
     let path = PathBuf::from(trimmed);
     let probe = path.join(".drift_diag_write_test");
+    let path_for_create = path.clone();
     let probe_path = probe.clone();
     let attempt = tokio::task::spawn_blocking(move || {
+        // Mirror what the receiver does on the first incoming transfer:
+        // create the download root if it's missing (the Android default lives
+        // in app-private external storage and only materialises when a file
+        // first lands there).  Without this the diagnostic falsely fails on
+        // a fresh install before any transfer has run.
+        std::fs::create_dir_all(&path_for_create)?;
         std::fs::write(&probe_path, b"drift diagnostic probe")?;
         std::fs::remove_file(&probe_path)
     })

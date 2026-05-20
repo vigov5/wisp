@@ -144,11 +144,40 @@ class ReceiverIdleViewState {
   final bool isStale;
 }
 
+/// Categorises a receiver-service failure so the UI can offer a sensible
+/// remediation button. Defaults to [openConnectionTest] which routes to the
+/// self-diagnose page — from there the user can decide whether the problem
+/// is config, permission, or network.
+enum ReceiverErrorAction { openConnectionTest, openSettings, none }
+
+@immutable
+class ReceiverServiceError {
+  const ReceiverServiceError({
+    required this.message,
+    this.action = ReceiverErrorAction.openConnectionTest,
+  });
+
+  final String message;
+  final ReceiverErrorAction action;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ReceiverServiceError &&
+          runtimeType == other.runtimeType &&
+          message == other.message &&
+          action == other.action;
+
+  @override
+  int get hashCode => Object.hash(message, action);
+}
+
 @immutable
 class ReceiverServiceState {
   const ReceiverServiceState({
     required this.snapshot,
     required this.pairingCode,
+    this.error,
   });
 
   factory ReceiverServiceState.ready({
@@ -194,7 +223,8 @@ class ReceiverServiceState {
         hasRegistration: false,
         hasPendingOffer: false,
       ),
-      pairingCode = const PairingCodeState.unavailable();
+      pairingCode = const PairingCodeState.unavailable(),
+      error = null;
 
   const ReceiverServiceState.registering()
     : snapshot = const ReceiverSnapshot(
@@ -204,7 +234,8 @@ class ReceiverServiceState {
         hasRegistration: false,
         hasPendingOffer: false,
       ),
-      pairingCode = const PairingCodeState.unavailable();
+      pairingCode = const PairingCodeState.unavailable(),
+      error = null;
 
   const ReceiverServiceState.stopped()
     : snapshot = const ReceiverSnapshot(
@@ -214,7 +245,8 @@ class ReceiverServiceState {
         hasRegistration: false,
         hasPendingOffer: false,
       ),
-      pairingCode = const PairingCodeState.unavailable();
+      pairingCode = const PairingCodeState.unavailable(),
+      error = null;
 
   const ReceiverServiceState.failed()
     : snapshot = const ReceiverSnapshot(
@@ -224,18 +256,42 @@ class ReceiverServiceState {
         hasRegistration: false,
         hasPendingOffer: false,
       ),
-      pairingCode = const PairingCodeState.unavailable();
+      pairingCode = const PairingCodeState.unavailable(),
+      error = null;
+
+  /// Failed state carrying a user-visible error message + a suggested action.
+  /// The receiver-service source emits this when an underlying Rust stream
+  /// reports an unrecoverable error (e.g. download root not writable, FFI
+  /// channel disconnect) so the shell can render a banner with a remediation
+  /// button instead of leaving the user staring at an unresponsive page.
+  factory ReceiverServiceState.failedWith(ReceiverServiceError error) {
+    return ReceiverServiceState(
+      snapshot: const ReceiverSnapshot(
+        lifecycle: ReceiverLifecycle.failed,
+        discoverableRequested: false,
+        advertisingActive: false,
+        hasRegistration: false,
+        hasPendingOffer: false,
+      ),
+      pairingCode: const PairingCodeState.unavailable(),
+      error: error,
+    );
+  }
 
   final ReceiverSnapshot snapshot;
   final PairingCodeState pairingCode;
+  final ReceiverServiceError? error;
 
   ReceiverServiceState copyWith({
     ReceiverSnapshot? snapshot,
     PairingCodeState? pairingCode,
+    ReceiverServiceError? error,
+    bool clearError = false,
   }) {
     return ReceiverServiceState(
       snapshot: snapshot ?? this.snapshot,
       pairingCode: pairingCode ?? this.pairingCode,
+      error: clearError ? null : (error ?? this.error),
     );
   }
 }

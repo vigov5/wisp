@@ -9,6 +9,7 @@ import '../features/receive/application/service.dart';
 import '../features/receive/presentation/qr_pairing_page.dart';
 import '../features/receive/presentation/receive_transfer_route_gate.dart';
 import '../features/receive/presentation/widgets/idle_card.dart';
+import '../features/receive/presentation/widgets/receiver_error_banner.dart';
 import '../app/app_router.dart';
 import '../features/send/application/model.dart';
 import '../features/send/application/send_selection_picker.dart';
@@ -80,6 +81,9 @@ class DesktopShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final receiverState = ref.watch(receiverIdleViewStateProvider);
+    final receiverError = ref.watch(
+      receiverServiceProvider.select((s) => s.error),
+    );
     return ReceiveTransferRouteGate(
       child: Scaffold(
         backgroundColor: kBg,
@@ -87,6 +91,15 @@ class DesktopShell extends ConsumerWidget {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
+              if (receiverError != null) ...[
+                ReceiverErrorBanner(
+                  error: receiverError,
+                  onDismiss: () => ref
+                      .read(receiverServiceProvider.notifier)
+                      .clearError(),
+                ),
+                const SizedBox(height: 12),
+              ],
               ReceiveIdleCard(
               state: receiverState,
               onOpenSettings: () {

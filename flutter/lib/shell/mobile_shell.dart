@@ -7,9 +7,11 @@ import '../features/receive/application/controller.dart';
 import '../features/receive/application/service.dart';
 import '../features/receive/presentation/qr_pairing_page.dart';
 import '../features/receive/presentation/receive_transfer_route_gate.dart';
+import '../features/receive/presentation/widgets/receiver_error_banner.dart';
 import '../features/send/presentation/send_selection_source_sheet.dart';
 import '../app/app_router.dart';
 import '../theme/drift_theme.dart';
+import 'widgets/android_permission_bootstrap.dart';
 import 'widgets/mobile_identity_card.dart';
 import 'widgets/select_files_card.dart';
 import 'widgets/shell_picking_actions.dart';
@@ -20,8 +22,12 @@ class MobileShell extends ConsumerWidget with ShellPickingActions {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final receiverState = ref.watch(receiverIdleViewStateProvider);
+    final receiverError = ref.watch(
+      receiverServiceProvider.select((s) => s.error),
+    );
 
-    return ReceiveTransferRouteGate(
+    return AndroidPermissionBootstrap(
+      child: ReceiveTransferRouteGate(
       child: Scaffold(
         backgroundColor: kBg,
         body: CustomScrollView(
@@ -56,6 +62,18 @@ class MobileShell extends ConsumerWidget with ShellPickingActions {
                 ),
               ),
             ),
+            if (receiverError != null)
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                sliver: SliverToBoxAdapter(
+                  child: ReceiverErrorBanner(
+                    error: receiverError,
+                    onDismiss: () => ref
+                        .read(receiverServiceProvider.notifier)
+                        .clearError(),
+                  ),
+                ),
+              ),
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               sliver: SliverList(
@@ -87,6 +105,7 @@ class MobileShell extends ConsumerWidget with ShellPickingActions {
             ),
           ],
         ),
+      ),
       ),
     );
   }

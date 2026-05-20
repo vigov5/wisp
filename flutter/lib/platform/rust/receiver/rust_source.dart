@@ -349,11 +349,58 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
           unawaited(_saveFilesToMediaStore(event, androidReceiveCacheDir!));
         }
       },
-      onError: (_) {
-        debugPrint('[receiver] transfer stream generation=$generation error');
+      onError: (error) {
+        if (generation != _configGeneration) {
+          return;
+        }
+        debugPrint(
+          '[receiver] transfer stream generation=$generation error: $error',
+        );
+        _emitFailedState(error);
       },
     );
     unawaited(oldSubscription?.cancel());
+  }
+
+  /// Emit a [ReceiverServiceState.failedWith] carrying a user-visible message
+  /// + suggested remediation action so the shell can render a banner. Without
+  /// this the underlying stream error is logged but the UI keeps showing the
+  /// idle "waiting for a code" state, which on a fresh install looked
+  /// identical to a working receiver — the user had no way to learn that
+  /// anything was wrong.
+  void _emitFailedState(Object error) {
+    if (_stateController.isClosed) return;
+    final message = _humanizeError(error);
+    final action = _categorizeAction(message);
+    _currentState = ReceiverServiceState.failedWith(
+      ReceiverServiceError(message: message, action: action),
+    );
+    _stateController.add(_currentState);
+  }
+
+  String _humanizeError(Object error) {
+    final raw = error.toString();
+    // Trim Dart's `Instance of '…'` boilerplate when the FFI side hands us a
+    // structured error that lacks a useful toString. Falls through to the raw
+    // string when the message is meaningful.
+    if (raw.startsWith("Instance of '")) {
+      return 'Receiver service stopped responding. Run the connection test '
+          'to find the cause.';
+    }
+    return raw;
+  }
+
+  ReceiverErrorAction _categorizeAction(String message) {
+    final lower = message.toLowerCase();
+    if (lower.contains('folder') ||
+        lower.contains('directory') ||
+        lower.contains('save location') ||
+        lower.contains('download root') ||
+        lower.contains('permission denied') ||
+        lower.contains('read-only')) {
+      return ReceiverErrorAction.openSettings;
+    }
+    return ReceiverErrorAction.openConnectionTest;
   }
 
   /// Moves all received files from [cacheRoot] to the final destination:

@@ -77,7 +77,11 @@ class OfferCard extends StatelessWidget {
                   elevation: 0,
                 ),
                 child: Text(
-                  'Save to ${offer.saveRootLabel}',
+                  // Stays generic so the label doesn't claim "Save to
+                  // Downloads" when the user has picked a different SAF
+                  // folder — the Rust side reports the cache root which
+                  // always looks like "Downloads" on Android.
+                  'Save',
                   style: driftSans(fontWeight: FontWeight.w700, fontSize: 15),
                 ),
               ),

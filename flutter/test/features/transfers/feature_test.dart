@@ -141,7 +141,7 @@ void main() {
 
     expect(find.text('report.pdf'), findsOneWidget);
     expect(find.text('photo.jpg'), findsOneWidget);
-    expect(find.text('Save to Downloads'), findsOneWidget);
+    expect(find.text('Save'), findsOneWidget);
   });
 
   testWidgets('shows resume copy for resumable incoming offers', (
@@ -177,7 +177,7 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.text('Save to Downloads'), findsOneWidget);
+    expect(find.text('Save'), findsOneWidget);
   });
 
   testWidgets('renders nested manifest paths as a tree', (
@@ -390,7 +390,7 @@ void main() {
     await tester.pumpAndSettle();
     await _waitForReceiveTransferRoute(tester, router);
 
-    await tester.tap(find.text('Save to Downloads'));
+    await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
     expect(find.text('RECEIVING'), findsOneWidget);
@@ -421,7 +421,7 @@ void main() {
     await tester.pumpAndSettle();
     await _waitForReceiveTransferRoute(tester, router);
 
-    await tester.tap(find.text('Save to Downloads'));
+    await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     await tester.pump();
 
@@ -467,7 +467,7 @@ void main() {
     await tester.pumpAndSettle();
     await _waitForReceiveTransferRoute(tester, router);
 
-    await tester.tap(find.text('Save to Downloads'));
+    await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     await tester.pump();
 
@@ -479,7 +479,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('SUCCESS'), findsOneWidget);
-    expect(find.text('Saved to Downloads'), findsOneWidget);
+    expect(find.text('Transfer complete.'), findsOneWidget);
     expect(find.text('Done'), findsOneWidget);
     expect(find.text('RECEIVING'), findsNothing);
 
@@ -519,7 +519,7 @@ void main() {
     await tester.pumpAndSettle();
     await _waitForReceiveTransferRoute(tester, router);
 
-    await tester.tap(find.text('Save to Downloads'));
+    await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     await tester.pump();
 
@@ -572,7 +572,7 @@ void main() {
     await tester.pumpAndSettle();
     await _waitForReceiveTransferRoute(tester, router);
 
-    await tester.tap(find.text('Save to Downloads'));
+    await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     await tester.pump();
 
@@ -612,7 +612,7 @@ void main() {
     source.emitIncomingOffer(senderName: 'Maya');
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Save to Downloads'));
+    await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     await tester.pump();
 

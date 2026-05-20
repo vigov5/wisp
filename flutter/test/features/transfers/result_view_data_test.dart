@@ -50,12 +50,15 @@ void main() {
 
     expect(viewData.outcome, TransferResultOutcome.success);
     expect(viewData.title, 'Files saved');
-    expect(viewData.message, 'Saved to Downloads');
+    expect(viewData.message, 'Transfer complete.');
     expect(viewData.primaryLabel, 'Done');
     expect(viewData.metrics, isNotNull);
-    expect(viewData.metrics, hasLength(4));
+    // Was 4: dropped the "Saved to <folder>" metric — it lied about the
+    // destination on Android SAF, and the "Open folder" button covers the
+    // "where did the files land" need.
+    expect(viewData.metrics, hasLength(3));
     expect(viewData.metrics!.first.label, 'From');
-    expect(viewData.metrics![2].value, '2');
+    expect(viewData.metrics![1].value, '2');
   });
 
   test('builds cancelled transfer result data', () {

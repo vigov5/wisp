@@ -175,7 +175,10 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
 
   /// Returns a user-friendly display string for [root].
   /// On Android, `content://` SAF URIs are shown as just the path portion.
-  /// On Android with no SAF folder chosen, shows the default destination label.
+  /// On Android with no SAF folder chosen, surfaces the actual app-private
+  /// path (stripped of the `/storage/emulated/0/` prefix) so the user can
+  /// see where files land — the previous "Download/Drift (default)" label
+  /// implied a Files-app-visible folder, which the app-private path is not.
   String _downloadRootDisplayText(String root) {
     if (Platform.isAndroid) {
       if (AndroidMediaStore.isSafUri(root)) {
@@ -193,10 +196,24 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
         }
         return 'Selected folder';
       }
-      // No SAF folder chosen — files go to Download/Drift via MediaStore.
-      return 'Download/Drift (default)';
+      // No SAF folder chosen — show the real app-private path.
+      const sharedPrefix = '/storage/emulated/0/';
+      if (root.startsWith(sharedPrefix)) {
+        return root.substring(sharedPrefix.length);
+      }
+      return root.isEmpty ? 'Download/Drift' : root;
     }
     return formatSettingsDownloadRootForDisplay(root);
+  }
+
+  /// Helper text shown below the download-root field on Android when the
+  /// default app-private path is in use. Explains that the folder is created
+  /// on demand and is not the same as the system Downloads folder.
+  String? _androidDownloadRootHint() {
+    if (!Platform.isAndroid) return null;
+    if (AndroidMediaStore.isSafUri(_downloadRootValue)) return null;
+    return 'App-private storage, created on the first received file. '
+        'Tap Choose to use a SAF folder visible in Files instead.';
   }
 
   Future<void> _pickDownloadRoot() async {
@@ -293,9 +310,26 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                         const SizedBox(height: 22),
                         SettingsSectionField(
                           label: 'Save received files to',
-                          child: SettingsDownloadRootField(
-                            controller: _downloadRootController,
-                            onChoose: _pickDownloadRoot,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              SettingsDownloadRootField(
+                                controller: _downloadRootController,
+                                onChoose: _pickDownloadRoot,
+                              ),
+                              if (_androidDownloadRootHint() != null) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  _androidDownloadRootHint()!,
+                                  style: driftSans(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w400,
+                                    color: kMuted,
+                                    height: 1.45,
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                         const SizedBox(height: 22),

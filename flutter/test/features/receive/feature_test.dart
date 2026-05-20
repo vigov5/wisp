@@ -74,7 +74,7 @@ void main() {
 
     expect(find.text('INCOMING'), findsOneWidget);
     expect(find.text('Maya'), findsAtLeastNWidgets(1));
-    expect(find.text('Save to Downloads'), findsOneWidget);
+    expect(find.text('Save'), findsOneWidget);
   });
 
   testWidgets('shows the saved device name on the idle receiver card', (

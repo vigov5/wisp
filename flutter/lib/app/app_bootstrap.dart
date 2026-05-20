@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -51,6 +52,20 @@ Future<AppBootstrap> loadAppBootstrap({
   );
   final initialSettings = await repository.loadOrCreate();
   final pairingCache = PairingCacheRepository(prefs: prefs);
+
+  // First-install hardening for Android. The Rust receiver's `create_dir_all`
+  // runs at its own startup, but the receiver only starts when the UI opens
+  // the Receive tab — by which time the sender may already be dialling.
+  // Creating both the Rust-side cache and the user-facing default upfront
+  // means a first-launch user can accept a fresh transfer immediately
+  // without racing with lazy mkdir (one suspected cause of "sender stuck on
+  // Waiting, receiver never shows the confirm screen" on a fresh install).
+  if (Platform.isAndroid && androidReceiveCacheDir != null) {
+    await _ensureDirExists(androidReceiveCacheDir);
+    if (!AndroidMediaStore.isSafUri(initialSettings.downloadRoot)) {
+      await _ensureDirExists(initialSettings.downloadRoot);
+    }
+  }
 
   // Install the persistent app identity so iroh sees a stable EndpointId
   // across launches. Must run before any sender/receiver session starts.
@@ -126,4 +141,12 @@ String? _userHomeDirectory() {
     return Platform.environment['USERPROFILE'];
   }
   return Platform.environment['HOME'];
+}
+
+Future<void> _ensureDirExists(String path) async {
+  try {
+    await Directory(path).create(recursive: true);
+  } catch (error) {
+    debugPrint('[bootstrap] could not create download dir $path: $error');
+  }
 }
