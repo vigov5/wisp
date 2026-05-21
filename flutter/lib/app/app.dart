@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../features/receive/application/service.dart';
 import '../features/send/application/controller.dart';
+import '../features/send/application/model.dart';
 import '../features/send/application/state.dart';
 import '../features/transfers/application/controller.dart';
 import '../features/transfers/application/service.dart';
@@ -13,6 +15,7 @@ import '../features/transfers/application/state.dart' as transfer_state;
 import 'app_router.dart';
 import '../theme/wisp_theme.dart';
 import '../platform/android/keepalive_lifecycle_observer.dart';
+import '../platform/android_share_intent.dart';
 import '../platform/rust/receiver/source.dart';
 
 class WispApp extends ConsumerStatefulWidget {
@@ -26,6 +29,7 @@ class _WispAppState extends ConsumerState<WispApp> {
   late final GoRouter _router;
   late final ReceiverServiceSource _receiverService;
   late final KeepaliveLifecycleObserver _keepaliveObserver;
+  StreamSubscription<List<String>>? _shareIntentSub;
   bool _discoverableEnabled = false;
 
   @override
@@ -42,8 +46,40 @@ class _WispAppState extends ConsumerState<WispApp> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _syncReceiverDiscovery();
+        _wireShareIntent();
       }
     });
+  }
+
+  // Wires the Android ACTION_SEND / ACTION_SEND_MULTIPLE intent into the
+  // Send draft route.  On cold start the cached files are pulled once;
+  // on warm start they arrive via the broadcast stream.  No-op on
+  // non-Android platforms.
+  void _wireShareIntent() {
+    if (!Platform.isAndroid) return;
+    unawaited(
+      AndroidShareIntent.getInitialSharedFiles().then((paths) {
+        if (!mounted) return;
+        _openSendDraftWith(paths);
+      }),
+    );
+    _shareIntentSub = AndroidShareIntent.onSharedFiles.listen((paths) {
+      if (!mounted) return;
+      _openSendDraftWith(paths);
+    });
+  }
+
+  void _openSendDraftWith(List<String> paths) {
+    if (paths.isEmpty) return;
+    final files = paths.map((path) {
+      final file = File(path);
+      return SendPickedFile(
+        path: path,
+        name: SendPickedFile.fromPath(path).name,
+        sizeBytes: file.existsSync() ? BigInt.from(file.lengthSync()) : null,
+      );
+    }).toList(growable: false);
+    _router.go(AppRoutePaths.sendDraft, extra: files);
   }
 
   bool _hasActiveTransfer() {
@@ -72,6 +108,7 @@ class _WispAppState extends ConsumerState<WispApp> {
 
   @override
   void dispose() {
+    unawaited(_shareIntentSub?.cancel());
     WidgetsBinding.instance.removeObserver(_keepaliveObserver);
     unawaited(_receiverService.setDiscoverable(enabled: false));
     super.dispose();

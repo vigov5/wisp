@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.os.PowerManager
 import android.provider.MediaStore
@@ -17,6 +18,7 @@ import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.documentfile.provider.DocumentFile
+import androidx.lifecycle.lifecycleScope
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -24,12 +26,18 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 
 class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "dev.vigov5.wisp/file_picker"
         private const val KEEPALIVE_CHANNEL = "dev.vigov5.wisp/transfer_keepalive"
+        private const val SHARE_CHANNEL = "dev.vigov5.wisp/share_intent"
         private const val REQUEST_CODE_PICK_FILES = 2001
         private const val REQUEST_CODE_PICK_FOLDER = 2002
         private const val REQUEST_CODE_PICK_SAVE_FOLDER = 2003
@@ -39,6 +47,58 @@ class MainActivity : FlutterActivity() {
     private var pendingResult: MethodChannel.Result? = null
     private var pendingFolderResult: MethodChannel.Result? = null
     private var pendingSaveFolderResult: MethodChannel.Result? = null
+
+    // Deferred holding the cached file paths produced from an ACTION_SEND /
+    // ACTION_SEND_MULTIPLE intent.  The copy itself runs on Dispatchers.IO,
+    // and Flutter awaits this when calling getInitialSharedFiles, so a
+    // multi-hundred-megabyte share never blocks the main thread (or the
+    // launch screen).
+    private var initialSharedFilesJob: Deferred<List<String>>? = null
+    private var shareChannel: MethodChannel? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        initialSharedFilesJob = extractSharedFilesAsync(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Persist the new intent so any later getIntent() lookups see it
+        // (otherwise we'd keep re-reading the original launch intent).
+        setIntent(intent)
+        val deferred = extractSharedFilesAsync(intent) ?: return
+        lifecycleScope.launch {
+            val files = try {
+                deferred.await()
+            } catch (_: Exception) {
+                return@launch
+            }
+            if (files.isEmpty()) return@launch
+            val channel = shareChannel
+            if (channel != null) {
+                channel.invokeMethod("onSharedFiles", files)
+            } else {
+                // Flutter side hasn't attached yet — fall back to the
+                // cold-start stash so getInitialSharedFiles still picks
+                // them up when it eventually wires up.
+                initialSharedFilesJob = CompletableDeferred(files)
+            }
+        }
+    }
+
+    // Returns null when the intent isn't a share intent so the caller can
+    // skip it entirely; otherwise kicks off the URI → cache copy on
+    // Dispatchers.IO and returns the in-flight Deferred.  Tied to
+    // lifecycleScope so the work is cancelled if the activity dies.
+    private fun extractSharedFilesAsync(intent: Intent?): Deferred<List<String>>? {
+        if (intent == null) return null
+        if (intent.action != Intent.ACTION_SEND &&
+            intent.action != Intent.ACTION_SEND_MULTIPLE
+        ) return null
+        return lifecycleScope.async(Dispatchers.IO) {
+            extractSharedFilesFromIntent(intent) ?: emptyList()
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -92,6 +152,74 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             KEEPALIVE_CHANNEL,
         ).setMethodCallHandler { call, result -> handleKeepaliveCall(call, result) }
+
+        shareChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            SHARE_CHANNEL,
+        ).apply {
+            setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getInitialSharedFiles" -> {
+                        val job = initialSharedFilesJob
+                        initialSharedFilesJob = null
+                        if (job == null) {
+                            result.success(null)
+                            return@setMethodCallHandler
+                        }
+                        // job.await() suspends until the IO copy finishes.
+                        // lifecycleScope dispatches the resumed continuation
+                        // back to the main thread, which is what Flutter
+                        // requires for result.success().
+                        lifecycleScope.launch {
+                            try {
+                                result.success(job.await())
+                            } catch (_: Exception) {
+                                // Activity destroyed mid-copy (job cancelled)
+                                // or copy threw — surface as empty rather
+                                // than failing the channel call.
+                                result.success(emptyList<String>())
+                            }
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+    }
+
+    // Pulls file URIs out of an ACTION_SEND / ACTION_SEND_MULTIPLE intent
+    // and copies each one into the app cache via the same `wisp_picked`
+    // tree the file picker uses.  Returns the resulting local paths.
+    // Returns null when the intent isn't a share intent at all so the
+    // caller can distinguish "no share" from "empty share".
+    private fun extractSharedFilesFromIntent(intent: Intent?): List<String>? {
+        if (intent == null) return null
+        val uris: List<Uri> = when (intent.action) {
+            Intent.ACTION_SEND -> {
+                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                }
+                if (uri != null) listOf(uri) else emptyList()
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableArrayListExtra(
+                        Intent.EXTRA_STREAM,
+                        Uri::class.java,
+                    )?.toList().orEmpty()
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+                        ?.toList()
+                        .orEmpty()
+                }
+            }
+            else -> return null
+        }
+        return uris.mapNotNull { copyUriToCache(it) }
     }
 
     private fun handleKeepaliveCall(call: MethodCall, result: MethodChannel.Result) {
@@ -251,7 +379,9 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun resolveFileName(uri: Uri): String? {
-        return try {
+        // content:// URIs from DocumentsUI / DocumentProviders expose the
+        // friendly name via OpenableColumns.DISPLAY_NAME.
+        val displayName = try {
             contentResolver.query(
                 uri,
                 arrayOf(OpenableColumns.DISPLAY_NAME),
@@ -265,6 +395,10 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
             null
         }
+        if (!displayName.isNullOrBlank()) return displayName
+        // file:// URIs (older Files apps, some legacy share targets) carry
+        // the name as the last path segment.
+        return uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
     }
 
     // Recursively copies a FastDocumentFile tree into [destDir] using 64 KB

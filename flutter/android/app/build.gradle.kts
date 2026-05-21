@@ -44,4 +44,8 @@ flutter {
 
 dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
+    // lifecycleScope (auto-cancels on activity destroy) + Dispatchers.IO so
+    // ACTION_SEND URI copies don't block the main thread on cold launch.
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }
