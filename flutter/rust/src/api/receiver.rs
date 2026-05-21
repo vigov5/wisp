@@ -247,7 +247,7 @@ pub fn start_receiver_transfer_listener(
     updates: StreamSink<ReceiverTransferEvent>,
 ) -> Result<(), crate::api::error::UserFacingErrorData> {
     if ENABLE_DEMO_HELLO_PROTOCOL {
-        std::env::set_var("DRIFT_DEMO_HELLO", "1");
+        std::env::set_var("WISP_DEMO_HELLO", "1");
         println!("[bridge/receive] demo hello protocol enabled");
     }
 

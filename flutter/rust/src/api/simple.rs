@@ -9,7 +9,7 @@ pub fn init_app() {
         use tracing_subscriber::prelude::*;
         let _ = tracing_subscriber::registry()
             .with(filter)
-            .with(tracing_android::layer("drift").unwrap())
+            .with(tracing_android::layer("wisp").unwrap())
             .try_init();
     }
     #[cfg(not(target_os = "android"))]

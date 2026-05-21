@@ -1,6 +1,6 @@
-# Drift Mobile & Desktop App
+# Wisp Mobile & Desktop App
 
-The Flutter-based graphical interface for Drift, powered by the core Drift Rust engine.
+The Flutter-based graphical interface for Wisp, powered by the core Wisp Rust engine.
 
 ## About
 
@@ -9,7 +9,7 @@ This application provides a modern, cross-platform UI for sending and receiving 
 ### Key Features in the App
 - **Visual Manifests:** Browse file trees before accepting a transfer.
 - **Drag & Drop:** Drop files onto the app to start a send draft.
-- **Nearby Discovery:** Auto-detect other Drift devices on your local network.
+- **Nearby Discovery:** Auto-detect other Wisp devices on your local network.
 - **Cross-Platform:** Shared logic across iOS, Android, macOS, Linux, and Windows.
 
 ---
@@ -69,7 +69,7 @@ flutter pub run build_runner build --delete-conflicting-outputs
 - `lib/features/`: UI and logic separated by feature (send, receive, settings, transfers).
 - `lib/platform/`: Platform-specific abstractions and the Rust bridge bridge integration.
 - `lib/src/rust/`: Generated Dart bindings for the Rust core.
-- `rust/`: The Rust bridge crate that wraps `drift-core` and `drift-app`.
+- `rust/`: The Rust bridge crate that wraps `wisp-core` and `wisp-app`.
 - `rust_builder/`: Native build glue using [Cargokit](https://github.com/n0-computer/cargokit).
 
 ### Testing
@@ -105,4 +105,4 @@ Flutter + Rust bridge builds can consume a lot of disk space due to generated bu
 
 - [flutter_rust_bridge documentation](https://cjycode.com/flutter_rust_bridge/)
 - [Riverpod documentation](https://riverpod.dev/)
-- [Drift Testing Strategy](../docs/testing-strategy.md)
+- [Wisp Testing Strategy](../docs/testing-strategy.md)

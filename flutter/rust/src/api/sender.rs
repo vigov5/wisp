@@ -175,7 +175,7 @@ pub fn cancel_active_send_transfer() -> Result<(), crate::api::error::UserFacing
         internal_user_facing_error(
             "Couldn't cancel send — internal state corrupted",
             "The send-cancel handle mutex was poisoned by a panic in another task. \
-             Restart Drift to recover.",
+             Restart Wisp to recover.",
         )
     })?;
     let Some(cancel_handle) = guard.as_ref().cloned() else {
