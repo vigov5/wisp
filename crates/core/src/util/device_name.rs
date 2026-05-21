@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use rand::seq::SliceRandom;
 
-/// First DNS label before `.`, trimmed (matches Flutter `DriftController` hostname handling).
+/// First DNS label before `.`, trimmed (matches Flutter `WispApp` hostname handling).
 /// Empty input yields a fresh random phrase.
 pub fn normalize_hostname_label(value: &str) -> String {
     let trimmed = value.trim();
@@ -21,10 +21,10 @@ pub fn normalize_hostname_label(value: &str) -> String {
 
 static PROCESS_DEFAULT_DEVICE_NAME: OnceLock<String> = OnceLock::new();
 
-/// Display name for CLI: `DRIFT_DEVICE_NAME` / `HOSTNAME` / `COMPUTERNAME` (normalized), else one
+/// Display name for CLI: `WISP_DEVICE_NAME` / `HOSTNAME` / `COMPUTERNAME` (normalized), else one
 /// random two-word name for the whole process (stable across send/receive/mDNS).
 pub fn process_display_device_name() -> String {
-    for key in ["DRIFT_DEVICE_NAME", "HOSTNAME", "COMPUTERNAME"] {
+    for key in ["WISP_DEVICE_NAME", "HOSTNAME", "COMPUTERNAME"] {
         if let Ok(value) = std::env::var(key) {
             let trimmed = value.trim();
             if !trimmed.is_empty() {

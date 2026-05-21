@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 
 enum CheckStatus { running, pass, warn, fail, skipped }
 

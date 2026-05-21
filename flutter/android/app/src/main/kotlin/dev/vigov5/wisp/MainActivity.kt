@@ -1,4 +1,4 @@
-package com.example.drift
+package dev.vigov5.wisp
 
 import android.Manifest
 import android.app.Activity
@@ -28,8 +28,8 @@ import java.io.IOException
 class MainActivity : FlutterActivity() {
 
     companion object {
-        private const val CHANNEL = "com.example.drift/file_picker"
-        private const val KEEPALIVE_CHANNEL = "com.example.drift/transfer_keepalive"
+        private const val CHANNEL = "dev.vigov5.wisp/file_picker"
+        private const val KEEPALIVE_CHANNEL = "dev.vigov5.wisp/transfer_keepalive"
         private const val REQUEST_CODE_PICK_FILES = 2001
         private const val REQUEST_CODE_PICK_FOLDER = 2002
         private const val REQUEST_CODE_PICK_SAVE_FOLDER = 2003
@@ -197,7 +197,7 @@ class MainActivity : FlutterActivity() {
             // read it via ordinary filesystem APIs. External storage paths are
             // blocked by Android scoped storage for native (non-SAF) callers.
             val destDir = File(
-                File(File(cacheDir, "drift_picked"), System.currentTimeMillis().toString()),
+                File(File(cacheDir, "wisp_picked"), System.currentTimeMillis().toString()),
                 rootDoc.name.ifBlank { "folder" },
             )
             val sizeBytes = copyDocumentTreeToCache(rootDoc, destDir)
@@ -235,7 +235,7 @@ class MainActivity : FlutterActivity() {
     private fun copyUriToCache(uri: Uri): String? {
         return try {
             val fileName = resolveFileName(uri) ?: "picked_file"
-            val dir = File(File(cacheDir, "drift_picked"), System.currentTimeMillis().toString())
+            val dir = File(File(cacheDir, "wisp_picked"), System.currentTimeMillis().toString())
             dir.mkdirs()
             // Use a timestamped subdirectory so repeated picks of the same name don't collide.
             val cacheFile = File(dir, fileName)
@@ -294,7 +294,7 @@ class MainActivity : FlutterActivity() {
         return totalBytes
     }
 
-    // Saves a file from [srcPath] into the public Downloads/Drift/ folder.
+    // Saves a file from [srcPath] into the public Downloads/Wisp/ folder.
     // [relativeFilePath] is the path relative to the transfer root (e.g. "photos/cat.jpg").
     // On API 29+: uses MediaStore.Downloads so no extra permission is needed.
     // On API < 29:  writes to app-specific external downloads (no permission needed).
@@ -322,7 +322,7 @@ class MainActivity : FlutterActivity() {
         val parts = relativeFilePath.replace('\\', '/').split('/')
         val fileName = parts.last()
         val subDir = if (parts.size > 1) parts.dropLast(1).joinToString("/") else ""
-        val relativePath = "Download/Drift${if (subDir.isNotEmpty()) "/$subDir" else ""}"
+        val relativePath = "Download/Wisp${if (subDir.isNotEmpty()) "/$subDir" else ""}"
 
         val contentValues = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
@@ -360,7 +360,7 @@ class MainActivity : FlutterActivity() {
         val subDir = if (parts.size > 1) parts.dropLast(1).joinToString(File.separator) else ""
         val baseDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
             ?: cacheDir  // last resort fallback
-        val destDir = if (subDir.isNotEmpty()) File(File(baseDir, "Drift"), subDir) else File(baseDir, "Drift")
+        val destDir = if (subDir.isNotEmpty()) File(File(baseDir, "Wisp"), subDir) else File(baseDir, "Wisp")
         destDir.mkdirs()
         val destFile = File(destDir, fileName)
         File(srcPath).copyTo(destFile, overwrite = true)
@@ -423,7 +423,7 @@ class MainActivity : FlutterActivity() {
     // Opens the system Files app at the receive destination.  When [path] is
     // a SAF tree URI (`content://…/tree/…`) we resolve it to a document URI
     // and ACTION_VIEW that — Files apps recognize the directory MIME type
-    // and navigate into it.  Otherwise (legacy or default Downloads/Drift
+    // and navigate into it.  Otherwise (legacy or default Downloads/Wisp
     // path) we fall back to DownloadManager.ACTION_VIEW_DOWNLOADS so the
     // user still ends up looking at where their files landed.
     private fun openSavedFolder(call: MethodCall, result: MethodChannel.Result) {

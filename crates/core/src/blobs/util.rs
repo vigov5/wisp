@@ -179,7 +179,7 @@ mod tests {
 
     #[tokio::test]
     async fn import_collects_files_in_stable_order_with_sizes() -> Result<()> {
-        let root = unique_temp_dir("drift-one-shot-import");
+        let root = unique_temp_dir("wisp-one-shot-import");
         let input = root.join("input");
         let nested = input.join("nested");
         std::fs::create_dir_all(&nested)?;
@@ -204,7 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn import_accepts_single_file_path() -> Result<()> {
-        let root = unique_temp_dir("drift-one-shot-single-file");
+        let root = unique_temp_dir("wisp-one-shot-single-file");
         let input_dir = root.join("input");
         std::fs::create_dir_all(&input_dir)?;
         let file_path = input_dir.join("hello.txt");
@@ -223,7 +223,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn walk_files_rejects_nested_symbolic_links() -> Result<()> {
-        let root = unique_temp_dir("drift-walk-files-symlink");
+        let root = unique_temp_dir("wisp-walk-files-symlink");
         let input = root.join("input");
         std::fs::create_dir_all(&input)?;
         std::fs::write(input.join("real.txt"), b"real")?;

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 
 class ReceiveCodeField extends StatefulWidget {
   const ReceiveCodeField({
@@ -80,7 +80,7 @@ class _ReceiveCodeFieldState extends State<ReceiveCodeField> {
       inputFormatters: [
         FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]')),
       ],
-      style: driftMono(
+      style: wispMono(
         fontSize: 18,
         fontWeight: FontWeight.w700,
         letterSpacing: 4.0,
@@ -96,7 +96,7 @@ class _ReceiveCodeFieldState extends State<ReceiveCodeField> {
           horizontal: 16,
           vertical: 15,
         ),
-        hintStyle: driftSans(
+        hintStyle: wispSans(
           color: kSubtle,
           fontSize: 14,
           fontWeight: FontWeight.w400,

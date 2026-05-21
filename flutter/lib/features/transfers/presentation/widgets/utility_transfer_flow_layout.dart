@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 
 class UtilityTransferFlowLayout extends StatelessWidget {
   const UtilityTransferFlowLayout({
@@ -50,7 +50,7 @@ class UtilityTransferFlowLayout extends StatelessWidget {
                     const SizedBox(width: 8),
                     Text(
                       statusLabel.toUpperCase(),
-                      style: driftSans(
+                      style: wispSans(
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
                         color: statusColor,
@@ -63,7 +63,7 @@ class UtilityTransferFlowLayout extends StatelessWidget {
                 // Hero Section
                 Text(
                   heroText,
-                  style: driftSans(
+                  style: wispSans(
                     fontSize: 42,
                     fontWeight: FontWeight.w800,
                     color: kInk,
@@ -74,7 +74,7 @@ class UtilityTransferFlowLayout extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   subtitle,
-                  style: driftSans(
+                  style: wispSans(
                     fontSize: 15,
                     fontWeight: FontWeight.w500,
                     color: kMuted,

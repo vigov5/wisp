@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../application/identity.dart';
 
 export '../../application/format_utils.dart';
@@ -38,7 +38,7 @@ Widget buildSubtitleText(String text) {
   return Text(
     text,
     textAlign: TextAlign.center,
-    style: driftSans(
+    style: wispSans(
       fontSize: 14,
       fontWeight: FontWeight.w500,
       color: kMuted,
@@ -53,7 +53,7 @@ Widget buildSpeedLine({required String speedLabel, required String? etaLabel}) {
       children: [
         TextSpan(
           text: speedLabel,
-          style: driftSans(
+          style: wispSans(
             fontSize: 14,
             fontWeight: FontWeight.w700,
             color: kInk,
@@ -62,7 +62,7 @@ Widget buildSpeedLine({required String speedLabel, required String? etaLabel}) {
         if (etaLabel != null) ...[
           TextSpan(
             text: '  ·  ',
-            style: driftSans(
+            style: wispSans(
               fontSize: 14,
               fontWeight: FontWeight.w500,
               color: kSubtle,
@@ -70,7 +70,7 @@ Widget buildSpeedLine({required String speedLabel, required String? etaLabel}) {
           ),
           TextSpan(
             text: etaLabel,
-            style: driftSans(
+            style: wispSans(
               fontSize: 13,
               fontWeight: FontWeight.w500,
               color: kMuted,

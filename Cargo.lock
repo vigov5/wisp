@@ -875,94 +875,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "drift"
-version = "0.4.3"
-dependencies = [
- "anyhow",
- "clap",
- "drift-app",
- "drift-core",
- "indicatif",
- "iroh",
- "mdns-sd",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "time",
- "tokio",
- "tokio-stream",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "drift-app"
-version = "0.4.3"
-dependencies = [
- "anyhow",
- "drift-core",
- "flume",
- "fs2",
- "iroh",
- "iroh-blobs",
- "mdns-sd",
- "rand 0.8.5",
- "reqwest",
- "thiserror 2.0.18",
- "time",
- "tokio",
- "tokio-stream",
- "tracing",
-]
-
-[[package]]
-name = "drift-core"
-version = "0.4.3"
-dependencies = [
- "base64",
- "bincode",
- "blake3",
- "flume",
- "futures-lite",
- "if-addrs",
- "iroh",
- "iroh-blobs",
- "irpc",
- "mdns-sd",
- "rand 0.8.5",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "time",
- "tokio",
- "tokio-stream",
- "tracing",
- "tracing-subscriber",
- "walkdir",
-]
-
-[[package]]
-name = "drift-server"
-version = "0.4.3"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "drift-core",
- "http-body-util",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "time",
- "tokio",
- "tower",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "ed25519"
 version = "3.0.0-rc.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5019,6 +4931,94 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a90e88e4667264a994d34e6d1ab2d26d398dcdca8b7f52bec8668957517fc7d8"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "wisp"
+version = "0.4.3"
+dependencies = [
+ "anyhow",
+ "clap",
+ "indicatif",
+ "iroh",
+ "mdns-sd",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "tracing-subscriber",
+ "wisp-app",
+ "wisp-core",
+]
+
+[[package]]
+name = "wisp-app"
+version = "0.4.3"
+dependencies = [
+ "anyhow",
+ "flume",
+ "fs2",
+ "iroh",
+ "iroh-blobs",
+ "mdns-sd",
+ "rand 0.8.5",
+ "reqwest",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "wisp-core",
+]
+
+[[package]]
+name = "wisp-core"
+version = "0.4.3"
+dependencies = [
+ "base64",
+ "bincode",
+ "blake3",
+ "flume",
+ "futures-lite",
+ "if-addrs",
+ "iroh",
+ "iroh-blobs",
+ "irpc",
+ "mdns-sd",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
+]
+
+[[package]]
+name = "wisp-server"
+version = "0.4.3"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "http-body-util",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "wisp-core",
 ]
 
 [[package]]

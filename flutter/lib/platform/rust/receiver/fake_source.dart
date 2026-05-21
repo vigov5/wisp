@@ -186,7 +186,7 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
     String destinationLabel = 'Downloads',
     String saveRootLabel = 'Downloads',
     String statusMessage =
-        'Drift stopped receiving before all files were saved.',
+        'Wisp stopped receiving before all files were saved.',
   }) {
     if (_incomingController.isClosed) {
       return;

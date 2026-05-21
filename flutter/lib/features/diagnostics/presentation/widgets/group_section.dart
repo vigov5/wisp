@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../domain/check_result.dart';
 import 'check_row.dart';
 
@@ -57,7 +57,7 @@ class _GroupSectionState extends State<GroupSection> {
                   Expanded(
                     child: Text(
                       widget.group.label,
-                      style: driftSans(
+                      style: wispSans(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
                         color: kInk,

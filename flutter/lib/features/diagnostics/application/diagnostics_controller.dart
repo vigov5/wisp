@@ -85,7 +85,7 @@ class DiagnosticsController extends Notifier<DiagnosticsState> {
           id: 'local.firewall_win',
           group: CheckGroup.local,
           status: CheckStatus.running,
-          label: 'Firewall rule (Drift.exe)',
+          label: 'Firewall rule (Wisp.exe)',
         ),
     ];
   }

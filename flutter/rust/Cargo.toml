@@ -1,5 +1,5 @@
 [package]
-name = "drift_bridge"
+name = "wisp_bridge"
 version = "0.4.3"
 edition = "2021"
 
@@ -10,8 +10,8 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 anyhow = "1.0"
-drift-app = { path = "../../crates/app" }
-drift-core = { path = "../../crates/core" }
+wisp-app = { path = "../../crates/app" }
+wisp-core = { path = "../../crates/core" }
 flutter_rust_bridge = "=2.12.0"
 iroh = "0.97"
 rand = "0.8"

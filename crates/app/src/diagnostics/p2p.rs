@@ -159,7 +159,7 @@ pub(crate) async fn check_loopback(endpoint: Option<Endpoint>) -> CheckResult {
 // in the live app.
 //
 // Run with:
-//     cargo test -p drift-app --test=lib diagnostics::p2p::tests -- --ignored --nocapture
+//     cargo test -p wisp-app --test=lib diagnostics::p2p::tests -- --ignored --nocapture
 //
 // Interpretation matrix:
 //   self_dial PASS + cross_dial PASS → iroh works; production failure is
@@ -176,10 +176,10 @@ pub(crate) async fn check_loopback(endpoint: Option<Endpoint>) -> CheckResult {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use drift_core::protocol::ALPN;
     use iroh::endpoint::Connection;
     use iroh::protocol::{AcceptError, ProtocolHandler, Router};
     use iroh::{Endpoint, SecretKey};
+    use wisp_core::protocol::ALPN;
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(15);
     const ONLINE_TIMEOUT: Duration = Duration::from_secs(8);

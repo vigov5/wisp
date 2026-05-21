@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 
 class SettingsDownloadRootField extends StatelessWidget {
   const SettingsDownloadRootField({
@@ -14,43 +14,44 @@ class SettingsDownloadRootField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
-      key: const ValueKey<String>('settings-download-root-field'),
-      controller: controller,
-      readOnly: true,
-      showCursor: false,
-      onTap: onChoose,
-      decoration: InputDecoration(
-        hintText: '/Users/you/Downloads',
-        suffixIconConstraints: const BoxConstraints(
-          minWidth: 94,
-          minHeight: 44,
+    // Choose used to live as a suffix inside the TextField, which left an
+    // unavoidable inner padding so the button never sat flush against the
+    // field's right edge. Split into a Row so the path text gets the full
+    // remaining width and the Choose button's right edge aligns with the
+    // field's right edge.
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: TextField(
+            key: const ValueKey<String>('settings-download-root-field'),
+            controller: controller,
+            readOnly: true,
+            showCursor: false,
+            onTap: onChoose,
+            decoration: const InputDecoration(hintText: '/Users/you/Downloads'),
+          ),
         ),
-        suffixIcon: Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: TextButton(
-            onPressed: onChoose,
-            style: TextButton.styleFrom(
-              minimumSize: const Size(0, 32),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              foregroundColor: kInk,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-                side: const BorderSide(color: kBorder),
-              ),
-            ),
-            child: Text(
-              'Choose',
-              style: driftSans(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: kInk,
-              ),
+        const SizedBox(width: 8),
+        OutlinedButton(
+          onPressed: onChoose,
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 48),
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            foregroundColor: kInk,
+            side: const BorderSide(color: kBorder),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+          child: Text(
+            'Choose',
+            style: wispSans(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: kInk,
             ),
           ),
         ),
-      ),
+      ],
     );
   }
 }

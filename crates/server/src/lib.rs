@@ -10,11 +10,6 @@ use axum::extract::{ConnectInfo, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use drift_core::pairing::{DiscoveryError, DiscoverySession, DiscoveryState};
-use drift_core::rendezvous::{
-    CODE_ALPHABET, CODE_LENGTH, ClaimPeerResponse, PairStatus, PairStatusResponse,
-    RegisterPeerRequest, RegisterPeerResponse, validate_code,
-};
 use rand::Rng;
 use serde::Serialize;
 use time::OffsetDateTime;
@@ -23,6 +18,11 @@ use tokio::net::TcpListener;
 use tokio::time::sleep;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
+use wisp_core::pairing::{DiscoveryError, DiscoverySession, DiscoveryState};
+use wisp_core::rendezvous::{
+    CODE_ALPHABET, CODE_LENGTH, ClaimPeerResponse, PairStatus, PairStatusResponse,
+    RegisterPeerRequest, RegisterPeerResponse, validate_code,
+};
 
 const CREATE_LIMIT_PER_MINUTE: usize = 10;
 const ACCESS_LIMIT_PER_MINUTE: usize = 60;
@@ -338,7 +338,7 @@ fn init_logging() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("drift_server=info")),
+                .unwrap_or_else(|_| EnvFilter::new("wisp_server=info")),
         )
         .with_target(true)
         .compact()

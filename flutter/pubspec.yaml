@@ -43,7 +43,7 @@ dependencies:
   flutter_secure_storage: ^10.1.0
   riverpod_annotation: ^4.0.2
   window_manager: ^0.5.1
-  drift_bridge:
+  wisp_bridge:
     path: rust_builder
   package_info_plus: ^9.0.1
   qr_flutter: ^4.1.0
@@ -66,16 +66,16 @@ flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
   remove_alpha_ios: true
-  image_path: "assets/logo.png"
+  image_path: "assets/wisp_square_logo.png"
   web:
     generate: true
-    image_path: "assets/logo.png"
+    image_path: "assets/wisp_square_logo.png"
   windows:
     generate: true
-    image_path: "assets/logo.png"
+    image_path: "assets/wisp_square_logo.png"
   macos:
     generate: true
-    image_path: "assets/logo.png"
+    image_path: "assets/wisp_square_logo.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

@@ -90,7 +90,7 @@ class PermissionProbe {
               'Transfers will still work, but you won\'t get an alert when '
               'one arrives.',
           hint:
-              'You\'ll need to enable Notifications for Drift in system '
+              'You\'ll need to enable Notifications for Wisp in system '
               'settings.',
           action: CheckAction(
             label: 'Open app settings',

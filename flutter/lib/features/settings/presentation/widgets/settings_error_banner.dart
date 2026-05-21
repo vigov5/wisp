@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 
 class SettingsErrorBanner extends StatelessWidget {
   const SettingsErrorBanner({super.key, required this.message});
@@ -33,7 +33,7 @@ class SettingsErrorBanner extends StatelessWidget {
           Expanded(
             child: Text(
               message,
-              style: driftSans(
+              style: wispSans(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w500,
                 color: kInk,

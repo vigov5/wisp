@@ -1,5 +1,5 @@
 [package]
-name = "drift-server"
+name = "wisp-server"
 version.workspace = true
 edition.workspace = true
 
@@ -7,7 +7,7 @@ edition.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
-drift-core = { path = "../core" }
+wisp-core = { path = "../core" }
 rand.workspace = true
 serde.workspace = true
 time.workspace = true

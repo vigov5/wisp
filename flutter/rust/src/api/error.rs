@@ -1,5 +1,5 @@
-use drift_app::{UserFacingError, UserFacingErrorKind};
 use serde::Serialize;
+use wisp_app::{UserFacingError, UserFacingErrorKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum UserFacingErrorKindData {

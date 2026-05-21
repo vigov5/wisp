@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../../transfers/presentation/widgets/transfer_presentation_helpers.dart';
 import '../../application/model.dart';
 
@@ -80,7 +80,7 @@ class _PreviewTableRow extends StatelessWidget {
     final rowIcon = isDirectory
         ? Icons.folder_rounded
         : Icons.description_rounded;
-    final iconColor = isDirectory ? const Color(0xFF4A8E9E) : kMuted;
+    final iconColor = isDirectory ? kAccentCyanStrong : kMuted;
 
     return Container(
       height: 56,
@@ -96,7 +96,7 @@ class _PreviewTableRow extends StatelessWidget {
                 file.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: driftSans(
+                style: wispSans(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
                   color: kInk,
@@ -110,7 +110,7 @@ class _PreviewTableRow extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.right,
-            style: driftSans(
+            style: wispSans(
               fontSize: 12,
               fontWeight: FontWeight.w500,
               color: kMuted,

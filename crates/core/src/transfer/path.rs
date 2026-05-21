@@ -56,7 +56,7 @@ pub fn local_record_dir(
     collection_hash: iroh_blobs::Hash,
 ) -> std::result::Result<PathBuf, TransferPathError> {
     Ok(out_dir
-        .join(".drift")
+        .join(".wisp")
         .join("transfers")
         .join(collection_hash.to_hex()))
 }

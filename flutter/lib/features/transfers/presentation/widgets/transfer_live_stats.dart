@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../application/state.dart';
 import 'transfer_presentation_helpers.dart';
 
@@ -24,7 +24,7 @@ class TransferLiveStats extends StatelessWidget {
         Text(
           progressLabel,
           textAlign: TextAlign.center,
-          style: driftSans(
+          style: wispSans(
             fontSize: 13,
             fontWeight: FontWeight.w600,
             color: kInk,
@@ -36,7 +36,7 @@ class TransferLiveStats extends StatelessWidget {
           Text(
             extras.join(' · '),
             textAlign: TextAlign.center,
-            style: driftSans(
+            style: wispSans(
               fontSize: 12,
               fontWeight: FontWeight.w500,
               color: kMuted,

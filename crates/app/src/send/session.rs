@@ -1,17 +1,17 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use drift_core::protocol::{Identity, TransferRole};
-use drift_core::transfer::{
-    SendRequest, Sender, SenderEvent as CoreSenderEvent, TransferOutcome as CoreTransferOutcome,
-    TransferPlan,
-};
-use drift_core::util::snapshot_connection_path;
 use iroh::{Endpoint, RelayMode, endpoint::presets};
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use wisp_core::protocol::{Identity, TransferRole};
+use wisp_core::transfer::{
+    SendRequest, Sender, SenderEvent as CoreSenderEvent, TransferOutcome as CoreTransferOutcome,
+    TransferPlan,
+};
+use wisp_core::util::snapshot_connection_path;
 
 use crate::error::{AppError, AppResult, UserFacingError, UserFacingErrorKind};
 use crate::types::{ConnectionPath, SendEvent, SendPhase};
@@ -176,24 +176,24 @@ impl SendSession {
         //   tests with a fresh key.
         let (endpoint, blob_strategy) = if let Some(shared) = self.endpoint.clone() {
             tracing::info!(
-                target: "drift_app::send::session",
+                target: "wisp_app::send::session",
                 endpoint_id = %shared.addr().id,
                 "using shared receiver-service endpoint + BlobDispatcher (External strategy)"
             );
             (
                 shared,
-                drift_core::blobs::BlobServingStrategy::External(Arc::new(
+                wisp_core::blobs::BlobServingStrategy::External(Arc::new(
                     crate::blob_dispatcher::BlobDispatcher::global(),
                 )),
             )
         } else {
             tracing::info!(
-                target: "drift_app::send::session",
+                target: "wisp_app::send::session",
                 "no shared endpoint available; binding private sender endpoint (Internal strategy)"
             );
             let endpoint = Endpoint::builder(presets::N0)
                 .alpns(vec![
-                    drift_core::protocol::ALPN.to_vec(),
+                    wisp_core::protocol::ALPN.to_vec(),
                     iroh_blobs::ALPN.to_vec(),
                 ])
                 .relay_mode(RelayMode::Default)
@@ -204,7 +204,7 @@ impl SendSession {
                 .map_err(|e| AppError::BindingFailed {
                     context: format!("sender endpoint: {e}"),
                 })?;
-            (endpoint, drift_core::blobs::BlobServingStrategy::Internal)
+            (endpoint, wisp_core::blobs::BlobServingStrategy::Internal)
         };
         let identity = Identity {
             role: TransferRole::Sender,
@@ -222,7 +222,7 @@ impl SendSession {
         // `None` — pkarr will still be able to find the peer via endpoint id,
         // we just lose the offline-LAN fast path on next reconnect.
         let remote_ticket: Option<String> =
-            drift_core::util::encode_ticket(resolved.peer_endpoint_addr.clone()).ok();
+            wisp_core::util::encode_ticket(resolved.peer_endpoint_addr.clone()).ok();
         let sender = Sender::new(
             endpoint,
             identity,
@@ -391,8 +391,8 @@ fn maybe_demote_pre_handshake_failure(
         .is_some_and(|path| {
             matches!(
                 path.kind,
-                drift_core::util::ConnectionPathKind::Direct
-                    | drift_core::util::ConnectionPathKind::Relay
+                wisp_core::util::ConnectionPathKind::Direct
+                    | wisp_core::util::ConnectionPathKind::Relay
             )
         });
     let kind = if observed_active_path {
@@ -431,10 +431,10 @@ fn spawn_send_path_watcher(
                         // flicker hide/show every poll.
                         let downgrade_to_unknown = matches!(
                             snapshot.kind,
-                            drift_core::util::ConnectionPathKind::Unknown
+                            wisp_core::util::ConnectionPathKind::Unknown
                         ) && !matches!(
                             guard.kind,
-                            drift_core::util::ConnectionPathKind::Unknown
+                            wisp_core::util::ConnectionPathKind::Unknown
                         );
                         if *guard != snapshot && !downgrade_to_unknown {
                             *guard = snapshot.clone();
@@ -664,11 +664,11 @@ mod tests {
     };
     use crate::error::{AppError, UserFacingErrorKind};
     use crate::types::{SendEvent, SendPhase};
-    use drift_core::protocol::{CancelPhase, TransferRole};
-    use drift_core::transfer::TransferCancellation;
     use std::sync::{Arc, Mutex as StdMutex};
     use tokio::sync::{Mutex, mpsc, oneshot, watch};
     use tokio_stream::wrappers::UnboundedReceiverStream;
+    use wisp_core::protocol::{CancelPhase, TransferRole};
+    use wisp_core::transfer::TransferCancellation;
 
     fn synthetic_event(phase: SendPhase) -> SendEvent {
         SendEvent {
@@ -690,7 +690,7 @@ mod tests {
 
     fn synthetic_event_with_path(
         phase: SendPhase,
-        path: drift_core::util::ConnectionPath,
+        path: wisp_core::util::ConnectionPath,
     ) -> SendEvent {
         let mut e = synthetic_event(phase);
         e.connection_path = Some(path);
@@ -711,7 +711,7 @@ mod tests {
         // Connecting phase reached but the watcher never saw any active path.
         let prior = synthetic_event_with_path(
             SendPhase::Connecting,
-            drift_core::util::ConnectionPath::unknown(),
+            wisp_core::util::ConnectionPath::unknown(),
         );
         let last = Arc::new(StdMutex::new(Some(prior)));
         let event = maybe_demote_pre_handshake_failure(&last, synthetic_event(SendPhase::Failed));
@@ -724,8 +724,8 @@ mod tests {
         // We did connect (relay path observed) but never made it to handshake.
         let prior = synthetic_event_with_path(
             SendPhase::Connecting,
-            drift_core::util::ConnectionPath {
-                kind: drift_core::util::ConnectionPathKind::Relay,
+            wisp_core::util::ConnectionPath {
+                kind: wisp_core::util::ConnectionPathKind::Relay,
                 relay_url: Some("https://relay.example/".to_owned()),
                 direct_addr: None,
             },
@@ -740,8 +740,8 @@ mod tests {
     fn demote_connecting_with_direct_path_yields_not_receiving() {
         let prior = synthetic_event_with_path(
             SendPhase::Connecting,
-            drift_core::util::ConnectionPath {
-                kind: drift_core::util::ConnectionPathKind::Direct,
+            wisp_core::util::ConnectionPath {
+                kind: wisp_core::util::ConnectionPathKind::Direct,
                 relay_url: None,
                 direct_addr: Some("192.168.1.5:5000".to_owned()),
             },
@@ -796,7 +796,7 @@ mod tests {
 
         let error = event.error.expect("structured error");
         assert_eq!(error.kind(), UserFacingErrorKind::Internal);
-        assert_eq!(error.title(), "Drift internal error");
+        assert_eq!(error.title(), "Wisp internal error");
         assert!(error.message().contains("boom"));
     }
 

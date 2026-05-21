@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app/features/send/presentation/widgets/recipient_avatar.dart';
 import 'package:app/features/transfers/presentation/widgets/sending_connection_strip.dart';
-import 'package:app/theme/drift_theme.dart';
+import 'package:app/theme/wisp_theme.dart';
 
 void main() {
   testWidgets('RecipientAvatar shows progress and triggers success animation', (

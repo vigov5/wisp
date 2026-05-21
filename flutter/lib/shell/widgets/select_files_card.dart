@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 
 class SelectFilesCard extends StatelessWidget {
   final VoidCallback? onTap;
@@ -35,7 +35,7 @@ class SelectFilesCard extends StatelessWidget {
                 children: [
                   Text(
                     'Select files',
-                    style: driftSans(
+                    style: wispSans(
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
                       color: kInk,
@@ -44,7 +44,7 @@ class SelectFilesCard extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     'Tap to choose files to send.',
-                    style: driftSans(fontSize: 14, color: kMuted, height: 1.3),
+                    style: wispSans(fontSize: 14, color: kMuted, height: 1.3),
                   ),
                 ],
               ),

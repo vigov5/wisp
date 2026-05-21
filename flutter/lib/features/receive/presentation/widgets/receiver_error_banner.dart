@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../app/app_router.dart';
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../application/state.dart';
 
 /// Surface for transfer-stream errors raised by the receiver service.
@@ -46,7 +46,7 @@ class ReceiverErrorBanner extends StatelessWidget {
               children: [
                 Text(
                   'Receiver service stopped',
-                  style: driftSans(
+                  style: wispSans(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                     color: _ink,
@@ -55,7 +55,7 @@ class ReceiverErrorBanner extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   error.message,
-                  style: driftSans(
+                  style: wispSans(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w400,
                     color: _ink,

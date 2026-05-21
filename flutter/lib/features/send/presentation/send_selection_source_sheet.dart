@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 
 Future<void> showSendSelectionSourceSheet(
   BuildContext context, {
@@ -68,7 +68,7 @@ class SendSelectionSourceSheet extends StatelessWidget {
                   padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
                   child: Text(
                     'Select from',
-                    style: driftSans(
+                    style: wispSans(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
                       color: kMuted,
@@ -119,7 +119,7 @@ class _SelectionActionTile extends StatelessWidget {
         leading: Icon(icon, color: kInk),
         title: Text(
           label,
-          style: driftSans(
+          style: wispSans(
             fontSize: 15,
             fontWeight: FontWeight.w600,
             color: kInk,

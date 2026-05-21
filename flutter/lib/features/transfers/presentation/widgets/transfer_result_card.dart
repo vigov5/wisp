@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:app/theme/drift_theme.dart';
+import 'package:app/theme/wisp_theme.dart';
 import 'package:app/features/send/presentation/widgets/recipient_avatar.dart';
 import 'package:app/features/transfers/application/result_view_data.dart';
 import 'package:app/features/transfers/presentation/widgets/transfer_manifest_panel.dart';
@@ -70,7 +70,7 @@ class TransferResultCard extends StatelessWidget {
                     secondaryLabel!,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: driftSans(fontWeight: FontWeight.w700, fontSize: 15),
+                    style: wispSans(fontWeight: FontWeight.w700, fontSize: 15),
                   ),
                 ),
               ),
@@ -94,7 +94,7 @@ class TransferResultCard extends StatelessWidget {
                     viewData.primaryLabel,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: driftSans(fontWeight: FontWeight.w700, fontSize: 15),
+                    style: wispSans(fontWeight: FontWeight.w700, fontSize: 15),
                   ),
                 ),
               ),
@@ -162,7 +162,7 @@ class _StatsGrid extends StatelessWidget {
                   children: [
                     Text(
                       stats[i].label,
-                      style: driftSans(
+                      style: wispSans(
                         fontSize: 9,
                         fontWeight: FontWeight.w800,
                         color: kMuted,
@@ -172,7 +172,7 @@ class _StatsGrid extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       stats[i].value,
-                      style: driftSans(
+                      style: wispSans(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
                         color: kInk,
@@ -211,10 +211,10 @@ class _TransferResultVisualData {
 
 _TransferResultVisualData _visualForOutcome(TransferResultOutcome outcome) {
   return switch (outcome) {
-    TransferResultOutcome.success => const _TransferResultVisualData(
+    TransferResultOutcome.success => _TransferResultVisualData(
       statusLabel: 'Success',
-      accentColor: Color(0xFF49B36C),
-      buttonColor: Color(0xFF5FA7B7),
+      accentColor: const Color(0xFF49B36C),
+      buttonColor: kAccentCyanStrong,
       icon: Icons.check_circle_rounded,
     ),
     TransferResultOutcome.cancelled => const _TransferResultVisualData(

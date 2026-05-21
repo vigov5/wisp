@@ -19,7 +19,7 @@ struct TransferTicket {
 /// JSON envelope used by QR pairing. Carries the original ticket plus
 /// device info so the sender can show "From <name>" on its tile before
 /// dialing.  Wire-format separate from `TransferTicket` (bincode) so the
-/// LAN broadcast stays binary-compatible with older drift binaries.
+/// LAN broadcast stays binary-compatible with older wisp binaries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct QrPayload {
     /// The same string that `make_ticket` / `make_ticket_offline` produce —
@@ -34,7 +34,7 @@ struct QrPayload {
 /// Magic prefix on a QR-encoded pairing payload so the scanner can
 /// distinguish it from a raw ticket string. Short enough to keep the
 /// QR small while still being self-describing.
-const QR_PAYLOAD_PREFIX: &str = "drift-pair:";
+const QR_PAYLOAD_PREFIX: &str = "wisp-pair:";
 
 /// Public read-only view of a decoded ticket. Returned by [`decode_ticket_info`]
 /// so callers (e.g., Flutter QR scan) can pre-populate UI before dialing.
@@ -160,7 +160,7 @@ pub enum TicketError {
         #[source]
         source: base64::DecodeError,
     },
-    #[error("ticket payload is not a supported drift ticket")]
+    #[error("ticket payload is not a supported wisp ticket")]
     InvalidPayload,
     #[error("parsing node id {value}")]
     ParseNodeId {
@@ -344,7 +344,7 @@ pub fn make_ticket_offline(endpoint: &Endpoint) -> std::result::Result<String, T
 
 /// Build a QR pairing payload — wraps an offline ticket together with
 /// device name + type so the scanning sender can render an informative
-/// tile before dialing. Format: `"drift-pair:" + base64url(json)`.
+/// tile before dialing. Format: `"wisp-pair:" + base64url(json)`.
 pub fn make_qr_payload(
     endpoint: &Endpoint,
     device_name: &str,
@@ -486,7 +486,7 @@ pub fn synthesize_ticket(
 /// tickets that don't carry that info.
 ///
 /// Accepted inputs:
-/// - `"drift-pair:<base64url(json{ticket, device_name, device_type})>"` — new QR format.
+/// - `"wisp-pair:<base64url(json{ticket, device_name, device_type})>"` — new QR format.
 /// - Plain ticket string (base64url of bincode `TransferTicket`) — older QR / paste.
 pub fn decode_ticket_info(input: &str) -> std::result::Result<DecodedTicketInfo, TicketError> {
     let trimmed = input.trim();
@@ -515,7 +515,7 @@ pub fn decode_ticket_info(input: &str) -> std::result::Result<DecodedTicketInfo,
 
 pub fn decode_ticket(input: &str) -> std::result::Result<EndpointAddr, TicketError> {
     let trimmed = input.trim();
-    // Accept QR-payload form too: "drift-pair:<base64url(json{ticket,...})>" —
+    // Accept QR-payload form too: "wisp-pair:<base64url(json{ticket,...})>" —
     // unwrap to the inner ticket and recurse so the send flow can use the
     // QR-scanned string directly without first stripping the prefix.
     if let Some(rest) = trimmed.strip_prefix(QR_PAYLOAD_PREFIX) {
@@ -793,7 +793,7 @@ mod qr_payload_tests {
     }
 
     #[test]
-    fn decode_ticket_accepts_drift_pair_prefix_and_unwraps() {
+    fn decode_ticket_accepts_wisp_pair_prefix_and_unwraps() {
         let id = sample_id();
         let inner = synthesize_ticket(id, Some("https://relay.example/"), None).expect("inner");
         let qr = build_qr_payload(inner, "Phone", "phone");

@@ -85,7 +85,7 @@ pub async fn run_connection_test(
 ) {
     let server_url = server_url
         .filter(|u| !u.trim().is_empty())
-        .unwrap_or_else(|| drift_core::rendezvous::DEFAULT_RENDEZVOUS_URL.to_owned());
+        .unwrap_or_else(|| wisp_core::rendezvous::DEFAULT_RENDEZVOUS_URL.to_owned());
 
     let internet = network::check_internet().await;
     let internet_ok = matches!(internet.status, CheckStatus::Pass);

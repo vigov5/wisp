@@ -16,7 +16,7 @@ void main() {
         overrides: [
           initialAppSettingsProvider.overrideWithValue(testAppSettings),
         ],
-        child: const DriftApp(),
+        child: const WispApp(),
       ),
     );
     await tester.pumpAndSettle();

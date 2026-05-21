@@ -2,13 +2,13 @@ use std::net::SocketAddr;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use drift_server::serve;
+use wisp_server::serve;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "drift-server",
+    name = "wisp-server",
     version,
-    about = "Reference short-code server for drift (Axum)"
+    about = "Reference short-code server for wisp (Axum)"
 )]
 struct Cli {
     #[command(subcommand)]

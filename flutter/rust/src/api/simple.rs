@@ -1,7 +1,7 @@
 #[flutter_rust_bridge::frb(init)]
 pub fn init_app() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        tracing_subscriber::EnvFilter::new("warn,drift_core=info,drift_app=info,drift_bridge=info")
+        tracing_subscriber::EnvFilter::new("warn,wisp_core=info,wisp_app=info,wisp_bridge=info")
     });
 
     #[cfg(target_os = "android")]
@@ -34,7 +34,7 @@ pub fn set_app_identity(secret_key_bytes: Vec<u8>) -> Result<(), String> {
     let bytes: [u8; 32] = secret_key_bytes
         .try_into()
         .map_err(|_| "secret key must be exactly 32 bytes".to_owned())?;
-    drift_app::identity::set_secret_key(bytes);
+    wisp_app::identity::set_secret_key(bytes);
     Ok(())
 }
 
@@ -43,7 +43,7 @@ pub fn set_app_identity(secret_key_bytes: Vec<u8>) -> Result<(), String> {
 /// screen so the user can copy/share their identity.
 #[flutter_rust_bridge::frb(sync)]
 pub fn current_endpoint_id() -> String {
-    drift_app::identity::current_secret_key()
+    wisp_app::identity::current_secret_key()
         .public()
         .to_string()
 }

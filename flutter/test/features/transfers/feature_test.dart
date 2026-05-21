@@ -10,7 +10,7 @@ import 'package:app/features/receive/feature.dart';
 import 'package:app/features/settings/feature.dart';
 import 'package:app/features/transfers/feature.dart';
 import 'package:app/features/transfers/application/saved_folder_opener.dart';
-import 'package:app/theme/drift_theme.dart';
+import 'package:app/theme/wisp_theme.dart';
 import 'package:app/platform/rust/receiver/fake_source.dart';
 import 'package:app/src/rust/api/receiver.dart' as rust_receiver;
 import '../../support/settings_test_overrides.dart';
@@ -173,7 +173,7 @@ void main() {
     expect(find.text('wants to send you 2 files (3.0 KB)'), findsOneWidget);
     expect(
       find.text(
-        'Resuming previous transfer. Drift will skip files you already have and download the rest. Accept only if you trust the sender.',
+        'Resuming previous transfer. Wisp will skip files you already have and download the rest. Accept only if you trust the sender.',
       ),
       findsOneWidget,
     );
@@ -429,7 +429,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Drift stopped receiving before all files were saved.'),
+      find.text('Wisp stopped receiving before all files were saved.'),
       findsOneWidget,
     );
     expect(find.text('Done'), findsOneWidget);
@@ -440,7 +440,7 @@ void main() {
 
     expect(find.text('No offers yet'), findsNothing);
     expect(
-      find.text('Drift stopped receiving before all files were saved.'),
+      find.text('Wisp stopped receiving before all files were saved.'),
       findsNothing,
     );
   });

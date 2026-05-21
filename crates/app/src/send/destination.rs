@@ -1,8 +1,8 @@
-use drift_core::protocol::{DeviceType, TransferRole};
-use drift_core::rendezvous::{RendezvousClient, resolve_server_url, validate_code};
-use drift_core::transfer::TransferCancellation;
-use drift_core::util::{decode_ticket, format_code_label};
 use iroh::{EndpointAddr, EndpointId};
+use wisp_core::protocol::{DeviceType, TransferRole};
+use wisp_core::rendezvous::{RendezvousClient, resolve_server_url, validate_code};
+use wisp_core::transfer::TransferCancellation;
+use wisp_core::util::{decode_ticket, format_code_label};
 
 use crate::error::{AppError, AppResult};
 
@@ -126,7 +126,7 @@ pub(crate) fn is_receiver_decline_cancel(cancellation: &TransferCancellation) ->
     matches!(cancellation.by, TransferRole::Receiver)
         && matches!(
             cancellation.phase,
-            drift_core::protocol::CancelPhase::WaitingForDecision
+            wisp_core::protocol::CancelPhase::WaitingForDecision
         )
 }
 

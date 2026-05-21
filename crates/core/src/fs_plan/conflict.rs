@@ -102,7 +102,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_policy_reject() -> TestResult<()> {
-        let temp = TestDir::new("drift-policy-reject").await?;
+        let temp = TestDir::new("wisp-policy-reject").await?;
         let file = temp.path.join("test.txt");
         write_test_file(&file, "content").await?;
 
@@ -119,7 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_policy_overwrite() -> TestResult<()> {
-        let temp = TestDir::new("drift-policy-overwrite").await?;
+        let temp = TestDir::new("wisp-policy-overwrite").await?;
         let file = temp.path.join("test.txt");
         write_test_file(&file, "content").await?;
 
@@ -132,7 +132,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_policy_rename() -> TestResult<()> {
-        let temp = TestDir::new("drift-policy-rename").await?;
+        let temp = TestDir::new("wisp-policy-rename").await?;
         let file = temp.path.join("test.txt");
         write_test_file(&file, "content").await?;
 
@@ -152,7 +152,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_policy_rename_no_extension() -> TestResult<()> {
-        let temp = TestDir::new("drift-policy-rename-no-ext").await?;
+        let temp = TestDir::new("wisp-policy-rename-no-ext").await?;
         let file = temp.path.join("README");
         write_test_file(&file, "content").await?;
 
@@ -165,7 +165,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_policy_rename_hidden_file() -> TestResult<()> {
-        let temp = TestDir::new("drift-policy-rename-hidden").await?;
+        let temp = TestDir::new("wisp-policy-rename-hidden").await?;
         let file = temp.path.join(".gitignore");
         write_test_file(&file, "content").await?;
 

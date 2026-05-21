@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../application/manifest.dart';
 import '../../application/state.dart';
 import 'transfer_presentation_helpers.dart';
@@ -94,7 +94,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                         if (!isSingleFile)
                           Text(
                             'Contents',
-                            style: driftSans(
+                            style: wispSans(
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
                               color: kMuted,
@@ -107,7 +107,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                               : summary,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: driftSans(
+                          style: wispSans(
                             fontSize: 13,
                             fontWeight: isSingleFile
                                 ? FontWeight.w600
@@ -120,7 +120,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                             widget.progress != null
                                 ? '${formatBytes(widget.progress!.bytesTransferred)} / ${formatBytes(widget.items.first.sizeBytes)}'
                                 : formatBytes(widget.items.first.sizeBytes),
-                            style: driftSans(
+                            style: wispSans(
                               fontSize: 11,
                               fontWeight: FontWeight.w500,
                               color: kMuted,
@@ -196,7 +196,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                                 fileName,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: driftSans(
+                                style: wispSans(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
                                   color: kInk,
@@ -207,7 +207,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                                   dirPath,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: driftSans(
+                                  style: wispSans(
                                     fontSize: 10,
                                     fontWeight: FontWeight.w500,
                                     color: kSubtle,
@@ -219,7 +219,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                         const SizedBox(width: 12),
                         Text(
                           formatBytes(item.sizeBytes),
-                          style: driftSans(
+                          style: wispSans(
                             fontSize: 12,
                             fontWeight: FontWeight.w500,
                             color: kMuted,

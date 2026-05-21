@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
-import '../../theme/drift_theme.dart';
+import '../../theme/wisp_theme.dart';
 
 class AppVersionText extends StatefulWidget {
   const AppVersionText({super.key});
@@ -29,7 +29,7 @@ class _AppVersionTextState extends State<AppVersionText> {
     if (v == null) return const SizedBox.shrink();
     return Text(
       v,
-      style: driftSans(
+      style: wispSans(
         fontSize: 11,
         fontWeight: FontWeight.w400,
         color: kMuted,

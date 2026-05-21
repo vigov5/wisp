@@ -17,7 +17,7 @@ class AndroidSaveFolder {
 }
 
 /// Saves received files to a user-chosen folder (SAF) or the public
-/// `Downloads/Drift/` folder (MediaStore default) on Android.
+/// `Downloads/Wisp/` folder (MediaStore default) on Android.
 ///
 /// **Folder selection flow (settings page):**
 /// 1. Call [pickSaveFolder] → user picks a folder → returns [AndroidSaveFolder]
@@ -25,10 +25,10 @@ class AndroidSaveFolder {
 /// 3. On transfer complete, [saveToSafUri] is called with that URI.
 ///
 /// **MediaStore default (no folder chosen):**
-/// - API 29+ → `MediaStore.Downloads` (`Downloads/Drift/`)
+/// - API 29+ → `MediaStore.Downloads` (`Downloads/Wisp/`)
 /// - API < 29 → app-specific external downloads
 class AndroidMediaStore {
-  static const _channel = MethodChannel('com.example.drift/file_picker');
+  static const _channel = MethodChannel('dev.vigov5.wisp/file_picker');
 
   /// Opens the system folder picker so the user can choose where received
   /// files will be saved.  The chosen folder is granted persistent read+write
@@ -78,7 +78,7 @@ class AndroidMediaStore {
   }
 
   /// Copies [srcAbsPath] (absolute path inside the app cache) to
-  /// `Downloads/Drift/<relativeFilePath>` on the device.
+  /// `Downloads/Wisp/<relativeFilePath>` on the device.
   ///
   /// On API 29+: uses `MediaStore.Downloads` — no storage permission needed.
   /// On API < 29: writes to the app-specific external downloads directory.
@@ -110,7 +110,7 @@ class AndroidMediaStore {
   ///   `ACTION_VIEW` on the document URI.
   /// - Anything else → opens the system Downloads view via
   ///   `DownloadManager.ACTION_VIEW_DOWNLOADS` so the user lands on
-  ///   `Downloads/Drift/`.
+  ///   `Downloads/Wisp/`.
   ///
   /// Errors are surfaced as a log line — the UI is best-effort and shouldn't
   /// crash the result screen if the device has no Files app.

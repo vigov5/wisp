@@ -1,10 +1,10 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Drift
+Name=Wisp
 Comment=Send files to anyone, anywhere. Like AirDrop, but even more magical.
-Exec=Drift
-Icon=sh.vs.drift
+Exec=Wisp
+Icon=dev.vigov5.wisp
 Terminal=false
 Categories=Utility;FileTransfer;
-Keywords=transfer;file;iroh;drift;
+Keywords=transfer;file;iroh;wisp;

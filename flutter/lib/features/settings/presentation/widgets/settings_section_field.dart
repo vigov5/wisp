@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 
 class SettingsSectionField extends StatelessWidget {
   const SettingsSectionField({
@@ -19,7 +19,7 @@ class SettingsSectionField extends StatelessWidget {
       children: [
         Text(
           label,
-          style: driftSans(
+          style: wispSans(
             fontSize: 13.5,
             fontWeight: FontWeight.w600,
             color: kInk,

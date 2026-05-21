@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
-import '../theme/drift_theme.dart';
+import '../theme/wisp_theme.dart';
 import 'widgets/app_version_text.dart';
 
 class TitleBarShell extends StatelessWidget {
@@ -53,8 +53,8 @@ class _DesktopTitleBar extends StatelessWidget {
             // intentionally omitted because the window is fixed-size
             // (see main.dart: maximumSize == initialSize).
             Text(
-              'Drift',
-              style: driftSans(
+              'Wisp',
+              style: wispSans(
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
                 color: kInk,

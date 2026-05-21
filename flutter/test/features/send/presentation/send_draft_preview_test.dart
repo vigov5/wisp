@@ -20,7 +20,7 @@ import 'package:app/features/send/presentation/send_draft_preview.dart';
 import 'package:app/features/send/presentation/send_transfer_route.dart';
 import 'package:app/platform/send_transfer_source.dart';
 import 'package:app/platform/rust/receiver/fake_source.dart';
-import 'package:app/theme/drift_theme.dart';
+import 'package:app/theme/wisp_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../support/fake_send_selection_picker.dart';
 import '../../../support/settings_test_overrides.dart';

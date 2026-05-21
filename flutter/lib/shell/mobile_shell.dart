@@ -10,7 +10,7 @@ import '../features/receive/presentation/receive_transfer_route_gate.dart';
 import '../features/receive/presentation/widgets/receiver_error_banner.dart';
 import '../features/send/presentation/send_selection_source_sheet.dart';
 import '../app/app_router.dart';
-import '../theme/drift_theme.dart';
+import '../theme/wisp_theme.dart';
 import 'widgets/android_permission_bootstrap.dart';
 import 'widgets/mobile_identity_card.dart';
 import 'widgets/select_files_card.dart';

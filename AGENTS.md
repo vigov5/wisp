@@ -4,8 +4,8 @@ Instructions for Codex and other coding agents working in this repository.
 
 ## Project Summary
 
-- `drift` is a minimal file transfer tool built on `iroh`.
-- The main binaries are `drift` and `drift-server`.
+- `wisp` is a minimal file transfer tool built on `iroh`.
+- The main binaries are `wisp` and `wisp-server`.
 - Keep the implementation lightweight and easy to follow.
 
 ## Repository Layout
@@ -15,8 +15,8 @@ Instructions for Codex and other coding agents working in this repository.
 - `Makefile`: local development and testing helpers
 - `crates/core/`: shared transfer, discovery, rendezvous, LAN, and filesystem-planning logic
 - `crates/app/`: application layer for send/receive flows and receiver tests
-- `crates/cli/`: `drift` CLI binary and supporting library code
-- `crates/server/`: `drift-server` rendezvous binary and supporting library code
+- `crates/cli/`: `wisp` CLI binary and supporting library code
+- `crates/server/`: `wisp-server` rendezvous binary and supporting library code
 - `downloads/`: local output directory used in manual testing.
 
 - `flutter/`: Flutter app and Rust-bridge workspace
@@ -44,7 +44,7 @@ Instructions for Codex and other coding agents working in this repository.
 ## Commands
 
 - Makefile overview: `make help`
-- `make server`: start `drift-server` on `127.0.0.1:8787` for end-to-end pairing tests
+- `make server`: start `wisp-server` on `127.0.0.1:8787` for end-to-end pairing tests
 - `make receive`: start a receiver and write incoming files to `downloads/`
 - `make send-file`: send a single file through the short-code transfer flow
 - `make send-dir`: send a directory and verify recursive transfer behavior
@@ -52,9 +52,9 @@ Instructions for Codex and other coding agents working in this repository.
 - Build: `cargo check`
 - Test: `cargo test`
 - Format: `cargo fmt`
-- Run server directly: `cargo run --bin drift-server -- serve --listen 127.0.0.1:8787`
-- Send file directly: `DRIFT_RENDEZVOUS_URL=http://127.0.0.1:8787 cargo run -- send -c <CODE> sample.txt`
-- Receive file directly: `DRIFT_RENDEZVOUS_URL=http://127.0.0.1:8787 cargo run -- receive <CODE> --out downloads`
+- Run server directly: `cargo run --bin wisp-server -- serve --listen 127.0.0.1:8787`
+- Send file directly: `WISP_RENDEZVOUS_URL=http://127.0.0.1:8787 cargo run -- send -c <CODE> sample.txt`
+- Receive file directly: `WISP_RENDEZVOUS_URL=http://127.0.0.1:8787 cargo run -- receive <CODE> --out downloads`
 - Send on LAN directly: `cargo run -- send --nearby sample.txt`
 
 ## When Making Changes

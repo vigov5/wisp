@@ -88,7 +88,7 @@ TransferResultViewData buildTransferResultViewData(TransferSessionState state) {
       title: 'Receive cancelled',
       message:
           state.errorMessage ??
-          'Drift stopped receiving before all files were saved.',
+          'Wisp stopped receiving before all files were saved.',
       deviceName: deviceName,
       deviceType: deviceType,
       manifestItems: manifestItems,

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:app/theme/drift_theme.dart';
+import 'package:app/theme/wisp_theme.dart';
 import 'package:app/features/transfers/application/connection_path.dart';
 import 'package:app/features/transfers/presentation/widgets/connection_path_badge.dart';
 import 'package:app/features/transfers/presentation/widgets/sending_connection_strip.dart';
@@ -266,7 +266,7 @@ class _RecipientAvatarState extends State<RecipientAvatar>
         Text(
           widget.deviceName,
           textAlign: TextAlign.center,
-          style: driftSans(
+          style: wispSans(
             fontSize: 20,
             fontWeight: FontWeight.w700,
             color: kInk,

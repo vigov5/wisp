@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:app/theme/drift_theme.dart';
+import 'package:app/theme/wisp_theme.dart';
 import '../../application/manifest.dart';
 import 'manifest_tree.dart';
 import 'transfer_presentation_helpers.dart';
@@ -83,7 +83,7 @@ class _ManifestTreeCardState extends State<ManifestTreeCard> {
                         if (!isSingleFile)
                           Text(
                             'Contents',
-                            style: driftSans(
+                            style: wispSans(
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
                               color: kMuted,
@@ -96,7 +96,7 @@ class _ManifestTreeCardState extends State<ManifestTreeCard> {
                               : summary,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: driftSans(
+                          style: wispSans(
                             fontSize: 13,
                             fontWeight: isSingleFile
                                 ? FontWeight.w600
@@ -107,7 +107,7 @@ class _ManifestTreeCardState extends State<ManifestTreeCard> {
                         if (isSingleFile)
                           Text(
                             formatBytes(widget.items.first.sizeBytes),
-                            style: driftSans(
+                            style: wispSans(
                               fontSize: 11,
                               fontWeight: FontWeight.w500,
                               color: kMuted,

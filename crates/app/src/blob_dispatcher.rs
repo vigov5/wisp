@@ -4,7 +4,7 @@
 //! Why this exists: the app keeps **one** iroh `Endpoint` per process so the
 //! receiver service and any in-flight sender share the same `EndpointId` and
 //! relay slot.  That single endpoint runs a single `iroh::protocol::Router`
-//! that multiplexes the two ALPNs we speak — `drift_core::protocol::ALPN`
+//! that multiplexes the two ALPNs we speak — `wisp_core::protocol::ALPN`
 //! (handshake / control) and `iroh_blobs::ALPN` (data).  When a send session
 //! starts it prepares a `BlobsProtocol` and registers it here; the receiver's
 //! router calls into this dispatcher whenever the peer dials back over the
@@ -20,7 +20,7 @@ use std::future::Future;
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
-use drift_core::blobs::{BlobError, ExternalBlobRegistrar};
+use wisp_core::blobs::{BlobError, ExternalBlobRegistrar};
 
 /// Singleton that wires the receiver-service `Router` to the current sender's
 /// `BlobsProtocol`.  At most one sender is active per process today, matching
@@ -45,7 +45,7 @@ impl BlobDispatcher {
 
 /// Sender-side wiring: install the prepared `BlobsProtocol` before writing
 /// the `BlobTicket` to the peer; remove it once the transfer completes (or
-/// fails).  See [`drift_core::blobs::ExternalBlobRegistrar`] for the contract.
+/// fails).  See [`wisp_core::blobs::ExternalBlobRegistrar`] for the contract.
 impl ExternalBlobRegistrar for BlobDispatcher {
     fn register_blob_protocol(
         &self,
@@ -55,14 +55,14 @@ impl ExternalBlobRegistrar for BlobDispatcher {
             let mut guard = self.active.write().await;
             if guard.is_some() {
                 warn!(
-                    target: "drift_app::blob_dispatcher",
+                    target: "wisp_app::blob_dispatcher",
                     "replacing an already-active blob protocol; previous sender's transfer \
                      is being cut off — should not happen with the current one-send-at-a-time UI"
                 );
             }
             *guard = Some(protocol);
             debug!(
-                target: "drift_app::blob_dispatcher",
+                target: "wisp_app::blob_dispatcher",
                 "registered active blob protocol"
             );
             Ok(())
@@ -74,7 +74,7 @@ impl ExternalBlobRegistrar for BlobDispatcher {
             let mut guard = self.active.write().await;
             if guard.take().is_some() {
                 debug!(
-                    target: "drift_app::blob_dispatcher",
+                    target: "wisp_app::blob_dispatcher",
                     "cleared active blob protocol"
                 );
             }
@@ -94,7 +94,7 @@ impl ProtocolHandler for BlobDispatcher {
         match active {
             Some(protocol) => {
                 debug!(
-                    target: "drift_app::blob_dispatcher",
+                    target: "wisp_app::blob_dispatcher",
                     remote = %connection.remote_id(),
                     "dispatching inbound blobs ALPN connection to active sender"
                 );
@@ -102,7 +102,7 @@ impl ProtocolHandler for BlobDispatcher {
             }
             None => {
                 debug!(
-                    target: "drift_app::blob_dispatcher",
+                    target: "wisp_app::blob_dispatcher",
                     remote = %connection.remote_id(),
                     "no active sender; rejecting inbound blobs connection"
                 );

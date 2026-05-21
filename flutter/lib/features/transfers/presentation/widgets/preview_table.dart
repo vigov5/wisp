@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../application/manifest.dart';
 import 'manifest_tree.dart';
 
@@ -29,7 +29,7 @@ class PreviewTable extends StatelessWidget {
       );
     }
 
-    final headerStyle = driftSans(
+    final headerStyle = wispSans(
       fontSize: 11,
       fontWeight: FontWeight.w700,
       color: kInk.withValues(alpha: 0.8),
@@ -77,7 +77,7 @@ class PreviewTable extends StatelessWidget {
                     textAlign: TextAlign.right,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: driftSans(
+                    style: wispSans(
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
                       color: kMuted,

@@ -2,7 +2,7 @@ import 'dart:math' show max, min;
 
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../application/connection_path.dart';
 import 'connection_path_badge.dart';
 
@@ -79,7 +79,7 @@ class _SendingConnectionStripState extends State<SendingConnectionStrip>
   }
 
   Widget _buildStrip(double loopPhase) {
-    final captionStyle = driftSans(
+    final captionStyle = wispSans(
       fontSize: 11,
       fontWeight: FontWeight.w500,
       color: kInk.withValues(alpha: 0.9),

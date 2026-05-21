@@ -5,10 +5,10 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = Drift
+PRODUCT_NAME = Wisp
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.example.drift
+PRODUCT_BUNDLE_IDENTIFIER = dev.vigov5.wisp
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.example. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 vigov5 (Wisp fork). All rights reserved.

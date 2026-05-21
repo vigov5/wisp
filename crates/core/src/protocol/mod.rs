@@ -1,4 +1,4 @@
-pub const ALPN: &[u8] = b"drift/transfer/v1";
+pub const ALPN: &[u8] = b"wisp/transfer/v1";
 
 pub(crate) mod error;
 pub(crate) mod message;

@@ -165,7 +165,7 @@ pub(super) async fn run_receiver_actor(
                     ReceiverCommand::ScanNearby { timeout, reply } => {
                         let exclude = Some(runtime.endpoint_id());
                         let result = tokio::task::spawn_blocking(move || {
-                            drift_core::lan::browse_nearby_receivers(timeout, exclude)
+                            wisp_core::lan::browse_nearby_receivers(timeout, exclude)
                         })
                         .await
                         .map_err(|e| AppError::Internal {
@@ -181,17 +181,17 @@ pub(super) async fn run_receiver_actor(
                                 .into_iter()
                                 .map(|receiver| {
                                     let endpoint_id =
-                                        drift_core::util::decode_ticket(&receiver.ticket)
+                                        wisp_core::util::decode_ticket(&receiver.ticket)
                                             .map(|a| a.id.to_string())
                                             .unwrap_or_default();
                                     NearbyReceiver {
                                         fullname: receiver.fullname,
                                         label: receiver.label,
                                         device_type: match receiver.device_type {
-                                            drift_core::protocol::DeviceType::Phone => {
+                                            wisp_core::protocol::DeviceType::Phone => {
                                                 "phone".to_owned()
                                             }
-                                            drift_core::protocol::DeviceType::Laptop => {
+                                            wisp_core::protocol::DeviceType::Laptop => {
                                                 "laptop".to_owned()
                                             }
                                         },

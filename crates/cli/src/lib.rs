@@ -3,13 +3,6 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, ValueEnum};
-use drift_app::{
-    ConflictPolicy, OfferDecision, ReceiverConfig, ReceiverEvent, ReceiverOfferEvent,
-    ReceiverOfferPhase, ReceiverService, SendConfig, SendDestination, SendDraft, SendEvent,
-    SendPhase, SendRun, SendSessionOutcome, TransferPlan, TransferSnapshot, UserFacingError,
-    from_anyhow_error,
-};
-use drift_core::util::{confirm_accept, human_size, process_display_device_name};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use iroh::SecretKey;
 use rand::random;
@@ -18,6 +11,13 @@ use tokio::time::Duration;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
+use wisp_app::{
+    ConflictPolicy, OfferDecision, ReceiverConfig, ReceiverEvent, ReceiverOfferEvent,
+    ReceiverOfferPhase, ReceiverService, SendConfig, SendDestination, SendDraft, SendEvent,
+    SendPhase, SendRun, SendSessionOutcome, TransferPlan, TransferSnapshot, UserFacingError,
+    from_anyhow_error,
+};
+use wisp_core::util::{confirm_accept, human_size, process_display_device_name};
 
 /// Log line format for stderr (`json` is one JSON object per line).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
@@ -36,11 +36,11 @@ pub struct LoggingOpts {
         value_enum,
         default_value_t = LogFormat::Pretty,
         global = true,
-        env = "DRIFT_LOG_FORMAT"
+        env = "WISP_LOG_FORMAT"
     )]
     pub log_format: LogFormat,
 
-    /// Increase log verbosity for the `drift` target (repeat: `-v` debug, `-vv` trace). Ignored if `RUST_LOG` is set.
+    /// Increase log verbosity for the `wisp` target (repeat: `-v` debug, `-vv` trace). Ignored if `RUST_LOG` is set.
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     pub verbose: u8,
 }
@@ -74,7 +74,7 @@ fn log_env_filter(verbose: u8) -> EnvFilter {
         1 => "debug",
         _ => "trace",
     };
-    EnvFilter::new(format!("warn,drift={level}"))
+    EnvFilter::new(format!("warn,wisp={level}"))
 }
 
 pub async fn send(code: String, files: Vec<PathBuf>) -> Result<()> {
@@ -147,8 +147,8 @@ pub async fn send_nearby(
 
     if receivers.is_empty() {
         bail!(
-            "no Drift receivers found on the LAN. \
-             On the other machine run `drift receive` (same Wi-Fi / LAN), then try again."
+            "no Wisp receivers found on the LAN. \
+             On the other machine run `wisp receive` (same Wi-Fi / LAN), then try again."
         );
     }
 

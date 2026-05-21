@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:animated_tree_view/animated_tree_view.dart';
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../application/manifest.dart';
 import 'transfer_presentation_helpers.dart';
 
@@ -81,7 +81,7 @@ class ManifestTree extends StatelessWidget {
                       data.label,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: driftSans(
+                      style: wispSans(
                         fontSize: isTopLevel && data.isFolder
                             ? 14
                             : (data.isFolder ? 13.5 : 13),
@@ -103,7 +103,7 @@ class ManifestTree extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.right,
-                    style: driftSans(
+                    style: wispSans(
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
                       color: kMuted,

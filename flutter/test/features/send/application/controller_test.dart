@@ -167,7 +167,7 @@ void main() {
       expect(request?.ticket, isNull);
       expect(request?.lanDestinationLabel, isNull);
       expect(request?.paths, ['/tmp/report.pdf']);
-      expect(request?.deviceName, 'Drift');
+      expect(request?.deviceName, 'Wisp');
       expect(request?.serverUrl, isNull);
     },
   );

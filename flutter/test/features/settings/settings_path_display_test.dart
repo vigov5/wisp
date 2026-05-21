@@ -5,16 +5,16 @@ void main() {
   test('formats sandboxed download roots for display', () {
     expect(
       formatSettingsDownloadRootForDisplay(
-        '/Users/samarh/Library/Containers/com.example.app/Data/Downloads/Drift',
+        '/Users/samarh/Library/Containers/com.example.app/Data/Downloads/Wisp',
       ),
-      '/Users/samarh/Downloads/Drift',
+      '/Users/samarh/Downloads/Wisp',
     );
   });
 
   test('leaves normal paths unchanged', () {
     expect(
-      formatSettingsDownloadRootForDisplay('/Users/samarh/Downloads/Drift'),
-      '/Users/samarh/Downloads/Drift',
+      formatSettingsDownloadRootForDisplay('/Users/samarh/Downloads/Wisp'),
+      '/Users/samarh/Downloads/Wisp',
     );
   });
 }

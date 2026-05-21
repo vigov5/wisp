@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../src/rust/api/lan.dart' as rust_lan;
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../../receive/application/service.dart';
 import '../../../receive/application/state.dart';
 import '../../../saved_devices/application/saved_device.dart';
@@ -200,7 +200,7 @@ class _SendDestinationSelectorState
       SendStateIdle() => const SendDestinationState.none(),
     };
 
-    final titleStyle = driftSans(
+    final titleStyle = wispSans(
       fontSize: 17,
       fontWeight: FontWeight.w700,
       color: kInk,
@@ -233,17 +233,17 @@ class _SendDestinationSelectorState
               icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
               label: Text(
                 qrPaired == null ? 'Scan QR' : 'Re-scan',
-                style: driftSans(
+                style: wispSans(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
-                  color: const Color(0xFF7AAFC9),
+                  color: kAccentCyan,
                 ),
               ),
               style: TextButton.styleFrom(
                 padding: EdgeInsets.zero,
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                foregroundColor: const Color(0xFF7AAFC9),
+                foregroundColor: kAccentCyan,
               ),
             ),
           ],
@@ -259,7 +259,7 @@ class _SendDestinationSelectorState
         else
           Text(
             'Scan a receiver\'s QR code to pair offline.',
-            style: driftSans(fontSize: 12.5, color: kMuted, height: 1.4),
+            style: wispSans(fontSize: 12.5, color: kMuted, height: 1.4),
           ),
         const SizedBox(height: 18),
         if (recentDevices.isNotEmpty) ...[
@@ -333,7 +333,7 @@ class _SendDestinationSelectorState
         const SizedBox(height: 6),
         Text(
           'Use the 6 characters shown on the receiver.',
-          style: driftSans(fontSize: 13.5, color: kMuted, height: 1.4),
+          style: wispSans(fontSize: 13.5, color: kMuted, height: 1.4),
         ),
         const SizedBox(height: 16),
         ReceiveCodeField(
@@ -355,7 +355,7 @@ class _SendDestinationSelectorState
     if (!mounted || ticket == null || ticket.isEmpty) return;
 
     // Decode the ticket so the tile can show the receiver's name + type +
-    // pubkey before we even dial.  Failure here means the QR isn't a drift
+    // pubkey before we even dial.  Failure here means the QR isn't a wisp
     // ticket — surface the error and bail.
     final rust_lan.DecodedTicketData decoded;
     try {
@@ -410,7 +410,7 @@ class _ScanAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const color = Color(0xFF7AAFC9);
+    const color = kAccentCyan;
     const style = ButtonStyle(
       padding: WidgetStatePropertyAll(EdgeInsets.zero),
       minimumSize: WidgetStatePropertyAll(Size.zero),
@@ -424,7 +424,7 @@ class _ScanAction extends StatelessWidget {
         icon: const Icon(Icons.stop_rounded, size: 18),
         label: Text(
           'Stop',
-          style: driftSans(
+          style: wispSans(
             fontSize: 13,
             fontWeight: FontWeight.w500,
             color: color,
@@ -450,7 +450,7 @@ class _ScanAction extends StatelessWidget {
       icon: const Icon(Icons.refresh_rounded, size: 18),
       label: Text(
         'Rescan',
-        style: driftSans(
+        style: wispSans(
           fontSize: 13,
           fontWeight: FontWeight.w500,
           color: color,
@@ -504,7 +504,7 @@ class _NearbyStatusCard extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: driftSans(
+                  style: wispSans(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
                     color: kInk,
@@ -513,7 +513,7 @@ class _NearbyStatusCard extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
-                  style: driftSans(
+                  style: wispSans(
                     fontSize: 13,
                     fontWeight: FontWeight.w400,
                     color: kMuted,
@@ -579,12 +579,12 @@ class _RecentDeviceTile extends StatelessWidget {
             Icon(
               _deviceIconForType(device.deviceType),
               size: 22,
-              color: isSelected ? const Color(0xFF7AAFC9) : kMuted,
+              color: isSelected ? kAccentCyan : kMuted,
             ),
             const SizedBox(height: 8),
             Text(
               device.label.isEmpty ? 'Saved device' : device.label,
-              style: driftSans(
+              style: wispSans(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w600,
                 color: kInk,
@@ -610,7 +610,7 @@ class _RecentDeviceTile extends StatelessWidget {
                 ),
                 child: Text(
                   shortPubkey(device.endpointId),
-                  style: driftSans(
+                  style: wispSans(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                     color: HSLColor.fromColor(
@@ -624,7 +624,7 @@ class _RecentDeviceTile extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               _relativeTime(device.lastSeenAt),
-              style: driftSans(
+              style: wispSans(
                 fontSize: 9.5,
                 fontWeight: FontWeight.w400,
                 color: kMuted,
@@ -681,12 +681,12 @@ class _NearbyDeviceTile extends StatelessWidget {
               Icon(
                 icon,
                 size: 20,
-                color: isSelected ? const Color(0xFF7AAFC9) : kMuted,
+                color: isSelected ? kAccentCyan : kMuted,
               ),
               const SizedBox(height: 8),
               Text(
                 receiver.label,
-                style: driftSans(
+                style: wispSans(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w600,
                   color: kInk,
@@ -717,7 +717,7 @@ class _NearbyDeviceTile extends StatelessWidget {
                   ),
                   child: Text(
                     shortPubkey(receiver.endpointId),
-                    style: driftSans(
+                    style: wispSans(
                       fontSize: 9.5,
                       fontWeight: FontWeight.w700,
                       color: HSLColor.fromColor(
@@ -775,7 +775,7 @@ class _QrPairedTile extends StatelessWidget {
             Icon(
               _deviceIconForType(receiver.deviceType),
               size: 24,
-              color: isSelected ? const Color(0xFF7AAFC9) : kMuted,
+              color: isSelected ? kAccentCyan : kMuted,
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -787,7 +787,7 @@ class _QrPairedTile extends StatelessWidget {
                       children: [
                         TextSpan(
                           text: receiver.label,
-                          style: driftSans(
+                          style: wispSans(
                             fontSize: 13.5,
                             fontWeight: FontWeight.w700,
                             color: kInk,
@@ -795,7 +795,7 @@ class _QrPairedTile extends StatelessWidget {
                         ),
                         TextSpan(
                           text: '  ·  Paired offline',
-                          style: driftSans(
+                          style: wispSans(
                             fontSize: 11.5,
                             fontWeight: FontWeight.w400,
                             color: kMuted,
@@ -823,7 +823,7 @@ class _QrPairedTile extends StatelessWidget {
                       ),
                       child: Text(
                         shortPubkey(pubkey),
-                        style: driftSans(
+                        style: wispSans(
                           fontSize: 10.5,
                           fontWeight: FontWeight.w700,
                           color: badgeText,
@@ -839,7 +839,7 @@ class _QrPairedTile extends StatelessWidget {
             const Icon(
               Icons.qr_code_rounded,
               size: 18,
-              color: Color(0xFF7AAFC9),
+              color: kAccentCyan,
             ),
             const SizedBox(width: 4),
             IconButton(

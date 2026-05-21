@@ -15,7 +15,7 @@ void main() {
     final repo = SettingsRepository(
       prefs: prefs,
       randomDeviceName: () => 'Rusty Ridge',
-      defaultDownloadRoot: '/tmp/Drift',
+      defaultDownloadRoot: '/tmp/Wisp',
     );
     final initialSettings = await repo.loadOrCreate();
     final container = ProviderContainer(
@@ -29,7 +29,7 @@ void main() {
     final state = container.read(settingsControllerProvider);
 
     expect(state.settings.deviceName, 'Rusty Ridge');
-    expect(state.settings.downloadRoot, '/tmp/Drift');
+    expect(state.settings.downloadRoot, '/tmp/Wisp');
     expect(state.settings.discoverableByDefault, isTrue);
     expect(state.settings.discoveryServerUrl, defaultRendezvousUrl);
   });
@@ -39,7 +39,7 @@ void main() {
     final repo = SettingsRepository(
       prefs: prefs,
       randomDeviceName: () => 'Rusty Ridge',
-      defaultDownloadRoot: '/tmp/Drift',
+      defaultDownloadRoot: '/tmp/Wisp',
     );
     final initialSettings = await repo.loadOrCreate();
     final container = ProviderContainer(
@@ -76,7 +76,7 @@ void main() {
     final repo = SettingsRepository(
       prefs: prefs,
       randomDeviceName: () => 'Rusty Ridge',
-      defaultDownloadRoot: '/tmp/Drift',
+      defaultDownloadRoot: '/tmp/Wisp',
     );
     final initialSettings = await repo.loadOrCreate();
     final receiverSource = FakeReceiverServiceSource();
@@ -108,7 +108,7 @@ void main() {
     final receiverSource = FakeReceiverServiceSource();
     const initialSettings = AppSettings(
       deviceName: 'Seed',
-      downloadRoot: '/tmp/Drift',
+      downloadRoot: '/tmp/Wisp',
       discoverableByDefault: true,
       discoveryServerUrl: null,
     );
@@ -162,7 +162,7 @@ void main() {
       final repo = SettingsRepository(
         prefs: prefs,
         randomDeviceName: () => 'Rusty Ridge',
-        defaultDownloadRoot: '/tmp/Drift',
+        defaultDownloadRoot: '/tmp/Wisp',
       );
       final initialSettings = await repo.loadOrCreate();
       final receiverSource = _FailingIdentityReceiverSource();
@@ -201,7 +201,7 @@ void main() {
 
 class _DelayedSettingsRepository extends SettingsRepository {
   _DelayedSettingsRepository({required super.prefs})
-    : super(randomDeviceName: () => 'Seed', defaultDownloadRoot: '/tmp/Drift');
+    : super(randomDeviceName: () => 'Seed', defaultDownloadRoot: '/tmp/Wisp');
 
   final List<Completer<void>> _saveCompleters = <Completer<void>>[];
   int saveCallCount = 0;

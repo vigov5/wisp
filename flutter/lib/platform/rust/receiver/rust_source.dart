@@ -64,7 +64,7 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
 
   /// On Android, Rust writes received files here instead of the user-configured
   /// [downloadRoot].  After each transfer completes, files are moved to the
-  /// public Downloads/Drift/ folder via MediaStore.
+  /// public Downloads/Wisp/ folder via MediaStore.
   final String? androidReceiveCacheDir;
 
   /// Optional persistent cache for the most recent successful pairing code.
@@ -75,7 +75,7 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
 
   /// When the user has chosen a save folder via [AndroidMediaStore.pickSaveFolder],
   /// this holds the persisted SAF tree URI.  If null, files are saved to the
-  /// default `Downloads/Drift/` via MediaStore.
+  /// default `Downloads/Wisp/` via MediaStore.
   String? androidSaveUri;
 
   final ReceiverPairingStreamFactory _pairingStreamFactory;
@@ -405,7 +405,7 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
 
   /// Moves all received files from [cacheRoot] to the final destination:
   /// - [androidSaveUri] (user-picked SAF folder) if set, or
-  /// - default `Downloads/Drift/` via MediaStore.
+  /// - default `Downloads/Wisp/` via MediaStore.
   /// Then deletes the temp cache.
   Future<void> _saveFilesToMediaStore(
     rust_receiver.ReceiverTransferEvent event,
@@ -416,7 +416,7 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
     final planFiles = event.plan?.files ?? [];
     debugPrint(
       '[receiver] Android post-transfer: saving ${planFiles.length} file(s) '
-      '${safUri != null ? "to SAF folder" : "to MediaStore Downloads/Drift"}',
+      '${safUri != null ? "to SAF folder" : "to MediaStore Downloads/Wisp"}',
     );
     for (final file in planFiles) {
       final relativePath = file.path.replaceAll('\\', '/');

@@ -306,7 +306,7 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
   void _startKeepalive({required String senderName}) {
     _lastKeepaliveAt = DateTime.now();
     TransferKeepalive.start(
-      title: 'Drift receiving',
+      title: 'Wisp receiving',
       body: senderName.isEmpty ? 'Incoming files' : 'from $senderName',
     ).ignore();
   }
@@ -326,7 +326,7 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
     final body = total > BigInt.zero
         ? '${formatBytes(transferred)} / ${formatBytes(total)}'
         : event.senderName;
-    TransferKeepalive.update(title: 'Drift receiving', body: body).ignore();
+    TransferKeepalive.update(title: 'Wisp receiving', body: body).ignore();
   }
 
   void _stopKeepalive() {

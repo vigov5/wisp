@@ -15,7 +15,7 @@ import '../features/send/application/model.dart';
 import '../features/send/application/send_selection_picker.dart';
 import '../features/send/presentation/send_selection_source_sheet.dart';
 import '../features/send/send_drop_zone.dart';
-import '../theme/drift_theme.dart';
+import '../theme/wisp_theme.dart';
 
 class DesktopShell extends ConsumerWidget {
   const DesktopShell({super.key});

@@ -1,5 +1,5 @@
 [package]
-name = "drift-core"
+name = "wisp-core"
 version.workspace = true
 edition.workspace = true
 

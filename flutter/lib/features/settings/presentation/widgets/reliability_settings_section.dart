@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../platform/android/transfer_keepalive_channel.dart';
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import 'settings_section_field.dart';
 
 /// Android-only settings section that surfaces battery-optimisation status
@@ -77,7 +77,7 @@ class _ReliabilitySettingsSectionState extends State<ReliabilitySettingsSection>
           FilledButton(
             onPressed: _ignoring || _loading ? null : _onDisableTap,
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF4A8E9E),
+              backgroundColor: kAccentCyanStrong,
               foregroundColor: Colors.white,
               minimumSize: const Size(0, 44),
               shape: RoundedRectangleBorder(
@@ -91,7 +91,7 @@ class _ReliabilitySettingsSectionState extends State<ReliabilitySettingsSection>
             'On some devices (Xiaomi, Huawei, Samsung), additional steps are '
             'required to keep transfers running while the screen is locked. '
             'See dontkillmyapp.com for vendor-specific instructions.',
-            style: driftSans(
+            style: wispSans(
               fontSize: 11.5,
               fontWeight: FontWeight.w400,
               color: kMuted,
@@ -123,7 +123,7 @@ class _StatusRow extends StatelessWidget {
           const SizedBox(width: 10),
           Text(
             'Checking battery optimisation status…',
-            style: driftSans(fontSize: 12.5, color: kMuted),
+            style: wispSans(fontSize: 12.5, color: kMuted),
           ),
         ],
       );
@@ -143,7 +143,7 @@ class _StatusRow extends StatelessWidget {
         Expanded(
           child: Text(
             message,
-            style: driftSans(
+            style: wispSans(
               fontSize: 12.5,
               fontWeight: FontWeight.w500,
               color: kInk,

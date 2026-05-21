@@ -1,11 +1,11 @@
 [package]
-name = "drift-app"
+name = "wisp-app"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-drift-core = { path = "../core" }
+wisp-core = { path = "../core" }
 fs2 = "0.4"
 iroh.workspace = true
 iroh-blobs.workspace = true

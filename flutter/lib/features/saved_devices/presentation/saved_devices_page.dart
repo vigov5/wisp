@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 import '../../transfers/application/pubkey_visual.dart';
 import '../application/saved_device.dart';
 import '../application/saved_devices_controller.dart';
@@ -19,7 +19,7 @@ class SavedDevicesPage extends ConsumerWidget {
         elevation: 0,
         title: Text(
           'Saved devices',
-          style: driftSans(
+          style: wispSans(
             fontSize: 17,
             fontWeight: FontWeight.w700,
             color: kInk,
@@ -31,7 +31,7 @@ class SavedDevicesPage extends ConsumerWidget {
               onPressed: () => _confirmClearAll(context, ref),
               child: Text(
                 'Clear all',
-                style: driftSans(
+                style: wispSans(
                   fontSize: 13.5,
                   fontWeight: FontWeight.w600,
                   color: const Color(0xFFB34A4A),
@@ -68,7 +68,7 @@ class SavedDevicesPage extends ConsumerWidget {
           'a successful transfer, so you can pick them again from the '
           '"Recent" list without scanning.',
           textAlign: TextAlign.center,
-          style: driftSans(
+          style: wispSans(
             fontSize: 14,
             fontWeight: FontWeight.w400,
             color: kMuted,
@@ -148,7 +148,7 @@ class _SavedDeviceRow extends StatelessWidget {
                 children: [
                   Text(
                     device.label.isEmpty ? 'Saved device' : device.label,
-                    style: driftSans(
+                    style: wispSans(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
                       color: kInk,
@@ -171,7 +171,7 @@ class _SavedDeviceRow extends StatelessWidget {
                           '${device.transferCount} transfer'
                           '${device.transferCount == 1 ? '' : 's'} · '
                           '${_relativeTime(device.lastSeenAt)}',
-                          style: driftSans(
+                          style: wispSans(
                             fontSize: 11.5,
                             fontWeight: FontWeight.w400,
                             color: kMuted,

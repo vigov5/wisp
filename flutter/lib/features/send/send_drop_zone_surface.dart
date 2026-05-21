@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../theme/drift_theme.dart';
+import '../../theme/wisp_theme.dart';
 
 class SendDropZoneSurface extends StatelessWidget {
   const SendDropZoneSurface({
@@ -69,7 +69,7 @@ class SendDropZoneSurface extends StatelessWidget {
             const SizedBox(height: 14),
             Text(
               'Drop files to send',
-              style: driftSans(
+              style: wispSans(
                 fontSize: 24,
                 fontWeight: FontWeight.w600,
                 color: kInk,
@@ -92,7 +92,7 @@ class SendDropZoneSurface extends StatelessWidget {
                     vertical: 7,
                   ),
                   side: const BorderSide(color: Color(0xFFE7E7E7), width: 0.9),
-                  textStyle: driftSans(
+                  textStyle: wispSans(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                   ),

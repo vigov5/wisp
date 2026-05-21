@@ -1,4 +1,4 @@
-package com.example.drift
+package dev.vigov5.wisp
 
 import android.content.ContentResolver
 import android.content.Context

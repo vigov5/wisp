@@ -4,13 +4,13 @@
 
 [Setup]
 AppId={{DE850239-5B22-480D-B91F-3413B6B98CC4}}
-AppName=Drift
+AppName=Wisp
 AppVersion={#AppVersion}
-AppPublisher=Drift
-DefaultDirName={autopf}\Drift
-DefaultGroupName=Drift
+AppPublisher=vigov5
+DefaultDirName={autopf}\Wisp
+DefaultGroupName=Wisp
 OutputDir=.\
-OutputBaseFilename=drift-windows-setup
+OutputBaseFilename=wisp-windows-setup
 SetupIconFile=runner\resources\app_icon.ico
 Compression=lzma
 SolidCompression=yes
@@ -28,8 +28,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Drift"; Filename: "{app}\Drift.exe"
-Name: "{commondesktop}\Drift"; Filename: "{app}\Drift.exe"; Tasks: desktopicon
+Name: "{group}\Wisp"; Filename: "{app}\Wisp.exe"
+Name: "{commondesktop}\Wisp"; Filename: "{app}\Wisp.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Drift.exe"; Description: "{cm:LaunchProgram,Drift}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Wisp.exe"; Description: "{cm:LaunchProgram,Wisp}"; Flags: nowait postinstall skipifsilent

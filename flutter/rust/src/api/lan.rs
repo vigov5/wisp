@@ -1,7 +1,7 @@
 //! mDNS LAN discovery for Flutter send UI.
 
 use super::RUNTIME;
-use drift_app::NearbyReceiver;
+use wisp_app::NearbyReceiver;
 
 #[derive(Debug, Clone)]
 pub struct NearbyReceiverInfo {
@@ -43,7 +43,7 @@ pub struct DecodedTicketData {
 pub fn decode_ticket_info(
     ticket: String,
 ) -> Result<DecodedTicketData, crate::api::error::UserFacingErrorData> {
-    drift_core::util::decode_ticket_info(&ticket)
+    wisp_core::util::decode_ticket_info(&ticket)
         .map(|info| DecodedTicketData {
             endpoint_id: info.endpoint_addr.id.to_string(),
             device_name: info.device_name,

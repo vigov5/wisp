@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 import '../../transfers/application/connection_path.dart';
 import '../../transfers/presentation/widgets/sending_connection_strip.dart';
 import '../../transfers/presentation/widgets/transfer_presentation_helpers.dart';

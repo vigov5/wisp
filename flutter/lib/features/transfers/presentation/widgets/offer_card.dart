@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../application/state.dart';
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import 'package:app/features/send/presentation/widgets/recipient_avatar.dart';
 import 'sending_connection_strip.dart';
 import 'transfer_flow_layout.dart';
@@ -33,14 +33,14 @@ class OfferCard extends StatelessWidget {
     return SizedBox.expand(
       child: TransferFlowLayout(
         statusLabel: 'Incoming',
-        statusColor: const Color(0xFF4B98AA),
+        statusColor: kAccentCyanStrong,
         subtitle: buildSubtitleText(subtitle),
         explainer: Text(
           willResume
-              ? 'Resuming previous transfer. Drift will skip files you already have and download the rest. Accept only if you trust the sender.'
+              ? 'Resuming previous transfer. Wisp will skip files you already have and download the rest. Accept only if you trust the sender.'
               : 'Review the files and accept only if you trust the sender.',
           textAlign: TextAlign.center,
-          style: driftSans(
+          style: wispSans(
             fontSize: 13,
             fontWeight: FontWeight.w600,
             color: kInk.withValues(alpha: 0.7),
@@ -82,7 +82,7 @@ class OfferCard extends StatelessWidget {
                   // folder — the Rust side reports the cache root which
                   // always looks like "Downloads" on Android.
                   'Save',
-                  style: driftSans(fontWeight: FontWeight.w700, fontSize: 15),
+                  style: wispSans(fontWeight: FontWeight.w700, fontSize: 15),
                 ),
               ),
             ),

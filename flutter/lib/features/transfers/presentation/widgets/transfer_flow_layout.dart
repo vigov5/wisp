@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 
 class TransferFlowLayout extends StatelessWidget {
   const TransferFlowLayout({
@@ -60,7 +60,7 @@ class TransferFlowLayout extends StatelessWidget {
                       const SizedBox(width: 6),
                       Text(
                         statusLabel.toUpperCase(),
-                        style: driftSans(
+                        style: wispSans(
                           fontSize: 9.5,
                           fontWeight: FontWeight.w800,
                           color: statusColor,

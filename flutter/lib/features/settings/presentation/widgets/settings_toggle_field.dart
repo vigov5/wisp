@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 
 class SettingsToggleField extends StatelessWidget {
   const SettingsToggleField({
@@ -27,7 +27,7 @@ class SettingsToggleField extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: driftSans(
+                style: wispSans(
                   fontSize: 13.5,
                   fontWeight: FontWeight.w600,
                   color: kInk,
@@ -36,7 +36,7 @@ class SettingsToggleField extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 subtitle,
-                style: driftSans(
+                style: wispSans(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w400,
                   color: kMuted,

@@ -23,7 +23,7 @@ void main() {
     final repo = SettingsRepository(
       prefs: prefs,
       randomDeviceName: () => 'Rusty Ridge',
-      defaultDownloadRoot: '/tmp/Drift',
+      defaultDownloadRoot: '/tmp/Wisp',
     );
     final initialSettings = await repo.loadOrCreate();
 
@@ -60,7 +60,7 @@ void main() {
     final repo = SettingsRepository(
       prefs: prefs,
       randomDeviceName: () => 'Rusty Ridge',
-      defaultDownloadRoot: '/tmp/Drift',
+      defaultDownloadRoot: '/tmp/Wisp',
     );
     final initialSettings = await repo.loadOrCreate();
 
@@ -102,11 +102,11 @@ void main() {
     final repo = SettingsRepository(
       prefs: prefs,
       randomDeviceName: () => 'Rusty Ridge',
-      defaultDownloadRoot: '/tmp/Drift',
+      defaultDownloadRoot: '/tmp/Wisp',
     );
     final initialSettings = await repo.loadOrCreate();
     final internalDownloadRoot =
-        '/Users/samarh/Library/Containers/com.example.app/Data/Downloads/Drift';
+        '/Users/samarh/Library/Containers/com.example.app/Data/Downloads/Wisp';
     final customSettings = initialSettings.copyWith(
       downloadRoot: internalDownloadRoot,
     );
@@ -127,6 +127,6 @@ void main() {
     );
 
     expect(downloadField.readOnly, isTrue);
-    expect(downloadField.controller?.text, '/Users/samarh/Downloads/Drift');
+    expect(downloadField.controller?.text, '/Users/samarh/Downloads/Wisp');
   });
 }

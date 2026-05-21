@@ -1,16 +1,16 @@
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use drift_app::{
+use tokio::sync::Mutex as AsyncMutex;
+use tokio::task::JoinHandle;
+use wisp_app::{
     identity as app_identity, ConflictPolicy, ConnectionPath as AppConnectionPath, OfferDecision,
     PairingCodeState, QrPairingInfo as AppQrPairingInfo, ReceiverConfig,
     ReceiverEvent as AppReceiverEvent, ReceiverOfferEvent as AppReceiverOfferEvent,
     ReceiverOfferFile as AppReceiverOfferFile, ReceiverOfferPhase as AppReceiverOfferPhase,
     ReceiverRegistration as AppReceiverRegistration, ReceiverService,
 };
-use drift_core::transfer::{TransferPhase, TransferPlan, TransferPlanFile, TransferSnapshot};
-use tokio::sync::Mutex as AsyncMutex;
-use tokio::task::JoinHandle;
+use wisp_core::transfer::{TransferPhase, TransferPlan, TransferPlanFile, TransferSnapshot};
 
 use super::transfer::{
     TransferPhaseData, TransferPlanData, TransferPlanFileData, TransferSnapshotData,

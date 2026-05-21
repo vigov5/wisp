@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../domain/check_result.dart';
 
 class CheckRow extends StatefulWidget {
@@ -40,7 +40,7 @@ class _CheckRowState extends State<CheckRow> {
                 Expanded(
                   child: Text(
                     r.label,
-                    style: driftSans(
+                    style: wispSans(
                       fontSize: 13.5,
                       fontWeight: FontWeight.w500,
                       color: r.status == CheckStatus.skipped ? kMuted : kInk,
@@ -65,7 +65,7 @@ class _CheckRowState extends State<CheckRow> {
                 padding: const EdgeInsets.only(left: 28, top: 2, right: 4),
                 child: Text(
                   r.detail,
-                  style: driftSans(
+                  style: wispSans(
                     fontSize: 12,
                     fontWeight: FontWeight.w400,
                     color: kMuted,
@@ -92,7 +92,7 @@ class _CheckRowState extends State<CheckRow> {
           if (r.hint != null)
             Text(
               r.hint!,
-              style: driftSans(
+              style: wispSans(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w400,
                 color: kInk,

@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 import '../application/diagnostics_controller.dart';
 import '../domain/check_result.dart';
 import 'widgets/group_section.dart';
@@ -65,7 +65,7 @@ class _ConnectionTestPageState extends ConsumerState<ConnectionTestPage> {
         elevation: 0,
         title: Text(
           'Connection Test',
-          style: driftSans(
+          style: wispSans(
             fontSize: 17,
             fontWeight: FontWeight.w700,
             color: kInk,

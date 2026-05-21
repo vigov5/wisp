@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 
 /// Stable HSL color derived from an iroh EndpointId / pubkey. Same id always
 /// yields the same color across the app, so users can visually disambiguate
@@ -60,7 +60,7 @@ class PubkeyBadge extends StatelessWidget {
           headChars: spec.headChars,
           tailChars: spec.tailChars,
         ),
-        style: driftSans(
+        style: wispSans(
           fontSize: spec.fontSize,
           fontWeight: FontWeight.w700,
           color: textColor,

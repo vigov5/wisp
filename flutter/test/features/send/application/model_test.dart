@@ -6,15 +6,15 @@ import 'package:app/features/send/application/model.dart';
 
 void main() {
   test('SendPickedFile constructors preserve path, name, and kind', () async {
-    final file = File('${Directory.systemTemp.path}/drift-send-file.txt');
+    final file = File('${Directory.systemTemp.path}/wisp-send-file.txt');
     await file.writeAsString('hello');
-    final dir = await Directory.systemTemp.createTemp('drift-send-dir');
+    final dir = await Directory.systemTemp.createTemp('wisp-send-dir');
 
     final pickedFile = SendPickedFile.fromPath(file.path);
     final pickedDir = SendPickedFile.directory(dir.path);
 
     expect(pickedFile.path, file.path);
-    expect(pickedFile.name, 'drift-send-file.txt');
+    expect(pickedFile.name, 'wisp-send-file.txt');
     expect(pickedFile.kind, SendPickedFileKind.file);
     expect(pickedFile.sizeBytes, isNull);
     expect(pickedDir.path, dir.path);

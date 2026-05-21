@@ -55,7 +55,7 @@ class SendTransferEvent {
   final String? remoteEndpointId;
 
   /// Re-serialized ticket of the resolved peer address (see
-  /// `drift_app::types::SendEvent::remote_ticket`).  Surfaced to Dart so
+  /// `wisp_app::types::SendEvent::remote_ticket`).  Surfaced to Dart so
   /// the saved-devices repo can persist a `lastTicket` for code-based
   /// sends — otherwise Recent tile shows "no cached connection info".
   final String? remoteTicket;

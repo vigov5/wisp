@@ -8,10 +8,14 @@ const Color kInk = Color(0xFF141414);
 const Color kMuted = Color(0xFF8A8A8A);
 const Color kSubtle = Color(0xFFBBBBBB);
 const Color kCodeBg = Color(0xFF191919);
-const Color kAccentCyan = Color(0xFF79B8C6);
-const Color kAccentCyanStrong = Color(0xFF5FA7B7);
-const Color kAccentCyanHover = Color(0x1F79B8C6);
-const Color kAccentCyanPressed = Color(0x3379B8C6);
+// Wisp accent palette — derived from the launcher icon's cyan
+// (#06B6D4, Tailwind cyan-500). `Strong` is cyan-600 for primary buttons
+// where the icon shade would feel a touch loud; `Light` is cyan-200 for
+// soft surfaces. Hover/Pressed are alpha-overlaid versions of the base.
+const Color kAccentCyan = Color(0xFF06B6D4);
+const Color kAccentCyanStrong = Color(0xFF0891B2);
+const Color kAccentCyanHover = Color(0x1F06B6D4);
+const Color kAccentCyanPressed = Color(0x3306B6D4);
 const Color kAccentWarm = Color(0xFFF2E7BA);
 const Color kAccentWarmSurface = Color(0x14F2E7BA);
 const Color kAccentDirect = Color(0xFF4DA372);
@@ -19,10 +23,10 @@ const Color kAccentRelay = Color(0xFFC78F2A);
 
 const Color kPrimary = kAccentCyanStrong;
 const Color kPrimaryDark = kAccentCyanStrong;
-const Color kPrimaryLight = Color(0xFFA9D0D8);
+const Color kPrimaryLight = Color(0xFFA5F3FC);
 const Color kSurface2 = Color(0xFFFAFBFB);
 
-TextStyle driftSans({
+TextStyle wispSans({
   required double fontSize,
   FontWeight fontWeight = FontWeight.w400,
   Color? color,
@@ -38,7 +42,7 @@ TextStyle driftSans({
   );
 }
 
-TextStyle driftMono({
+TextStyle wispMono({
   required double fontSize,
   FontWeight fontWeight = FontWeight.w600,
   Color? color,
@@ -54,7 +58,7 @@ TextStyle driftMono({
   );
 }
 
-ThemeData buildDriftTheme() {
+ThemeData buildWispTheme() {
   final colorScheme =
       ColorScheme.fromSeed(
         seedColor: kAccentCyan,
@@ -68,49 +72,49 @@ ThemeData buildDriftTheme() {
       );
 
   final textTheme = TextTheme(
-    headlineLarge: driftSans(
+    headlineLarge: wispSans(
       fontSize: 30,
       fontWeight: FontWeight.w700,
       color: kInk,
       letterSpacing: -0.8,
       height: 1.15,
     ),
-    headlineMedium: driftSans(
+    headlineMedium: wispSans(
       fontSize: 22,
       fontWeight: FontWeight.w700,
       color: kInk,
       letterSpacing: -0.5,
       height: 1.2,
     ),
-    titleLarge: driftSans(
+    titleLarge: wispSans(
       fontSize: 17,
       fontWeight: FontWeight.w600,
       color: kInk,
       letterSpacing: -0.2,
     ),
-    titleMedium: driftSans(
+    titleMedium: wispSans(
       fontSize: 14,
       fontWeight: FontWeight.w600,
       color: kInk,
     ),
-    bodyLarge: driftSans(
+    bodyLarge: wispSans(
       fontSize: 14,
       fontWeight: FontWeight.w400,
       color: kInk,
       height: 1.5,
     ),
-    bodyMedium: driftSans(
+    bodyMedium: wispSans(
       fontSize: 13,
       fontWeight: FontWeight.w400,
       color: kMuted,
       height: 1.5,
     ),
-    labelLarge: driftSans(
+    labelLarge: wispSans(
       fontSize: 13,
       fontWeight: FontWeight.w500,
       color: kInk,
     ),
-    labelMedium: driftSans(
+    labelMedium: wispSans(
       fontSize: 11.5,
       fontWeight: FontWeight.w500,
       color: kMuted,
@@ -139,7 +143,7 @@ ThemeData buildDriftTheme() {
       fillColor: kSurface,
       hoverColor: kSurface,
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      hintStyle: driftSans(color: kSubtle, fontSize: 14),
+      hintStyle: wispSans(color: kSubtle, fontSize: 14),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
         borderSide: const BorderSide(color: kBorder),
@@ -168,7 +172,7 @@ ThemeData buildDriftTheme() {
         minimumSize: const Size(80, 38),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        textStyle: driftSans(fontSize: 13.5, fontWeight: FontWeight.w600),
+        textStyle: wispSans(fontSize: 13.5, fontWeight: FontWeight.w600),
         elevation: 0,
         shadowColor: Colors.transparent,
       ),
@@ -180,7 +184,7 @@ ThemeData buildDriftTheme() {
         minimumSize: const Size(80, 38),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        textStyle: driftSans(fontSize: 13.5, fontWeight: FontWeight.w600),
+        textStyle: wispSans(fontSize: 13.5, fontWeight: FontWeight.w600),
       ),
     ),
     textButtonTheme: TextButtonThemeData(
@@ -188,7 +192,7 @@ ThemeData buildDriftTheme() {
         foregroundColor: kMuted,
         minimumSize: const Size(0, 36),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        textStyle: driftSans(fontSize: 13, fontWeight: FontWeight.w500),
+        textStyle: wispSans(fontSize: 13, fontWeight: FontWeight.w500),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     ),

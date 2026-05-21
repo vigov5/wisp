@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "Drift" "\0"
-            VALUE "FileDescription", "Drift" "\0"
+            VALUE "CompanyName", "vigov5" "\0"
+            VALUE "FileDescription", "Wisp" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "Drift" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 Drift. All rights reserved." "\0"
-            VALUE "OriginalFilename", "Drift.exe" "\0"
-            VALUE "ProductName", "Drift" "\0"
+            VALUE "InternalName", "Wisp" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 vigov5 (Wisp fork). All rights reserved." "\0"
+            VALUE "OriginalFilename", "Wisp.exe" "\0"
+            VALUE "ProductName", "Wisp" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

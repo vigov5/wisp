@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
-use drift_app::{
+use futures_lite::StreamExt;
+use wisp_app::{
     send::SendCancelHandle, AppError, ConnectionPath as AppConnectionPath, SendConfig,
     SendDestination, SendDraft, SendEvent as AppSendEvent, SendPhase as AppSendPhase, SendSession,
     SendSessionOutcome,
 };
-use drift_core::transfer::{TransferPhase, TransferPlan, TransferPlanFile, TransferSnapshot};
-use futures_lite::StreamExt;
+use wisp_core::transfer::{TransferPhase, TransferPlan, TransferPlanFile, TransferSnapshot};
 
 use super::transfer::{
     TransferPhaseData, TransferPlanData, TransferPlanFileData, TransferSnapshotData,
@@ -17,7 +17,7 @@ use crate::api::error::internal_user_facing_error;
 use crate::api::error::map_optional_user_facing_error;
 use crate::frb_generated::StreamSink;
 
-const DEFAULT_RENDEZVOUS_URL: &str = "https://drift.samarthv.com";
+const DEFAULT_RENDEZVOUS_URL: &str = "https://rendezvous.wisp.mooo.com";
 static ACTIVE_SEND_CANCEL: LazyLock<Mutex<Option<SendCancelHandle>>> =
     LazyLock::new(|| Mutex::new(None));
 
@@ -64,7 +64,7 @@ pub struct SendTransferEvent {
     pub remote_device_type: Option<String>,
     pub remote_endpoint_id: Option<String>,
     /// Re-serialized ticket of the resolved peer address (see
-    /// `drift_app::types::SendEvent::remote_ticket`).  Surfaced to Dart so
+    /// `wisp_app::types::SendEvent::remote_ticket`).  Surfaced to Dart so
     /// the saved-devices repo can persist a `lastTicket` for code-based
     /// sends — otherwise Recent tile shows "no cached connection info".
     pub remote_ticket: Option<String>,
@@ -392,8 +392,8 @@ fn map_phase(phase: TransferPhase) -> TransferPhaseData {
 
 #[cfg(test)]
 mod tests {
-    use drift_app::AppError;
-    use drift_app::{ConnectionPath, ConnectionPathKind, SendEvent as AppSendEvent, SendPhase};
+    use wisp_app::AppError;
+    use wisp_app::{ConnectionPath, ConnectionPathKind, SendEvent as AppSendEvent, SendPhase};
 
     use super::{
         map_event, terminal_event_for_app_error, terminal_internal_failure_event, SendTransferPhase,

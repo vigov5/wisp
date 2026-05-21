@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use drift_app::{
+use wisp_app::{
     SelectionItem as AppSelectionItem, SelectionPreview as AppSelectionPreview, SendConfig,
     SendDraft,
 };

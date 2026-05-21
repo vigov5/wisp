@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use crate::error::UserFacingError;
 
-pub use drift_core::fs_plan::ConflictPolicy;
-pub use drift_core::transfer::{TransferPlan, TransferSnapshot};
-pub use drift_core::util::{ConnectionPath, ConnectionPathKind};
 use iroh::SecretKey;
+pub use wisp_core::fs_plan::ConflictPolicy;
+pub use wisp_core::transfer::{TransferPlan, TransferSnapshot};
+pub use wisp_core::util::{ConnectionPath, ConnectionPathKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendPhase {

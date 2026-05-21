@@ -63,7 +63,7 @@ Future<void> openSavedFolder(String path) async {
   if (Platform.isAndroid) {
     // [trimmed] is whatever the user picked: either a SAF tree URI
     // (`content://…/tree/…`) or — when no folder was chosen — the legacy
-    // "Downloads/Drift" path string.  The native side decides which intent
+    // "Downloads/Wisp" path string.  The native side decides which intent
     // to launch (ACTION_VIEW on the tree doc vs. DownloadManager.VIEW).
     await AndroidMediaStore.openSavedFolder(trimmed);
     return;

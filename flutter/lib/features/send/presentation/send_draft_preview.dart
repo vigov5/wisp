@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 import '../../../app/app_router.dart';
 import '../application/controller.dart';
 import '../../transfers/presentation/widgets/transfer_presentation_helpers.dart';
@@ -195,7 +195,7 @@ class SendDraftPreview extends ConsumerWidget {
                       children: [
                         Text(
                           'Selected files',
-                          style: driftSans(
+                          style: wispSans(
                             fontSize: 17,
                             fontWeight: FontWeight.w700,
                             color: kInk,
@@ -214,7 +214,7 @@ class SendDraftPreview extends ConsumerWidget {
                           ),
                           child: Text(
                             summary,
-                            style: driftSans(
+                            style: wispSans(
                               fontSize: 11.5,
                               fontWeight: FontWeight.w600,
                               color: kMuted,
@@ -368,7 +368,7 @@ class _SendDraftIdleRecovery extends StatelessWidget {
                 Text(
                   'No files selected',
                   textAlign: TextAlign.center,
-                  style: driftSans(
+                  style: wispSans(
                     fontSize: 19,
                     fontWeight: FontWeight.w700,
                     color: kInk,
@@ -378,7 +378,7 @@ class _SendDraftIdleRecovery extends StatelessWidget {
                 Text(
                   'Start from home to pick files or folders, then try sending again.',
                   textAlign: TextAlign.center,
-                  style: driftSans(fontSize: 13.5, color: kMuted, height: 1.35),
+                  style: wispSans(fontSize: 13.5, color: kMuted, height: 1.35),
                 ),
                 const SizedBox(height: 20),
                 FilledButton(
@@ -425,7 +425,7 @@ class _SendResultCard extends StatelessWidget {
         children: [
           Text(
             result.title,
-            style: driftSans(
+            style: wispSans(
               fontSize: 16,
               fontWeight: FontWeight.w700,
               color: kInk,
@@ -434,7 +434,7 @@ class _SendResultCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             result.message,
-            style: driftSans(fontSize: 13.5, color: kMuted, height: 1.4),
+            style: wispSans(fontSize: 13.5, color: kMuted, height: 1.4),
           ),
         ],
       ),

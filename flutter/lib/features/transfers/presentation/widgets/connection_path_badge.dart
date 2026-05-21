@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../application/connection_path.dart';
 
 /// Compact pill showing whether the active iroh transfer is "P2P direct" or
@@ -52,7 +52,7 @@ class ConnectionPathBadge extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: driftSans(
+              style: wispSans(
                 fontSize: dense ? 11 : 12,
                 fontWeight: FontWeight.w600,
                 color: kInk.withValues(alpha: 0.92),

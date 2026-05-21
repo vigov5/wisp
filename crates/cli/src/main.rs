@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use drift::{LoggingOpts, init_tracing, receive, send_with_server};
+use wisp::{LoggingOpts, init_tracing, receive, send_with_server};
 
 #[derive(Parser, Debug)]
-#[command(name = "drift", version, about = "Short-code file transfer over iroh")]
+#[command(name = "wisp", version, about = "Short-code file transfer over iroh")]
 struct Cli {
     #[command(flatten)]
     logging: LoggingOpts,
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
             files,
             server,
         } => match (nearby, code.as_ref()) {
-            (true, None) => drift::send_nearby(files, nearby_timeout_secs, server).await,
+            (true, None) => wisp::send_nearby(files, nearby_timeout_secs, server).await,
             (false, Some(c)) => send_with_server(c.clone(), files, server).await,
             (true, Some(_)) => {
                 anyhow::bail!("pass either CODE or --nearby, not both");

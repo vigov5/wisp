@@ -27,7 +27,7 @@ void main() {
     final seenServerUrls = <String?>[];
     final source = RustReceiverServiceSource(
       deviceName: 'Old Device',
-      downloadRoot: '/tmp/Drift',
+      downloadRoot: '/tmp/Wisp',
       pairingStreamFactory:
           ({
             serverUrl,
@@ -70,7 +70,7 @@ void main() {
 
       final source = RustReceiverServiceSource(
         deviceName: 'Old Device',
-        downloadRoot: '/tmp/Drift',
+        downloadRoot: '/tmp/Wisp',
         serverUrl: 'http://127.0.0.1:8787',
         pairingStreamFactory:
             ({
@@ -126,7 +126,7 @@ void main() {
 
       await source.updateIdentity(
         deviceName: 'New Device',
-        downloadRoot: '/Users/maya/Downloads/Drift',
+        downloadRoot: '/Users/maya/Downloads/Wisp',
         serverUrl: 'http://127.0.0.1:8787',
       );
 
@@ -153,7 +153,7 @@ void main() {
 
       final source = RustReceiverServiceSource(
         deviceName: 'Old Device',
-        downloadRoot: '/tmp/Drift',
+        downloadRoot: '/tmp/Wisp',
         serverUrl: 'http://127.0.0.1:8787',
         pairingStreamFactory:
             ({
@@ -222,7 +222,7 @@ void main() {
 
       final source = RustReceiverServiceSource(
         deviceName: 'Old Device',
-        downloadRoot: '/tmp/Drift',
+        downloadRoot: '/tmp/Wisp',
         serverUrl: 'http://127.0.0.1:8787',
         pairingStreamFactory:
             ({
@@ -274,7 +274,7 @@ void main() {
 
       await source.updateIdentity(
         deviceName: 'New Device',
-        downloadRoot: '/Users/maya/Downloads/Drift',
+        downloadRoot: '/Users/maya/Downloads/Wisp',
         serverUrl: 'http://127.0.0.1:8787',
       );
       await Future<void>.delayed(Duration.zero);

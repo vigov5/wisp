@@ -208,7 +208,7 @@ struct SenderSession {
 impl SenderSession {
     #[instrument(skip_all, fields(session_id = %self.session_id, peer = %self.request.peer_endpoint_id))]
     async fn run(self, mut cancel_rx: watch::Receiver<bool>) -> Result<TransferOutcome> {
-        let scratch = ScratchDir::new("drift-send", &self.session_id).await?;
+        let scratch = ScratchDir::new("wisp-send", &self.session_id).await?;
         let prepared = PreparedStore::prepare(&scratch.path, self.request.files.clone()).await?;
         let prepared_plan = build_prepared_plan(&self.session_id, &prepared)?;
         let manifest = prepared.manifest();

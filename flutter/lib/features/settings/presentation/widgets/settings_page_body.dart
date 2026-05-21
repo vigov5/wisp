@@ -8,7 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/app_router.dart';
 import '../../../../platform/android_media_store.dart';
 import '../../../../src/rust/api/simple.dart' as rust_simple;
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../../../platform/rust/rendezvous_defaults.dart';
 import '../../../transfers/application/pubkey_visual.dart';
 import '../../application/controller.dart';
@@ -175,10 +175,12 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
 
   /// Returns a user-friendly display string for [root].
   /// On Android, `content://` SAF URIs are shown as just the path portion.
-  /// On Android with no SAF folder chosen, surfaces the actual app-private
-  /// path (stripped of the `/storage/emulated/0/` prefix) so the user can
-  /// see where files land — the previous "Download/Drift (default)" label
-  /// implied a Files-app-visible folder, which the app-private path is not.
+  /// On Android with no SAF folder chosen, files actually land in the
+  /// public `Download/Wisp/` folder via MediaStore (not the app-private
+  /// path the settings happen to store internally), so show that — the
+  /// previous app-private path was misleading because Rust writes to a
+  /// temp cache and then `_saveFilesToMediaStore` redirects everything to
+  /// `Download/Wisp/` anyway.
   String _downloadRootDisplayText(String root) {
     if (Platform.isAndroid) {
       if (AndroidMediaStore.isSafUri(root)) {
@@ -187,7 +189,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
           final lastSegment = Uri.decodeComponent(
             uri.pathSegments.lastOrNull ?? '',
           );
-          // Document IDs look like "primary:Download/Drift" — show path part.
+          // Document IDs look like "primary:Download/Wisp" — show path part.
           final colonIdx = lastSegment.indexOf(':');
           if (colonIdx >= 0 && colonIdx < lastSegment.length - 1) {
             return lastSegment.substring(colonIdx + 1);
@@ -196,12 +198,9 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
         }
         return 'Selected folder';
       }
-      // No SAF folder chosen — show the real app-private path.
-      const sharedPrefix = '/storage/emulated/0/';
-      if (root.startsWith(sharedPrefix)) {
-        return root.substring(sharedPrefix.length);
-      }
-      return root.isEmpty ? 'Download/Drift' : root;
+      // No SAF folder chosen — the actual destination is the public
+      // Download/Wisp folder via MediaStore.
+      return 'Download/Wisp';
     }
     return formatSettingsDownloadRootForDisplay(root);
   }
@@ -212,8 +211,8 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
   String? _androidDownloadRootHint() {
     if (!Platform.isAndroid) return null;
     if (AndroidMediaStore.isSafUri(_downloadRootValue)) return null;
-    return 'App-private storage, created on the first received file. '
-        'Tap Choose to use a SAF folder visible in Files instead.';
+    return 'Received files appear in your device Download folder under '
+        'Wisp/. Tap Choose to save into a different folder instead.';
   }
 
   Future<void> _pickDownloadRoot() async {
@@ -275,7 +274,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                     const SizedBox(width: 4),
                     Text(
                       'Settings',
-                      style: driftSans(
+                      style: wispSans(
                         fontSize: 22,
                         fontWeight: FontWeight.w700,
                         color: kInk,
@@ -321,7 +320,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                                 const SizedBox(height: 6),
                                 Text(
                                   _androidDownloadRootHint()!,
-                                  style: driftSans(
+                                  style: wispSans(
                                     fontSize: 11.5,
                                     fontWeight: FontWeight.w400,
                                     color: kMuted,
@@ -341,38 +340,6 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                           onChanged: (value) {
                             setState(() => _discoverable = value);
                           },
-                        ),
-                        const SizedBox(height: 28),
-                        const Divider(color: kBorder, height: 1),
-                        const SizedBox(height: 18),
-                        Text(
-                          'Advanced',
-                          style: driftSans(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            color: kInk,
-                            letterSpacing: -0.35,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Only needed for self-hosted setups.',
-                          style: driftSans(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w400,
-                            color: kMuted,
-                            height: 1.45,
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        SettingsSectionField(
-                          label: 'Discovery Server',
-                          child: TextField(
-                            controller: _serverUrlController,
-                            decoration: const InputDecoration(
-                              hintText: defaultRendezvousUrl,
-                            ),
-                          ),
                         ),
                         const SizedBox(height: 18),
                         SettingsSectionField(
@@ -395,7 +362,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                                   Expanded(
                                     child: Text(
                                       'Self-diagnose pairing, LAN, and permissions',
-                                      style: driftSans(
+                                      style: wispSans(
                                         fontSize: 13,
                                         color: kInk,
                                       ),
@@ -433,7 +400,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                                   Expanded(
                                     child: Text(
                                       'Manage devices used for fast resends',
-                                      style: driftSans(
+                                      style: wispSans(
                                         fontSize: 13,
                                         color: kInk,
                                       ),
@@ -448,6 +415,38 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                             ),
                           ),
                         ),
+                        const SizedBox(height: 28),
+                        const Divider(color: kBorder, height: 1),
+                        const SizedBox(height: 18),
+                        Text(
+                          'Advanced',
+                          style: wispSans(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: kInk,
+                            letterSpacing: -0.35,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Only needed for self-hosted setups.',
+                          style: wispSans(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w400,
+                            color: kMuted,
+                            height: 1.45,
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        SettingsSectionField(
+                          label: 'Discovery Server',
+                          child: TextField(
+                            controller: _serverUrlController,
+                            decoration: const InputDecoration(
+                              hintText: defaultRendezvousUrl,
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -458,7 +457,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                     Expanded(
                       child: Text(
                         'Changes apply after you save.',
-                        style: driftSans(
+                        style: wispSans(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w400,
                           color: kMuted,
@@ -469,7 +468,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                     FilledButton(
                       onPressed: _isDirty && !saving ? _saveSettings : null,
                       style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF4A8E9E),
+                        backgroundColor: kAccentCyanStrong,
                         foregroundColor: Colors.white,
                         minimumSize: const Size(0, 48),
                         shape: RoundedRectangleBorder(
@@ -505,7 +504,7 @@ class _IdentityBadgeRow extends StatelessWidget {
       children: [
         Text(
           'Public key',
-          style: driftSans(
+          style: wispSans(
             fontSize: 13.5,
             fontWeight: FontWeight.w600,
             color: kInk,
@@ -532,7 +531,7 @@ class _IdentityBadgeRow extends StatelessWidget {
                 ),
                 child: Text(
                   shortPubkey(endpointId, headChars: 8, tailChars: 8),
-                  style: driftSans(
+                  style: wispSans(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w700,
                     color: textColor,

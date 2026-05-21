@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 
 /// Android-only foreground-service controller. No-op on every other platform.
 class TransferKeepalive {
-  static const _channel = MethodChannel('com.example.drift/transfer_keepalive');
+  static const _channel = MethodChannel('dev.vigov5.wisp/transfer_keepalive');
 
   static bool get _supported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;

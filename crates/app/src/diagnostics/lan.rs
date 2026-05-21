@@ -6,13 +6,13 @@ use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 
 use super::{CheckGroup, CheckResult, CheckStatus};
 
-const SERVICE_TYPE: &str = "_drift-diag._udp.local.";
+const SERVICE_TYPE: &str = "_wisp-diag._udp.local.";
 const SCAN_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(150);
 const ID: &str = "lan.self_scan";
 
 pub(super) async fn check_self_scan() -> CheckResult {
-    let instance = format!("drift-diag-{:08x}", rand::random::<u32>());
+    let instance = format!("wisp-diag-{:08x}", rand::random::<u32>());
     let result = tokio::task::spawn_blocking(move || run_self_scan(&instance)).await;
     match result {
         Ok(Ok(latency)) => CheckResult {
@@ -32,7 +32,7 @@ pub(super) async fn check_self_scan() -> CheckResult {
             detail: error,
             hint: Some(
                 "Wi-Fi may be in client isolation mode, or mDNS is blocked. On iOS, \
-                 ensure Local Network permission is granted for Drift."
+                 ensure Local Network permission is granted for Wisp."
                     .to_owned(),
             ),
             action: None,
@@ -55,7 +55,7 @@ fn run_self_scan(instance: &str) -> Result<Duration, String> {
     let service = ServiceInfo::new(
         SERVICE_TYPE,
         instance,
-        "drift-diag.local.",
+        "wisp-diag.local.",
         IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
         47480,
         &[("probe", "self-scan")] as &[(&str, &str)],

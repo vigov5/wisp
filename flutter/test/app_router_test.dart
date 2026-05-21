@@ -122,7 +122,7 @@ void main() {
             ),
           ),
         ],
-        child: const DriftApp(),
+        child: const WispApp(),
       ),
     );
     await tester.pumpAndSettle();
@@ -144,7 +144,7 @@ void main() {
           receiverServiceSourceProvider.overrideWithValue(receiverSource),
           savedDevicesRepositoryProvider.overrideWithValue(savedDevicesRepo),
         ],
-        child: const DriftApp(),
+        child: const WispApp(),
       ),
     );
     await pumpFinite(tester);

@@ -1,11 +1,11 @@
 version: '3.8'
 
 services:
-  drift-server:
+  wisp-server:
     build:
       context: ../../
       dockerfile: Dockerfile
-    container_name: drift-server
+    container_name: wisp-server
     restart: unless-stopped
     environment:
       - RUST_LOG=info
@@ -15,7 +15,7 @@ services:
 
   npm:
     image: 'jc21/nginx-proxy-manager:latest'
-    container_name: drift-npm
+    container_name: wisp-npm
     restart: unless-stopped
     ports:
       - '80:80'   # HTTP

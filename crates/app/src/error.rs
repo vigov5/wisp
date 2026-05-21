@@ -4,16 +4,16 @@ use std::fmt;
 use std::io;
 
 use anyhow::Error as AnyhowError;
-use drift_core::blobs::BlobError;
-use drift_core::discovery::DiscoveryError;
-use drift_core::fs_plan::error::FsPlanError;
-use drift_core::lan::LanError;
-use drift_core::protocol::ProtocolError;
-use drift_core::rendezvous::RendezvousError;
-use drift_core::transfer::error::TransferError;
-use drift_core::transfer::path::TransferPathError;
-use drift_core::util::TicketError;
 use thiserror::Error;
+use wisp_core::blobs::BlobError;
+use wisp_core::discovery::DiscoveryError;
+use wisp_core::fs_plan::error::FsPlanError;
+use wisp_core::lan::LanError;
+use wisp_core::protocol::ProtocolError;
+use wisp_core::rendezvous::RendezvousError;
+use wisp_core::transfer::error::TransferError;
+use wisp_core::transfer::path::TransferPathError;
+use wisp_core::util::TicketError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserFacingErrorKind {
@@ -24,7 +24,7 @@ pub enum UserFacingErrorKind {
     ConnectionLost,
     /// Peer never responded to the dial — likely offline / out of range.
     PeerUnreachable,
-    /// Peer was reachable on the network but not accepting transfers (Drift
+    /// Peer was reachable on the network but not accepting transfers (Wisp
     /// not running or not in Receive mode).
     PeerNotReceiving,
     PermissionDenied,
@@ -158,7 +158,7 @@ impl UserFacingError {
             UserFacingErrorKind::NetworkUnavailable => Self::with_recovery(
                 kind,
                 "Network unavailable",
-                "Drift could not reach the other device or server.",
+                "Wisp could not reach the other device or server.",
                 "Check your connection and try again.",
                 true,
             ),
@@ -180,13 +180,13 @@ impl UserFacingError {
                 kind,
                 "Device not in Receive mode",
                 "The other device isn't accepting transfers.",
-                "Ask them to open Drift and tap Receive.",
+                "Ask them to open Wisp and tap Receive.",
                 true,
             ),
             UserFacingErrorKind::PermissionDenied => Self::new(
                 kind,
                 "Permission denied",
-                "Drift does not have permission to complete that action.",
+                "Wisp does not have permission to complete that action.",
             ),
             UserFacingErrorKind::FileConflict => Self::new(
                 kind,
@@ -197,21 +197,21 @@ impl UserFacingError {
                 kind,
                 "Protocol mismatch",
                 "The devices could not agree on how to complete the transfer.",
-                "Update Drift on both devices and try again.",
+                "Update Wisp on both devices and try again.",
                 false,
             ),
             UserFacingErrorKind::Cancelled => {
                 Self::new(kind, "Transfer cancelled", "The transfer was cancelled.")
             }
             UserFacingErrorKind::Internal => Self::internal(
-                "Drift internal error",
-                "Drift hit an unexpected condition with no specific cause attached. \
+                "Wisp internal error",
+                "Wisp hit an unexpected condition with no specific cause attached. \
                  Check the logs for the underlying error and reopen the relevant tab to retry.",
             ),
             UserFacingErrorKind::Other => Self::new(
                 kind,
                 "Transfer failed (uncategorized)",
-                "Transfer ended with an error that Drift couldn't classify. \
+                "Transfer ended with an error that Wisp couldn't classify. \
                  Check the logs for the underlying message.",
             ),
         }
@@ -224,7 +224,7 @@ impl From<AppError> for UserFacingError {
             AppError::ReceiverSetupIncomplete => UserFacingError::new(
                 UserFacingErrorKind::Internal,
                 "Receiver setup not finished",
-                "Drift tried to use the receiver before its setup step completed. \
+                "Wisp tried to use the receiver before its setup step completed. \
                  Reopen the Receive tab to retry setup.",
             ),
             AppError::NoPendingOffer => UserFacingError::new(
@@ -245,41 +245,41 @@ impl From<AppError> for UserFacingError {
             AppError::UnsupportedLocalOperation { operation } => UserFacingError::new(
                 UserFacingErrorKind::Internal,
                 "Operation not supported on this platform",
-                format!("Drift does not support {operation} on this device yet."),
+                format!("Wisp does not support {operation} on this device yet."),
             ),
             AppError::ReceiverUnavailable { action } => UserFacingError::new(
                 UserFacingErrorKind::Internal,
                 "Receiver service unavailable",
                 format!(
                     "The receiver service was not running while {action}. \
-                     Reopen the Receive tab so Drift can restart it."
+                     Reopen the Receive tab so Wisp can restart it."
                 ),
             ),
             AppError::SnapshotChannelClosed => UserFacingError::new(
                 UserFacingErrorKind::Internal,
                 "Receiver state channel closed",
                 "The receiver's state-broadcast channel was dropped — the actor likely panicked. \
-                 Restart Drift to recover.",
+                 Restart Wisp to recover.",
             ),
             AppError::DiscoveryFailed => UserFacingError::new(
                 UserFacingErrorKind::NetworkUnavailable,
                 "Couldn't reach the rendezvous / LAN discovery layer",
-                "Drift could not look up the peer via the rendezvous server or LAN discovery. \
+                "Wisp could not look up the peer via the rendezvous server or LAN discovery. \
                  Check that you have internet access and that the device is on the same Wi-Fi.",
             ),
             AppError::InvalidDeviceType { value } => UserFacingError::new(
                 UserFacingErrorKind::Internal,
                 "Unknown device type",
                 format!(
-                    "Drift received an unrecognized device-type marker (\"{value}\") from the peer. \
-                     They may be running an incompatible Drift build."
+                    "Wisp received an unrecognized device-type marker (\"{value}\") from the peer. \
+                     They may be running an incompatible Wisp build."
                 ),
             ),
             AppError::InvalidCode { code } => UserFacingError::new(
                 UserFacingErrorKind::InvalidInput,
                 "Pairing code format invalid",
                 format!(
-                    "\"{code}\" doesn't look like a Drift pairing code. \
+                    "\"{code}\" doesn't look like a Wisp pairing code. \
                      Codes are 6 alphanumeric characters."
                 ),
             ),
@@ -292,14 +292,14 @@ impl From<AppError> for UserFacingError {
             // that hides the actual failure (relay disconnect, pkarr publish
             // failed, etc.) and forces the user to dig through logs.
             AppError::Internal { message } => {
-                UserFacingError::internal("Drift internal error", message)
+                UserFacingError::internal("Wisp internal error", message)
             }
             AppError::BindingFailed { context } => UserFacingError::with_recovery(
                 UserFacingErrorKind::NetworkUnavailable,
                 "Couldn't bind network port",
-                format!("Drift couldn't bind {context} — the port is already in use or blocked."),
+                format!("Wisp couldn't bind {context} — the port is already in use or blocked."),
                 "Quit other apps that might be using the same port, then retry. \
-                 On Windows, also check the firewall rule for Drift.exe.",
+                 On Windows, also check the firewall rule for Wisp.exe.",
                 true,
             ),
             AppError::ActorStopped { action } => UserFacingError::new(
@@ -307,7 +307,7 @@ impl From<AppError> for UserFacingError {
                 "Receiver runtime stopped",
                 format!(
                     "The receiver background task exited before completing \"{action}\". \
-                     Restart Drift to recover."
+                     Restart Wisp to recover."
                 ),
             ),
             AppError::ActorDroppedReply { action } => UserFacingError::new(
@@ -315,7 +315,7 @@ impl From<AppError> for UserFacingError {
                 "Receiver dropped reply",
                 format!(
                     "The receiver started \"{action}\" but never sent back a result. \
-                     Restart Drift to recover."
+                     Restart Wisp to recover."
                 ),
             ),
         }
@@ -453,8 +453,8 @@ impl From<ProtocolError> for UserFacingError {
             ProtocolError::UnsupportedVersion { .. } => UserFacingError::with_recovery(
                 UserFacingErrorKind::ProtocolIncompatible,
                 "Protocol mismatch",
-                "This version of Drift cannot complete the transfer.",
-                "Update Drift on both devices and try again.",
+                "This version of Wisp cannot complete the transfer.",
+                "Update Wisp on both devices and try again.",
                 false,
             ),
             ProtocolError::UnexpectedRole { .. }

@@ -1,12 +1,12 @@
-use drift_core::lan::LanReceiveAdvertisement;
-use drift_core::rendezvous::{RendezvousClient, resolve_server_url};
-use drift_core::util::make_ticket;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointId};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use tokio::sync::{broadcast, watch};
 use tracing::warn;
+use wisp_core::lan::LanReceiveAdvertisement;
+use wisp_core::rendezvous::{RendezvousClient, resolve_server_url};
+use wisp_core::util::make_ticket;
 
 use crate::error::{AppError, AppResult};
 use crate::types::{PairingCodeState, ReceiverConfig, ReceiverRegistration};
@@ -136,7 +136,7 @@ impl ReceiverRuntime {
         if let Some(router) = self.router.take() {
             if let Err(err) = router.shutdown().await {
                 tracing::warn!(
-                    target: "drift_app::receiver::runtime",
+                    target: "wisp_app::receiver::runtime",
                     %err,
                     "router shutdown returned an error; ignoring"
                 );
@@ -299,7 +299,7 @@ impl ReceiverRuntime {
                     }
                     Err(err) => {
                         tracing::warn!(
-                            target: "drift_app::receiver::runtime",
+                            target: "wisp_app::receiver::runtime",
                             %err,
                             code = %existing.code,
                             "pair status returned 404 but auto-rotation failed; \
@@ -317,7 +317,7 @@ impl ReceiverRuntime {
                 // that would flicker the UI on flaky connections.  Just log
                 // and try again on the next tick.
                 tracing::debug!(
-                    target: "drift_app::receiver::runtime",
+                    target: "wisp_app::receiver::runtime",
                     %err,
                     "pair_status request failed; will retry on next maintenance tick"
                 );
@@ -364,7 +364,7 @@ impl ReceiverRuntime {
                 OfferState::Receiving { .. } => "receiving",
             };
             tracing::warn!(
-                target: "drift_app::receiver::runtime",
+                target: "wisp_app::receiver::runtime",
                 offer_id = run.offer_id,
                 state = state_label,
                 "auto-declining new offer because runtime is not idle"
@@ -374,7 +374,7 @@ impl ReceiverRuntime {
         }
 
         tracing::info!(
-            target: "drift_app::receiver::runtime",
+            target: "wisp_app::receiver::runtime",
             offer_id = run.offer_id,
             "accepted offer into Pending state, broadcasting OfferUpdated"
         );

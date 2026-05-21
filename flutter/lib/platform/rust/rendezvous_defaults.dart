@@ -1,1 +1,1 @@
-const String defaultRendezvousUrl = 'https://drift.samarthv.com';
+const String defaultRendezvousUrl = 'https://rendezvous.wisp.mooo.com';

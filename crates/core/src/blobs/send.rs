@@ -214,7 +214,7 @@ impl BlobService {
         let inner = match strategy {
             BlobServingStrategy::Internal => {
                 tracing::debug!(
-                    target: "drift_core::blobs::send",
+                    target: "wisp_core::blobs::send",
                     "registering blob protocol via Internal Router (sender owns dedicated endpoint)"
                 );
                 let router = Router::builder(self.endpoint)
@@ -224,7 +224,7 @@ impl BlobService {
             }
             BlobServingStrategy::External(registrar) => {
                 tracing::debug!(
-                    target: "drift_core::blobs::send",
+                    target: "wisp_core::blobs::send",
                     "registering blob protocol via External registrar (sharing endpoint with another subsystem)"
                 );
                 registrar.register_blob_protocol(protocol.clone()).await?;
@@ -297,7 +297,7 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_store_rejects_duplicate_transfer_paths() -> Result<()> {
-        let root = unique_temp_dir("drift-one-shot-duplicate-paths");
+        let root = unique_temp_dir("wisp-one-shot-duplicate-paths");
         let source = root.join("source");
         let store_root = root.join("store");
         std::fs::create_dir_all(&source)?;
@@ -371,7 +371,7 @@ mod tests {
             }
         }
 
-        let root = unique_temp_dir("drift-blob-external-strategy");
+        let root = unique_temp_dir("wisp-blob-external-strategy");
         let source = root.join("source");
         let store_root = root.join("store");
         std::fs::create_dir_all(&source)?;
@@ -445,7 +445,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn prepare_store_rejects_nested_symbolic_links() -> Result<()> {
-        let root = unique_temp_dir("drift-one-shot-symlink-entry");
+        let root = unique_temp_dir("wisp-one-shot-symlink-entry");
         let source = root.join("source");
         let store_root = root.join("store");
         std::fs::create_dir_all(&source)?;

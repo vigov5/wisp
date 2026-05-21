@@ -45,7 +45,7 @@ void main() {
       ),
     );
 
-    expect(find.text('Drift'), findsOneWidget);
+    expect(find.text('Wisp'), findsOneWidget);
     expect(find.text('Ready'), findsOneWidget);
     expect(find.text('Receive code'), findsOneWidget);
     expect(find.text('ABC 123'), findsOneWidget);
@@ -84,7 +84,7 @@ void main() {
     final router = _buildReceiveFeatureRouter(size: const Size(440, 560));
     const customSettings = AppSettings(
       deviceName: 'Maya MacBook',
-      downloadRoot: '/tmp/Drift',
+      downloadRoot: '/tmp/Wisp',
       discoverableByDefault: true,
       discoveryServerUrl: null,
     );

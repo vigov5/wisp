@@ -32,7 +32,7 @@ pub(super) async fn check_writable(download_root: &str) -> CheckResult {
         };
     }
     let path = PathBuf::from(trimmed);
-    let probe = path.join(".drift_diag_write_test");
+    let probe = path.join(".wisp_diag_write_test");
     let path_for_create = path.clone();
     let probe_path = probe.clone();
     let attempt = tokio::task::spawn_blocking(move || {
@@ -42,7 +42,7 @@ pub(super) async fn check_writable(download_root: &str) -> CheckResult {
         // first lands there).  Without this the diagnostic falsely fails on
         // a fresh install before any transfer has run.
         std::fs::create_dir_all(&path_for_create)?;
-        std::fs::write(&probe_path, b"drift diagnostic probe")?;
+        std::fs::write(&probe_path, b"wisp diagnostic probe")?;
         std::fs::remove_file(&probe_path)
     })
     .await;
@@ -140,7 +140,7 @@ pub(super) async fn check_disk_space(download_root: &str) -> CheckResult {
 pub(super) async fn check_firewall_windows() -> Option<CheckResult> {
     let output = tokio::task::spawn_blocking(|| {
         std::process::Command::new("netsh")
-            .args(["advfirewall", "firewall", "show", "rule", "name=Drift"])
+            .args(["advfirewall", "firewall", "show", "rule", "name=Wisp"])
             .output()
     })
     .await
@@ -154,13 +154,13 @@ pub(super) async fn check_firewall_windows() -> Option<CheckResult> {
                     id: FIREWALL_ID.to_owned(),
                     group: CheckGroup::Local,
                     status: CheckStatus::Warn,
-                    label: "Firewall rule 'Drift' not found".to_owned(),
+                    label: "Firewall rule 'Wisp' not found".to_owned(),
                     detail: "Direct LAN transfers may be blocked until Windows Firewall \
-                             allows Drift.exe on UDP inbound."
+                             allows Wisp.exe on UDP inbound."
                         .to_owned(),
                     hint: Some(
-                        "Accept the system prompt the first time Drift binds, or add a \
-                         firewall rule named 'Drift' for the executable."
+                        "Accept the system prompt the first time Wisp binds, or add a \
+                         firewall rule named 'Wisp' for the executable."
                             .to_owned(),
                     ),
                     action: None,
@@ -188,7 +188,7 @@ pub(super) async fn check_firewall_windows() -> Option<CheckResult> {
                     group: CheckGroup::Local,
                     status: CheckStatus::Pass,
                     label: "Firewall rule present".to_owned(),
-                    detail: "Found Windows Firewall rule named 'Drift'.".to_owned(),
+                    detail: "Found Windows Firewall rule named 'Wisp'.".to_owned(),
                     hint: None,
                     action: None,
                 }

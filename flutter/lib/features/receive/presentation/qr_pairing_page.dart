@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../src/rust/api/receiver.dart' as rust_receiver;
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 
 /// Full-screen QR code page for offline-LAN pairing.  Renders the
 /// receiver's current ticket as a QR code that the sender scans, plus
@@ -53,7 +53,7 @@ class _QrPairingPageState extends State<QrPairingPage> {
         ),
         title: Text(
           'Pair via QR',
-          style: driftSans(
+          style: wispSans(
             fontSize: 18,
             fontWeight: FontWeight.w700,
             color: kInk,
@@ -79,7 +79,7 @@ class _QrPairingPageState extends State<QrPairingPage> {
           Text(
             'Scan this code from the sender device.',
             textAlign: TextAlign.center,
-            style: driftSans(fontSize: 13.5, color: kMuted, height: 1.4),
+            style: wispSans(fontSize: 13.5, color: kMuted, height: 1.4),
           ),
           const SizedBox(height: 18),
           Center(
@@ -108,7 +108,7 @@ class _QrPairingPageState extends State<QrPairingPage> {
           const SizedBox(height: 22),
           Text(
             'This device on the network',
-            style: driftSans(
+            style: wispSans(
               fontSize: 13.5,
               fontWeight: FontWeight.w600,
               color: kInk,
@@ -132,7 +132,7 @@ class _QrPairingPageState extends State<QrPairingPage> {
           Text(
             'No internet needed — both devices just need the same Wi-Fi.',
             textAlign: TextAlign.center,
-            style: driftSans(fontSize: 11.5, color: kMuted, height: 1.4),
+            style: wispSans(fontSize: 11.5, color: kMuted, height: 1.4),
           ),
         ],
       ),
@@ -159,7 +159,7 @@ class _QrPairingPageState extends State<QrPairingPage> {
           Expanded(
             child: SelectableText(
               text,
-              style: driftMono(fontSize: 13, color: color),
+              style: wispMono(fontSize: 13, color: color),
             ),
           ),
           if (copyable)
@@ -194,13 +194,13 @@ class _QrPairingPageState extends State<QrPairingPage> {
           const SizedBox(height: 12),
           Text(
             'Couldn\'t build QR code',
-            style: driftSans(fontSize: 16, fontWeight: FontWeight.w700, color: kInk),
+            style: wispSans(fontSize: 16, fontWeight: FontWeight.w700, color: kInk),
           ),
           const SizedBox(height: 8),
           Text(
             message,
             textAlign: TextAlign.center,
-            style: driftSans(fontSize: 13, color: kMuted),
+            style: wispSans(fontSize: 13, color: kMuted),
           ),
           const SizedBox(height: 20),
           FilledButton(onPressed: _load, child: const Text('Retry')),

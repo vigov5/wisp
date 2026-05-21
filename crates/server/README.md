@@ -1,6 +1,6 @@
-# Drift Server Deployment with Nginx Proxy Manager (NPM)
+# Wisp Server Deployment with Nginx Proxy Manager (NPM)
 
-This directory contains the necessary files to deploy the `drift-server` alongside Nginx Proxy Manager for easy SSL management and reverse proxying.
+This directory contains the necessary files to deploy the `wisp-server` alongside Nginx Proxy Manager for easy SSL management and reverse proxying.
 
 ## Prerequisites
 - Docker and Docker Compose installed.
@@ -21,16 +21,16 @@ This directory contains the necessary files to deploy the `drift-server` alongsi
 
 3. **Configure Proxy Host:**
    - Go to **Hosts** -> **Proxy Hosts** -> **Add Proxy Host**.
-   - **Domain Names:** Your domain (e.g., `drift.yourdomain.com`).
+   - **Domain Names:** Your domain (e.g., `wisp.yourdomain.com`).
    - **Scheme:** `http`
-   - **Forward Hostname / IP:** `drift-server`
+   - **Forward Hostname / IP:** `wisp-server`
    - **Forward Port:** `8787`
    - **SSL:** Go to the SSL tab and select "Request a new SSL Certificate" to enable HTTPS via Let's Encrypt.
 
 4. **Verify Deployment:**
-   Visit `https://drift.yourdomain.com/healthz` (replace with your domain). You should see `ok`.
+   Visit `https://wisp.yourdomain.com/healthz` (replace with your domain). You should see `ok`.
 
 ## File Structure
 - `Dockerfile` (at project root): Multi-stage build for the Rust server.
-- `docker-compose.yml`: Defines the `drift-server` and `npm` services.
+- `docker-compose.yml`: Defines the `wisp-server` and `npm` services.
 - `npm/`: Local directory where NPM data and SSL certificates are persisted.

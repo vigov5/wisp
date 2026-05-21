@@ -70,8 +70,8 @@ jobs:
       - name: Create macOS DMG
         run: |
           npm install --global create-dmg
-          create-dmg build/macos/Build/Products/Release/Drift.app --no-code-sign || true
-          mv Drift\ *.dmg "drift-macos-${{ env.SAFE_VERSION }}.dmg"
+          create-dmg build/macos/Build/Products/Release/Wisp.app --no-code-sign || true
+          mv Wisp\ *.dmg "wisp-macos-${{ env.SAFE_VERSION }}.dmg"
 
       - name: Build iOS (no code signing)
         run: flutter build ios --release --no-codesign
@@ -79,20 +79,20 @@ jobs:
       - name: Package iOS zip
         run: |
           cd build/ios/Release-iphoneos
-          zip -r "../../../drift-ios-unsigned-${{ env.SAFE_VERSION }}.zip" Runner.app
+          zip -r "../../../wisp-ios-unsigned-${{ env.SAFE_VERSION }}.zip" Runner.app
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: drift-macos
-          path: flutter/drift-macos-${{ env.SAFE_VERSION }}.dmg
+          name: wisp-macos
+          path: flutter/wisp-macos-${{ env.SAFE_VERSION }}.dmg
           if-no-files-found: error
 
       - name: Upload iOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: drift-ios-unsigned
-          path: flutter/drift-ios-unsigned-${{ env.SAFE_VERSION }}.zip
+          name: wisp-ios-unsigned
+          path: flutter/wisp-ios-unsigned-${{ env.SAFE_VERSION }}.zip
           if-no-files-found: error
 
   linux:
@@ -148,56 +148,56 @@ jobs:
         run: |
           VERSION=$(grep "version: " pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
           ARCH=$(dpkg --print-architecture)
-          PACKAGE_DIR="drift_${VERSION}_${ARCH}"
-          mkdir -p "${PACKAGE_DIR}/usr/lib/drift"
+          PACKAGE_DIR="wisp_${VERSION}_${ARCH}"
+          mkdir -p "${PACKAGE_DIR}/usr/lib/wisp"
           mkdir -p "${PACKAGE_DIR}/usr/bin"
           mkdir -p "${PACKAGE_DIR}/usr/share/applications"
           mkdir -p "${PACKAGE_DIR}/usr/share/icons/hicolor/512x512/apps"
           mkdir -p "${PACKAGE_DIR}/DEBIAN"
 
           # Copy bundle
-          cp -r build/linux/x64/release/bundle/* "${PACKAGE_DIR}/usr/lib/drift/"
+          cp -r build/linux/x64/release/bundle/* "${PACKAGE_DIR}/usr/lib/wisp/"
 
           # Create symlink
-          ln -s /usr/lib/drift/Drift "${PACKAGE_DIR}/usr/bin/drift"
+          ln -s /usr/lib/wisp/Wisp "${PACKAGE_DIR}/usr/bin/wisp"
 
           # Copy desktop file and icon
-          cp linux/sh.vs.drift.desktop "${PACKAGE_DIR}/usr/share/applications/"
-          cp macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_512.png "${PACKAGE_DIR}/usr/share/icons/hicolor/512x512/apps/sh.vs.drift.png"
+          cp linux/dev.vigov5.wisp.desktop "${PACKAGE_DIR}/usr/share/applications/"
+          cp macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_512.png "${PACKAGE_DIR}/usr/share/icons/hicolor/512x512/apps/dev.vigov5.wisp.png"
 
           # Create control file
           cat <<EOF > "${PACKAGE_DIR}/DEBIAN/control"
-          Package: drift
+          Package: wisp
           Version: ${VERSION}
           Section: utils
           Priority: optional
           Architecture: ${ARCH}
-          Maintainer: Samarth <hi@samarthv.com>
+          Maintainer: vigov5 <nguyenanhtien2210@gmail.com>
           Description: Send files to anyone, anywhere. Like AirDrop, but even more magical.
           Depends: libgtk-3-0, libwebkit2gtk-4.1-0, libsecret-1-0
           EOF
 
           dpkg-deb --build "${PACKAGE_DIR}"
-          mv "${PACKAGE_DIR}.deb" "../drift-linux-${{ env.SAFE_VERSION }}.deb"
+          mv "${PACKAGE_DIR}.deb" "../wisp-linux-${{ env.SAFE_VERSION }}.deb"
 
       - name: Package Linux zip
         run: |
           cd build/linux/x64/release
-          zip -r "../../../../drift-linux-${{ env.SAFE_VERSION }}.zip" bundle
+          zip -r "../../../../wisp-linux-${{ env.SAFE_VERSION }}.zip" bundle
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
-          name: drift-linux
+          name: wisp-linux
           path: |
-            drift-linux-${{ env.SAFE_VERSION }}.deb
-            flutter/drift-linux-${{ env.SAFE_VERSION }}.zip
+            wisp-linux-${{ env.SAFE_VERSION }}.deb
+            flutter/wisp-linux-${{ env.SAFE_VERSION }}.zip
           if-no-files-found: error
 
       - name: Upload Linux bundle for Flatpak
         uses: actions/upload-artifact@v4
         with:
-          name: drift-linux-bundle
+          name: wisp-linux-bundle
           path: flutter/build/linux/x64/release/bundle
           if-no-files-found: error
 
@@ -249,27 +249,27 @@ jobs:
         run: |
           $version = (Get-Content pubspec.yaml | Select-String "^version: ").ToString().Split(" ")[1].Split("+")[0]
           & "C:\Program Files (x86)\Inno Setup 6\iscc.exe" /DAppVersion=$version windows/inno_setup.iss
-          Move-Item windows/drift-windows-setup.exe "drift-windows-setup-${{ env.SAFE_VERSION }}.exe"
+          Move-Item windows/wisp-windows-setup.exe "wisp-windows-setup-${{ env.SAFE_VERSION }}.exe"
 
       - name: Package portable Windows zip
         shell: pwsh
         run: |
           $releaseDir = Join-Path $PWD "build/windows/x64/runner/Release"
-          $zipPath = Join-Path $PWD "drift-windows-portable-${{ env.SAFE_VERSION }}.zip"
+          $zipPath = Join-Path $PWD "wisp-windows-portable-${{ env.SAFE_VERSION }}.zip"
           Compress-Archive -Path (Join-Path $releaseDir '*') -DestinationPath $zipPath -Force
 
       - name: Upload Windows Setup EXE
         uses: actions/upload-artifact@v4
         with:
-          name: drift-windows-setup
-          path: flutter/drift-windows-setup-${{ env.SAFE_VERSION }}.exe
+          name: wisp-windows-setup
+          path: flutter/wisp-windows-setup-${{ env.SAFE_VERSION }}.exe
           if-no-files-found: error
 
       - name: Upload Windows portable zip
         uses: actions/upload-artifact@v4
         with:
-          name: drift-windows-portable
-          path: flutter/drift-windows-portable-${{ env.SAFE_VERSION }}.zip
+          name: wisp-windows-portable
+          path: flutter/wisp-windows-portable-${{ env.SAFE_VERSION }}.zip
           if-no-files-found: error
 
   android:
@@ -324,13 +324,13 @@ jobs:
         run: flutter build apk --release
 
       - name: Package Android APK
-        run: mv build/app/outputs/flutter-apk/app-release.apk "drift-android-${{ env.SAFE_VERSION }}.apk"
+        run: mv build/app/outputs/flutter-apk/app-release.apk "wisp-android-${{ env.SAFE_VERSION }}.apk"
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
-          name: drift-android
-          path: flutter/drift-android-${{ env.SAFE_VERSION }}.apk
+          name: wisp-android
+          path: flutter/wisp-android-${{ env.SAFE_VERSION }}.apk
           if-no-files-found: error
 
   flatpak:
@@ -350,14 +350,14 @@ jobs:
       - name: Download Linux bundle
         uses: actions/download-artifact@v4
         with:
-          name: drift-linux-bundle
+          name: wisp-linux-bundle
           path: flutter/build/linux/x64/release/bundle
 
       - name: Build Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: drift-${{ env.SAFE_VERSION }}.flatpak
-          manifest-path: flutter/linux/sh.vs.drift.yaml
+          bundle: wisp-${{ env.SAFE_VERSION }}.flatpak
+          manifest-path: flutter/linux/dev.vigov5.wisp.yaml
           cache: false
           branch: main
           upload-artifact: false
@@ -365,8 +365,8 @@ jobs:
       - name: Upload Flatpak artifact
         uses: actions/upload-artifact@v4
         with:
-          name: drift-flatpak
-          path: drift-${{ env.SAFE_VERSION }}.flatpak
+          name: wisp-flatpak
+          path: wisp-${{ env.SAFE_VERSION }}.flatpak
           if-no-files-found: error
 
   create_release:

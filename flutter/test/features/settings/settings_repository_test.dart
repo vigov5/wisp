@@ -11,13 +11,13 @@ void main() {
     final repo = SettingsRepository(
       prefs: prefs,
       randomDeviceName: () => 'Rusty Ridge',
-      defaultDownloadRoot: '/tmp/Drift',
+      defaultDownloadRoot: '/tmp/Wisp',
     );
 
     final settings = await repo.loadOrCreate();
 
     expect(settings.deviceName, 'Rusty Ridge');
-    expect(settings.downloadRoot, '/tmp/Drift');
+    expect(settings.downloadRoot, '/tmp/Wisp');
     expect(settings.discoverableByDefault, isTrue);
     expect(settings.discoveryServerUrl, defaultRendezvousUrl);
   });

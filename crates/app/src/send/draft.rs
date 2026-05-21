@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use drift_core::fs_plan::preview::{
+use wisp_core::fs_plan::preview::{
     SelectedPathKind, SelectedPathPreview, SelectionPreview as CoreSelectionPreview,
     inspect_selected_paths,
 };
@@ -138,9 +138,9 @@ mod tests {
     use super::SendDraft;
     use crate::error::{AppError, UserFacingErrorKind};
     use crate::types::SendConfig;
-    use drift_core::protocol::{CancelPhase, TransferRole};
-    use drift_core::transfer::TransferCancellation;
     use std::path::{Path, PathBuf};
+    use wisp_core::protocol::{CancelPhase, TransferRole};
+    use wisp_core::transfer::TransferCancellation;
 
     use super::super::destination::display_destination_label;
 
@@ -245,7 +245,7 @@ mod tests {
 
         let error = event.error.expect("structured error");
         assert_eq!(error.kind(), UserFacingErrorKind::Internal);
-        assert_eq!(error.title(), "Drift internal error");
+        assert_eq!(error.title(), "Wisp internal error");
         assert!(error.message().contains("boom"));
     }
 

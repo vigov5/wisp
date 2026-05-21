@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const channel = MethodChannel('com.example.drift/transfer_keepalive');
+  const channel = MethodChannel('dev.vigov5.wisp/transfer_keepalive');
   final invocations = <MethodCall>[];
 
   TargetPlatform? originalPlatform;
@@ -34,23 +34,23 @@ void main() {
     });
 
     test('start forwards title + body to channel', () async {
-      await TransferKeepalive.start(title: 'Drift sending', body: 'to Maya');
+      await TransferKeepalive.start(title: 'Wisp sending', body: 'to Maya');
       expect(invocations, hasLength(1));
       expect(invocations.first.method, 'start');
       expect(invocations.first.arguments, {
-        'title': 'Drift sending',
+        'title': 'Wisp sending',
         'body': 'to Maya',
       });
     });
 
     test('update forwards title + body', () async {
       await TransferKeepalive.update(
-        title: 'Drift sending',
+        title: 'Wisp sending',
         body: '5 MB / 10 MB',
       );
       expect(invocations.first.method, 'update');
       expect(invocations.first.arguments, {
-        'title': 'Drift sending',
+        'title': 'Wisp sending',
         'body': '5 MB / 10 MB',
       });
     });

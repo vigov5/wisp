@@ -5,7 +5,7 @@
 //! resolves.  Permissions are probed on the Dart side; this surface covers
 //! the network-side checks.
 
-use drift_app::diagnostics::{self as app_diag};
+use wisp_app::diagnostics::{self as app_diag};
 
 use super::RUNTIME;
 use crate::frb_generated::StreamSink;

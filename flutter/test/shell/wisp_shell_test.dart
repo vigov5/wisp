@@ -37,12 +37,12 @@ void main() {
       ),
     );
 
-    // 'Drift' appears in both the custom Windows title bar shell and the
-    // receiver card (since `testAppSettings.deviceName == 'Drift'`).  We
+    // 'Wisp' appears in both the custom Windows title bar shell and the
+    // receiver card (since `testAppSettings.deviceName == 'Wisp'`).  We
     // only care that it's rendered somewhere on the home screen — the
     // dedicated `'Ready'` / `'Receive code'` checks below confirm the
     // receiver card itself is present.
-    expect(find.text('Drift'), findsAtLeastNWidgets(1));
+    expect(find.text('Wisp'), findsAtLeastNWidgets(1));
     expect(find.text('Ready'), findsOneWidget);
     expect(find.text('Receive code'), findsOneWidget);
     expect(find.text('Drop files to send'), findsOneWidget);
@@ -125,7 +125,7 @@ void main() {
   testWidgets('dropping files navigates to /send/draft and shows preview', (
     WidgetTester tester,
   ) async {
-    final tempDir = Directory.systemTemp.createTempSync('drift_shell_test');
+    final tempDir = Directory.systemTemp.createTempSync('wisp_shell_test');
     final droppedFile = File('${tempDir.path}/report.pdf')
       ..writeAsStringSync('preview');
     final router = buildAppRouter();
@@ -161,7 +161,7 @@ void main() {
   testWidgets(
     'dropping a directory navigates to /send/draft and shows preview',
     (WidgetTester tester) async {
-      final directory = Directory.systemTemp.createTempSync('drift_shell_dir');
+      final directory = Directory.systemTemp.createTempSync('wisp_shell_dir');
       final router = buildAppRouter();
       final savedDevicesRepo = await mockSavedDevicesRepo();
       await tester.pumpWidget(

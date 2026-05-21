@@ -33,7 +33,7 @@ class AndroidFolderResult {
 ///    respects the URI grant the user approved in the system picker.
 class AndroidFilePicker {
   static const MethodChannel _channel = MethodChannel(
-    'com.example.drift/file_picker',
+    'dev.vigov5.wisp/file_picker',
   );
 
   // Cache of sizes returned by the native pickFolder call, keyed by path.
@@ -81,7 +81,7 @@ class AndroidFilePicker {
     _folderSizeCache.clear();
     try {
       final tmp = await getTemporaryDirectory();
-      final dir = Directory('${tmp.path}/drift_picked');
+      final dir = Directory('${tmp.path}/wisp_picked');
       if (await dir.exists()) {
         await dir.delete(recursive: true);
       }

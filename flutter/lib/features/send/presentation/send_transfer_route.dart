@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 import '../../../app/app_router.dart';
 import '../../transfers/application/manifest.dart';
 import '../../transfers/application/state.dart' as transfer_state;
@@ -400,7 +400,7 @@ class _SendStatsGrid extends StatelessWidget {
                   children: [
                     Text(
                       displayStats[i].label,
-                      style: driftSans(
+                      style: wispSans(
                         fontSize: 9,
                         fontWeight: FontWeight.w800,
                         color: kMuted,
@@ -410,7 +410,7 @@ class _SendStatsGrid extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       displayStats[i].value,
-                      style: driftSans(
+                      style: wispSans(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
                         color: kInk,

@@ -8,20 +8,20 @@ import 'package:integration_test/integration_test.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('launches the Drift shell', (WidgetTester tester) async {
+  testWidgets('launches the Wisp shell', (WidgetTester tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           initialAppSettingsProvider.overrideWithValue(
             AppSettings(
-              deviceName: 'Drift',
-              downloadRoot: '/tmp/Drift',
+              deviceName: 'Wisp',
+              downloadRoot: '/tmp/Wisp',
               discoverableByDefault: true,
               discoveryServerUrl: null,
             ),
           ),
         ],
-        child: DriftApp(),
+        child: WispApp(),
       ),
     );
 

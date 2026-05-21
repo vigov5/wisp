@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../domain/check_result.dart';
 import '../../domain/diagnostics_state.dart';
 
@@ -37,7 +37,7 @@ class SummaryBanner extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: driftSans(
+                  style: wispSans(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
                     color: kInk,
@@ -46,7 +46,7 @@ class SummaryBanner extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   _subtitle(state),
-                  style: driftSans(
+                  style: wispSans(
                     fontSize: 12,
                     fontWeight: FontWeight.w500,
                     color: kMuted,

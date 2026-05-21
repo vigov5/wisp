@@ -1,13 +1,13 @@
 [package]
-name = "drift"
+name = "wisp"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-drift-app = { path = "../app" }
-drift-core = { path = "../core" }
+wisp-app = { path = "../app" }
+wisp-core = { path = "../core" }
 iroh.workspace = true
 mdns-sd.workspace = true
 rand.workspace = true

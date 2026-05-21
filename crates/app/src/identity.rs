@@ -31,7 +31,7 @@ pub fn current_secret_key() -> SecretKey {
         return key.clone();
     }
     tracing::warn!(
-        target: "drift_app::identity",
+        target: "wisp_app::identity",
         "current_secret_key() called before set_secret_key(); generating ephemeral key — \
          the resulting EndpointId will not match the one persisted by the host"
     );

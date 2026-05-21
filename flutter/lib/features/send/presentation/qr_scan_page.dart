@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 
 /// Camera-based QR scanner.  Returns the scanned ticket string when the
 /// user picks one — pop the page with `Navigator.pop(context, ticket)`.
@@ -47,7 +47,7 @@ class _QrScanPageState extends State<QrScanPage> {
         elevation: 0,
         title: Text(
           'Scan QR',
-          style: driftSans(
+          style: wispSans(
             fontSize: 18,
             fontWeight: FontWeight.w700,
             color: Colors.white,
@@ -76,7 +76,7 @@ class _QrScanPageState extends State<QrScanPage> {
             child: Text(
               'Point at the QR code shown on the receiver device.',
               textAlign: TextAlign.center,
-              style: driftSans(
+              style: wispSans(
                 fontSize: 13.5,
                 color: Colors.white.withValues(alpha: 0.85),
                 height: 1.45,

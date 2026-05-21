@@ -1,18 +1,18 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use drift_core::protocol::DeviceType;
-use drift_core::transfer::{
+use iroh::Endpoint;
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
+use tokio_stream::StreamExt;
+use wisp_core::protocol::DeviceType;
+use wisp_core::transfer::{
     ReceiverDecision as CoreReceiverDecision, ReceiverEvent as CoreReceiverEvent,
     ReceiverRequest as CoreReceiverRequest, ReceiverSession as CoreReceiverSession,
     ReceiverStart as CoreReceiverStart, TransferOutcome as CoreTransferOutcome, TransferPhase,
     TransferPlan, TransferPlanFile, TransferSnapshot,
 };
-use drift_core::util::{human_size, snapshot_connection_path};
-use iroh::Endpoint;
-use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
-use tokio_stream::StreamExt;
+use wisp_core::util::{human_size, snapshot_connection_path};
 
 use crate::error::{UserFacingError, UserFacingErrorKind, format_error_chain};
 use crate::types::{
@@ -224,7 +224,7 @@ impl ReceiverSession {
             error: None,
         };
         tracing::info!(
-            target: "drift_app::receiver::session",
+            target: "wisp_app::receiver::session",
             offer_id,
             sender = %sender_label,
             file_count = offer.file_count,
@@ -239,7 +239,7 @@ impl ReceiverSession {
             .is_err()
         {
             tracing::warn!(
-                target: "drift_app::receiver::session",
+                target: "wisp_app::receiver::session",
                 offer_id,
                 "actor channel closed; offer event dropped"
             );
@@ -328,7 +328,7 @@ impl ReceiverSession {
                             ),
                         }) {
                             tracing::debug!(
-                                target: "drift_app::receiver::session",
+                                target: "wisp_app::receiver::session",
                                 offer_id,
                                 bytes = snapshot.bytes_transferred,
                                 ?err,
@@ -373,14 +373,14 @@ impl ReceiverSession {
         // Completed and Cancelled arms — both terminal states represent a
         // peer we successfully reached, even if Cancelled didn't finish.
         let sender_ticket = final_path.as_ref().and_then(|path| {
-            drift_core::util::synthesize_ticket(
+            wisp_core::util::synthesize_ticket(
                 remote_id,
                 path.relay_url.as_deref(),
                 path.direct_addr.as_deref(),
             )
             .map_err(|err| {
                 tracing::debug!(
-                    target: "drift_app::receiver::session",
+                    target: "wisp_app::receiver::session",
                     error = %err,
                     "failed to synthesize sender ticket; saved-device fast path won't work"
                 );
@@ -504,10 +504,10 @@ fn spawn_connection_path_watcher(
                         // flicker hide/show every poll.
                         let downgrade_to_unknown = matches!(
                             snapshot.kind,
-                            drift_core::util::ConnectionPathKind::Unknown
+                            wisp_core::util::ConnectionPathKind::Unknown
                         ) && !matches!(
                             guard.kind,
-                            drift_core::util::ConnectionPathKind::Unknown
+                            wisp_core::util::ConnectionPathKind::Unknown
                         );
                         if *guard != snapshot && !downgrade_to_unknown {
                             *guard = snapshot.clone();
@@ -670,9 +670,9 @@ mod tests {
     };
     use crate::error::UserFacingErrorKind;
     use crate::types::{ConflictPolicy, ConnectionPath};
-    use drift_core::protocol::DeviceType;
-    use drift_core::transfer::TransferPlan;
-    use drift_core::util::ConnectionPathKind;
+    use wisp_core::protocol::DeviceType;
+    use wisp_core::transfer::TransferPlan;
+    use wisp_core::util::ConnectionPathKind;
 
     #[test]
     fn core_receiver_request_preserves_configured_conflict_policy() {
@@ -740,7 +740,7 @@ mod tests {
     fn completed_offer_event_uses_save_root_as_destination_label() {
         let plan = TransferPlan::try_new(
             "session-1",
-            vec![drift_core::transfer::TransferPlanFile {
+            vec![wisp_core::transfer::TransferPlanFile {
                 id: 0,
                 path: "report.pdf".to_owned(),
                 size: 1024,
@@ -785,7 +785,7 @@ pub(super) fn save_root_display(path: &std::path::Path) -> String {
         .parent()
         .and_then(|parent| parent.file_name())
         .and_then(|s| s.to_str());
-    if matches!(file_name, Some("Drift")) && matches!(parent_name, Some("Download" | "Downloads")) {
+    if matches!(file_name, Some("Wisp")) && matches!(parent_name, Some("Download" | "Downloads")) {
         return "Downloads".to_owned();
     }
     path.file_name()

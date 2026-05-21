@@ -16,30 +16,30 @@ use thiserror::Error;
 use tracing::{debug, info, warn};
 
 use crate::protocol::DeviceType;
-/// DNS-SD type for drift receivers on the LAN (`drift` ≤ 15 bytes per RFC 6763).
-pub const DRIFT_MDNS_SERVICE_TYPE: &str = "_drift._udp.local.";
+/// DNS-SD type for wisp receivers on the LAN (`wisp` ≤ 15 bytes per RFC 6763).
+pub const WISP_MDNS_SERVICE_TYPE: &str = "_wisp._udp.local.";
 
 /// TXT `ver` value for this wire format (ticket chunks `t0`… + `tc`).
-pub const DRIFT_MDNS_TXT_VER: &str = "1";
+pub const WISP_MDNS_TXT_VER: &str = "1";
 
 /// UDP port for presence ping/pong (SRV port in mDNS). Not the iroh data plane.
-pub const DRIFT_LAN_PRESENCE_PORT: u16 = 47_474;
+pub const WISP_LAN_PRESENCE_PORT: u16 = 47_474;
 
 /// UDP port for broadcast discovery (works on Android hotspot where mDNS multicast is blocked).
-pub const DRIFT_LAN_DISCOVERY_PORT: u16 = 47_475;
+pub const WISP_LAN_DISCOVERY_PORT: u16 = 47_475;
 
 const TICKET_CHUNK_LEN: usize = 200;
 
-const PRESENCE_MAGIC: &[u8; 4] = b"DRFP";
+const PRESENCE_MAGIC: &[u8; 4] = b"WSPP";
 const PRESENCE_VER: u16 = 1;
 const OP_PING: u8 = 1;
 const OP_PONG: u8 = 2;
 const PRESENCE_PKT_LEN: usize = 16;
 
-// Broadcast discovery protocol (DRFD = Drift Discovery).
-// Query:  16 bytes fixed  — sender broadcasts to 255.255.255.255:DRIFT_LAN_DISCOVERY_PORT
+// Broadcast discovery protocol (WSPD = Wisp Discovery).
+// Query:  16 bytes fixed  — sender broadcasts to 255.255.255.255:WISP_LAN_DISCOVERY_PORT
 // Reply:  variable length — receiver unicasts back ticket + label
-const DISCOVERY_MAGIC: &[u8; 4] = b"DRFD";
+const DISCOVERY_MAGIC: &[u8; 4] = b"WSPD";
 const DISCOVERY_VER: u16 = 1;
 const OP_QUERY: u8 = 1;
 const OP_DREPLY: u8 = 2;
@@ -53,7 +53,7 @@ const CACHE_TTL: Duration = Duration::from_secs(30);
 /// fresh mDNS re-announce (SRV TTL = 120 s).
 struct CachedEntry {
     ip: Ipv4Addr,
-    /// Presence-ping port (always DRIFT_LAN_PRESENCE_PORT for confirmed peers).
+    /// Presence-ping port (always WISP_LAN_PRESENCE_PORT for confirmed peers).
     port: u16,
     receiver: NearbyReceiver,
     seen_at: Instant,
@@ -214,11 +214,11 @@ pub fn presence_ping(target: SocketAddr, timeout: Duration) -> std::result::Resu
 
 /// Tries each IPv4 until one answers the presence ping; returns the responding address.
 fn verify_presence(info: &mdns_sd::ResolvedService) -> Option<Ipv4Addr> {
-    if info.get_port() != DRIFT_LAN_PRESENCE_PORT {
+    if info.get_port() != WISP_LAN_PRESENCE_PORT {
         warn!(
             service = %info.get_fullname(),
             port = info.get_port(),
-            expected = DRIFT_LAN_PRESENCE_PORT,
+            expected = WISP_LAN_PRESENCE_PORT,
             "lan_scan.verify_presence: wrong port — skipping",
         );
         return None;
@@ -258,7 +258,7 @@ fn verify_presence(info: &mdns_sd::ResolvedService) -> Option<Ipv4Addr> {
     None
 }
 
-/// Answers [`DRIFT_LAN_PRESENCE_PORT`] UDP datagrams while alive.
+/// Answers [`WISP_LAN_PRESENCE_PORT`] UDP datagrams while alive.
 pub struct PresenceResponder {
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
@@ -282,7 +282,7 @@ impl PresenceResponder {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_t = Arc::clone(&stop);
         let join = std::thread::Builder::new()
-            .name("drift-lan-presence".into())
+            .name("wisp-lan-presence".into())
             .spawn(move || run_presence_loop(socket, stop_t))
             .map_err(|source| LanError::SpawnPresenceThread { source })?;
 
@@ -340,7 +340,7 @@ fn run_presence_loop(socket: UdpSocket, stop: Arc<AtomicBool>) {
 // Broadcast discovery responder (receiver side)
 // ---------------------------------------------------------------------------
 
-/// Listens on [`DRIFT_LAN_DISCOVERY_PORT`] for UDP broadcast QUERY packets and
+/// Listens on [`WISP_LAN_DISCOVERY_PORT`] for UDP broadcast QUERY packets and
 /// replies unicast with the device's ticket + label.  Works on Android hotspot
 /// where mDNS multicast is blocked by the SoftAP driver.
 pub struct BroadcastDiscoveryResponder {
@@ -371,7 +371,7 @@ impl BroadcastDiscoveryResponder {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_t = Arc::clone(&stop);
         let join = std::thread::Builder::new()
-            .name("drift-lan-discovery".into())
+            .name("wisp-lan-discovery".into())
             .spawn(move || run_discovery_responder_loop(socket, stop_t, ticket, label, device_type))
             .map_err(|source| LanError::SpawnPresenceThread { source })?;
 
@@ -523,14 +523,14 @@ fn broadcast_scan(timeout: Duration, nonce: u64) -> Vec<(NearbyReceiver, Ipv4Add
     let targets: Vec<SocketAddr> = {
         let mut t = vec![SocketAddr::from((
             [255, 255, 255, 255],
-            DRIFT_LAN_DISCOVERY_PORT,
+            WISP_LAN_DISCOVERY_PORT,
         ))];
         for ip in all_local_ipv4_addrs() {
             let o = ip.octets();
             let subnet_broadcast = Ipv4Addr::new(o[0], o[1], o[2], 255);
             t.push(SocketAddr::new(
                 IpAddr::V4(subnet_broadcast),
-                DRIFT_LAN_DISCOVERY_PORT,
+                WISP_LAN_DISCOVERY_PORT,
             ));
         }
         t.dedup();
@@ -598,11 +598,11 @@ impl LanReceiveAdvertisement {
         };
         info!(advertised_ips = ?all_ips, %device_label, "lan_advertisement.starting");
 
-        let presence = PresenceResponder::bind(DRIFT_LAN_PRESENCE_PORT)
+        let presence = PresenceResponder::bind(WISP_LAN_PRESENCE_PORT)
             .map_err(|source| LanError::mdns("starting LAN presence responder", source))?;
 
         let discovery = BroadcastDiscoveryResponder::bind(
-            DRIFT_LAN_DISCOVERY_PORT,
+            WISP_LAN_DISCOVERY_PORT,
             ticket.to_owned(),
             device_label.to_owned(),
             device_type,
@@ -616,7 +616,7 @@ impl LanReceiveAdvertisement {
 
         let chunks = chunk_ascii(ticket, TICKET_CHUNK_LEN);
         let mut properties: Vec<(String, String)> = vec![
-            ("ver".into(), DRIFT_MDNS_TXT_VER.into()),
+            ("ver".into(), WISP_MDNS_TXT_VER.into()),
             ("label".into(), device_label.to_owned()),
             ("dt".into(), device_type_to_txt(device_type).into()),
             ("tc".into(), chunks.len().to_string()),
@@ -631,11 +631,11 @@ impl LanReceiveAdvertisement {
             .collect();
 
         let service = ServiceInfo::new(
-            DRIFT_MDNS_SERVICE_TYPE,
+            WISP_MDNS_SERVICE_TYPE,
             &instance,
             &host_name,
             IpAddr::V4(seed_ip),
-            DRIFT_LAN_PRESENCE_PORT,
+            WISP_LAN_PRESENCE_PORT,
             txt.as_slice(),
         )
         .map_err(|source| LanError::mdns("building mDNS service info", source))?
@@ -645,7 +645,7 @@ impl LanReceiveAdvertisement {
         let daemon = ServiceDaemon::new()
             .map_err(|source| LanError::mdns("creating mDNS daemon", source))?;
         if let Err(e) = daemon.register(service) {
-            return Err(LanError::mdns("registering mDNS drift receive service", e));
+            return Err(LanError::mdns("registering mDNS wisp receive service", e));
         }
 
         Ok(Some(Self {
@@ -689,7 +689,7 @@ pub struct NearbyReceiver {
 
 /// Browse for `scan` duration and return the latest snapshot of matching receivers.
 ///
-/// Only includes services that answer the UDP presence protocol on [`DRIFT_LAN_PRESENCE_PORT`].
+/// Only includes services that answer the UDP presence protocol on [`WISP_LAN_PRESENCE_PORT`].
 ///
 /// When `exclude_endpoint_id` is set, drops entries whose mDNS ticket decodes to that iroh
 /// endpoint id (same process advertising while browsing, e.g. Flutter idle receive + send UI).
@@ -735,7 +735,7 @@ pub fn browse_nearby_receivers(
     let daemon =
         ServiceDaemon::new().map_err(|source| LanError::mdns("creating mDNS daemon", source))?;
     let browse_rx = daemon
-        .browse(DRIFT_MDNS_SERVICE_TYPE)
+        .browse(WISP_MDNS_SERVICE_TYPE)
         .map_err(|source| LanError::mdns("starting mDNS browse", source))?;
 
     // Collect cache hits (≤300 ms, overlaps with mDNS daemon startup).
@@ -776,11 +776,11 @@ pub fn browse_nearby_receivers(
                     continue;
                 }
                 let ver = info.get_properties().get_property_val_str("ver");
-                if ver != Some(DRIFT_MDNS_TXT_VER) {
+                if ver != Some(WISP_MDNS_TXT_VER) {
                     warn!(
                         service = %info.get_fullname(),
                         got = ?ver,
-                        expected = DRIFT_MDNS_TXT_VER,
+                        expected = WISP_MDNS_TXT_VER,
                         "lan_scan.filter: ver mismatch",
                     );
                     continue;
@@ -795,11 +795,11 @@ pub fn browse_nearby_receivers(
                 let label = info
                     .get_properties()
                     .get_property_val_str("label")
-                    .unwrap_or("Drift receiver")
+                    .unwrap_or("Wisp receiver")
                     .to_owned();
                 info!(service = %info.get_fullname(), %label, "lan_scan.peer_added");
                 // mDNS is authoritative — always overwrite cache-seeded entry.
-                peer_ips.insert(ticket.clone(), (ip, DRIFT_LAN_PRESENCE_PORT));
+                peer_ips.insert(ticket.clone(), (ip, WISP_LAN_PRESENCE_PORT));
                 peers.insert(
                     ticket.clone(),
                     NearbyReceiver {
@@ -836,7 +836,7 @@ pub fn browse_nearby_receivers(
             // Record IP for cache update (don't overwrite if mDNS already has it).
             peer_ips
                 .entry(ticket.clone())
-                .or_insert((ip, DRIFT_LAN_PRESENCE_PORT));
+                .or_insert((ip, WISP_LAN_PRESENCE_PORT));
             // Only insert if this ticket wasn't already seen via mDNS.
             peers.entry(ticket).or_insert(peer);
         }
@@ -905,7 +905,7 @@ mod tests {
         assert_eq!(chunks.len(), 3);
 
         let mut m: HashMap<String, String> = HashMap::new();
-        m.insert("ver".into(), DRIFT_MDNS_TXT_VER.into());
+        m.insert("ver".into(), WISP_MDNS_TXT_VER.into());
         m.insert("dt".into(), "phone".into());
         m.insert("tc".into(), chunks.len().to_string());
         for (i, c) in chunks.iter().enumerate() {

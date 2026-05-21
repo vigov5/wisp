@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../features/receive/application/state.dart';
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 
 class MobileIdentityCard extends StatefulWidget {
   const MobileIdentityCard({
@@ -124,7 +124,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
               children: [
                 Text(
                   widget.state.deviceName,
-                  style: driftSans(
+                  style: wispSans(
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
                     color: kInk,
@@ -144,7 +144,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                     const SizedBox(width: 8),
                     Text(
                       widget.state.badge.label,
-                      style: driftSans(
+                      style: wispSans(
                         fontSize: 14,
                         color: widget.state.badge.color,
                         fontWeight: FontWeight.w500,
@@ -157,7 +157,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
             const SizedBox(height: 32),
             Text(
               'RECEIVE CODE',
-              style: driftSans(
+              style: wispSans(
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
                 color: kMuted,
@@ -176,7 +176,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                       children: [
                         Text(
                           _formatCode(widget.state.code),
-                          style: driftMono(
+                          style: wispMono(
                             fontSize: 36,
                             fontWeight: FontWeight.w700,
                             color: kInk,
@@ -291,7 +291,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                       Expanded(
                         child: Text(
                           'Code may have been used. Tap to refresh.',
-                          style: driftSans(
+                          style: wispSans(
                             fontSize: 13,
                             fontWeight: FontWeight.w500,
                             color: const Color(0xFF6B4D14),

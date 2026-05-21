@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../../../theme/drift_theme.dart';
+import '../../../../theme/wisp_theme.dart';
 import '../../application/state.dart';
 
 class ReceiveIdleCard extends StatefulWidget {
@@ -148,7 +148,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                         widget.state.deviceName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: driftSans(
+                        style: wispSans(
                           fontSize: 13.5,
                           fontWeight: FontWeight.w600,
                           color: kInk,
@@ -181,7 +181,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                         widget.state.badge.label,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: driftSans(
+                        style: wispSans(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w500,
                           color: badgeColor,
@@ -213,7 +213,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                       key: ValueKey<String>(
                         _copied ? 'copied-label' : 'receive-label',
                       ),
-                      style: driftSans(
+                      style: wispSans(
                         fontSize: 9.5,
                         fontWeight: FontWeight.w500,
                         color: _copied
@@ -277,7 +277,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                             child: Center(
                               child: Text(
                                 _formatCode(widget.state.code),
-                                style: driftMono(
+                                style: wispMono(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w700,
                                   color: const Color(0xFF111111),
@@ -420,7 +420,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                     Expanded(
                       child: Text(
                         'Code may have been used. Tap to refresh.',
-                        style: driftSans(
+                        style: wispSans(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w500,
                           color: const Color(0xFF6B4D14),

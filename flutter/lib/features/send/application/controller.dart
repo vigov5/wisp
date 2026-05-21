@@ -482,7 +482,7 @@ class SendController extends _$SendController {
   void _startKeepalive({required String destinationLabel}) {
     _lastKeepaliveAt = DateTime.now();
     TransferKeepalive.start(
-      title: 'Drift sending',
+      title: 'Wisp sending',
       body: destinationLabel,
     ).ignore();
   }
@@ -501,7 +501,7 @@ class SendController extends _$SendController {
     final body = totalBytes > BigInt.zero
         ? '${formatBytes(bytesSent)} / ${formatBytes(totalBytes)}'
         : destinationLabel;
-    TransferKeepalive.update(title: 'Drift sending', body: body).ignore();
+    TransferKeepalive.update(title: 'Wisp sending', body: body).ignore();
   }
 
   void _stopKeepalive() {

@@ -5,7 +5,7 @@ import '../../../app/app_router.dart';
 import '../../transfers/application/controller.dart';
 import '../../transfers/application/state.dart';
 import '../../transfers/application/service.dart';
-import '../../../theme/drift_theme.dart';
+import '../../../theme/wisp_theme.dart';
 import '../../transfers/presentation/view.dart';
 
 class ReceiveTransferRoutePage extends ConsumerStatefulWidget {

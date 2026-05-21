@@ -1,9 +1,9 @@
-//! `iroh::protocol::ProtocolHandler` implementation for drift's control ALPN.
+//! `iroh::protocol::ProtocolHandler` implementation for wisp's control ALPN.
 //!
 //! The receiver service used to drive a manual `endpoint.accept()` loop and
 //! spawn a `ReceiverSession` for every inbound connection.  We replaced that
 //! loop with an `iroh::protocol::Router` so the same endpoint can multiplex
-//! `drift_core::protocol::ALPN` (handled here) and `iroh_blobs::ALPN`
+//! `wisp_core::protocol::ALPN` (handled here) and `iroh_blobs::ALPN`
 //! (handled by `BlobDispatcher`).  Sharing one endpoint between the receiver
 //! service and any active sender eliminates the relay duplicate-id failure
 //! mode where two endpoints with the same secret key fight for the relay
@@ -13,12 +13,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use drift_core::protocol::DeviceType;
 use iroh::Endpoint;
 use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use tokio::sync::mpsc;
 use tracing::debug;
+use wisp_core::protocol::DeviceType;
 
 use crate::types::ConflictPolicy;
 
@@ -26,12 +26,12 @@ use super::actor::ReceiverCommand;
 use super::session::ReceiverSession;
 
 #[derive(Debug, Clone)]
-pub(super) struct DriftProtocolHandler {
-    inner: Arc<DriftProtocolHandlerInner>,
+pub(super) struct WispProtocolHandler {
+    inner: Arc<WispProtocolHandlerInner>,
 }
 
 #[derive(Debug)]
-struct DriftProtocolHandlerInner {
+struct WispProtocolHandlerInner {
     cmd_tx: mpsc::Sender<ReceiverCommand>,
     out_dir: PathBuf,
     device_name: String,
@@ -44,7 +44,7 @@ struct DriftProtocolHandlerInner {
     next_offer_id: AtomicU64,
 }
 
-impl DriftProtocolHandler {
+impl WispProtocolHandler {
     pub(super) fn new(
         cmd_tx: mpsc::Sender<ReceiverCommand>,
         out_dir: PathBuf,
@@ -54,7 +54,7 @@ impl DriftProtocolHandler {
         endpoint: Endpoint,
     ) -> Self {
         Self {
-            inner: Arc::new(DriftProtocolHandlerInner {
+            inner: Arc::new(WispProtocolHandlerInner {
                 cmd_tx,
                 out_dir,
                 device_name,
@@ -67,8 +67,8 @@ impl DriftProtocolHandler {
     }
 }
 
-impl ProtocolHandler for DriftProtocolHandler {
-    /// One spawned task per accepted drift connection.  The Router already
+impl ProtocolHandler for WispProtocolHandler {
+    /// One spawned task per accepted wisp connection.  The Router already
     /// runs `accept` on a fresh tokio task, so we don't need to detach again
     /// here — we just delegate to `ReceiverSession::spawn` (which itself
     /// spawns the handshake/transfer driver) and return `Ok(())`.  Returning
@@ -79,9 +79,9 @@ impl ProtocolHandler for DriftProtocolHandler {
         let inner = Arc::clone(&self.inner);
         let offer_id = inner.next_offer_id.fetch_add(1, Ordering::Relaxed);
         debug!(
-            target: "drift_app::receiver::drift_handler",
+            target: "wisp_app::receiver::wisp_handler",
             offer_id,
-            "accepted drift ALPN connection"
+            "accepted wisp ALPN connection"
         );
         let session = ReceiverSession::new(
             offer_id,

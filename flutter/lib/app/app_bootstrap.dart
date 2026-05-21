@@ -36,12 +36,12 @@ Future<AppBootstrap> loadAppBootstrap({
   final prefs = await SharedPreferences.getInstance();
 
   // On Android, Rust writes to a temp cache; files are moved to the public
-  // Downloads/Drift/ folder via MediaStore after each transfer completes.
+  // Downloads/Wisp/ folder via MediaStore after each transfer completes.
   // The user-configured downloadRoot is ignored on Android.
   String? androidReceiveCacheDir;
   if (Platform.isAndroid) {
     final tmpDir = await getTemporaryDirectory();
-    androidReceiveCacheDir = '${tmpDir.path}/Download/Drift';
+    androidReceiveCacheDir = '${tmpDir.path}/Download/Wisp';
   }
 
   final repository = SettingsRepository(
@@ -103,7 +103,7 @@ Future<String> resolvePreferredReceiveDownloadRoot() async {
   if (Platform.isAndroid) {
     final downloadsDir = await getDownloadsDirectory();
     if (downloadsDir != null) {
-      return '${downloadsDir.path}${Platform.pathSeparator}Drift';
+      return '${downloadsDir.path}${Platform.pathSeparator}Wisp';
     }
     final externalDirs = await getExternalStorageDirectories(
       type: StorageDirectory.downloads,
@@ -112,28 +112,28 @@ Future<String> resolvePreferredReceiveDownloadRoot() async {
         ? externalDirs.first
         : null;
     if (externalDir != null) {
-      return '${externalDir.path}${Platform.pathSeparator}Drift';
+      return '${externalDir.path}${Platform.pathSeparator}Wisp';
     }
     final docsDir = await getApplicationDocumentsDirectory();
-    return '${docsDir.path}${Platform.pathSeparator}Drift';
+    return '${docsDir.path}${Platform.pathSeparator}Wisp';
   }
 
   if (Platform.isIOS) {
     final docsDir = await getApplicationDocumentsDirectory();
-    return '${docsDir.path}${Platform.pathSeparator}Drift';
+    return '${docsDir.path}${Platform.pathSeparator}Wisp';
   }
 
   final downloadsDir = await getDownloadsDirectory();
   if (downloadsDir != null) {
-    return '${downloadsDir.path}${Platform.pathSeparator}Drift';
+    return '${downloadsDir.path}${Platform.pathSeparator}Wisp';
   }
 
   final home = _userHomeDirectory();
   if (home != null && home.isNotEmpty) {
-    return '$home${Platform.pathSeparator}Downloads${Platform.pathSeparator}Drift';
+    return '$home${Platform.pathSeparator}Downloads${Platform.pathSeparator}Wisp';
   }
 
-  return '${Directory.systemTemp.path}${Platform.pathSeparator}Drift';
+  return '${Directory.systemTemp.path}${Platform.pathSeparator}Wisp';
 }
 
 String? _userHomeDirectory() {

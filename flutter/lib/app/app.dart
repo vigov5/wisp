@@ -11,18 +11,18 @@ import '../features/transfers/application/controller.dart';
 import '../features/transfers/application/service.dart';
 import '../features/transfers/application/state.dart' as transfer_state;
 import 'app_router.dart';
-import '../theme/drift_theme.dart';
+import '../theme/wisp_theme.dart';
 import '../platform/android/keepalive_lifecycle_observer.dart';
 import '../platform/rust/receiver/source.dart';
 
-class DriftApp extends ConsumerStatefulWidget {
-  const DriftApp({super.key});
+class WispApp extends ConsumerStatefulWidget {
+  const WispApp({super.key});
 
   @override
-  ConsumerState<DriftApp> createState() => _DriftAppState();
+  ConsumerState<WispApp> createState() => _WispAppState();
 }
 
-class _DriftAppState extends ConsumerState<DriftApp> {
+class _WispAppState extends ConsumerState<WispApp> {
   late final GoRouter _router;
   late final ReceiverServiceSource _receiverService;
   late final KeepaliveLifecycleObserver _keepaliveObserver;
@@ -106,9 +106,9 @@ class _DriftAppState extends ConsumerState<DriftApp> {
     });
 
     return MaterialApp.router(
-      title: 'Drift',
+      title: 'Wisp',
       debugShowCheckedModeBanner: false,
-      theme: buildDriftTheme(),
+      theme: buildWispTheme(),
       routerConfig: _router,
     );
   }

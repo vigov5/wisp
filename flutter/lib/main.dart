@@ -39,7 +39,7 @@ Future<void> main() async {
           bootstrap.savedDevicesRepository,
         ),
       ],
-      child: const DriftApp(),
+      child: const WispApp(),
     ),
   );
   if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
@@ -49,7 +49,7 @@ Future<void> main() async {
         minimumSize: initialSize,
         maximumSize: initialSize,
         center: true,
-        title: 'Drift',
+        title: 'Wisp',
       ),
       () async {
         await windowManager.show();

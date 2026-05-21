@@ -9,12 +9,12 @@ void main() {
   test('bootstrap creates seeded settings on first launch', () async {
     final bootstrap = await loadAppBootstrap(
       randomDeviceName: () => 'Rusty Ridge',
-      defaultDownloadRoot: '/tmp/Drift',
+      defaultDownloadRoot: '/tmp/Wisp',
       installAppIdentity: (_) {},
     );
 
     expect(bootstrap.initialSettings.deviceName, 'Rusty Ridge');
-    expect(bootstrap.initialSettings.downloadRoot, '/tmp/Drift');
+    expect(bootstrap.initialSettings.downloadRoot, '/tmp/Wisp');
     expect(bootstrap.initialSettings.discoverableByDefault, isTrue);
     expect(bootstrap.initialSettings.discoveryServerUrl, defaultRendezvousUrl);
   });

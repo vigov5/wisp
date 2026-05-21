@@ -1,24 +1,30 @@
+> [!NOTE]
+> **Wisp** is a friendly fork of [Drift](https://github.com/vsamarth/drift) by
+> Samarth Verma. Heavy ❤️ to the upstream project — Wisp diverges in UX
+> direction (Android-first polish, QR code pairing, self-diagnose tooling) and runs its own
+> rendezvous infrastructure so we don't lean on Drift's resources.
+
 > [!WARNING]
-> Drift is still rough around the edges. If something breaks, feels confusing, or does not work on your device, please open an issue:
-> https://github.com/vsamarth/drift/issues/new
+> Wisp is still rough around the edges. If something breaks, feels confusing, or does not work on your device, please open an issue:
+> https://github.com/vigov5/wisp/issues/new
 
 <p align="center">
-  <img src="flutter/assets/logo_rounded.png" width="96" alt="Drift Logo">
+  <img src="flutter/assets/wisp_rounded_logo.png" width="96" alt="Wisp Logo">
 </p>
 
-<h1 align="center">Drift</h1>
+<h1 align="center">Wisp</h1>
 
 <p align="center">
   <strong>AirDrop-like file sharing for any device, anywhere.</strong>
 </p>
 
 <p align="center">
-  <img src="flutter/assets/laptop.gif" width="300" alt="Drift Desktop Demo">
+  <img src="flutter/assets/laptop.gif" width="300" alt="Wisp Desktop Demo">
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="flutter/assets/mobile.gif" height="400" alt="Drift Mobile Demo">
+  <img src="flutter/assets/mobile.gif" height="400" alt="Wisp Mobile Demo">
 </p>
 
-Drift is a free and open-source app for sending files directly between devices, built using [iroh](https://www.iroh.computer/).
+Wisp is a free and open-source app for sending files directly between devices, built using [iroh](https://www.iroh.computer/).
 
 It is designed to feel as simple as AirDrop, but without being limited to Apple devices or nearby-only transfers. Pick files, connect to another device, and send.
 
@@ -27,33 +33,42 @@ It is designed to feel as simple as AirDrop, but without being limited to Apple 
 - **Send files between devices, near or far**
   Discover nearby devices on your local network, or connect using a 6-character pairing code.
 
+- **Offline pairing via QR**
+  No internet? Scan a QR code shown on the receiver to pair over the same Wi-Fi without going through the rendezvous server.
+
+- **Saved devices**
+  After a successful transfer, the other device shows up in a "Recent" list so you can pick it again without re-scanning or re-typing a code. (Auto-approve / trusted-device flow is on the roadmap.)
+
 - **Resumable transfers**
-  Connection died mid-transfer? Send the same files again and Drift will resume from where the transfer stopped instead of starting over.
+  Connection died mid-transfer? Send the same files again and Wisp will resume from where the transfer stopped instead of starting over.
 
 - **Cross-platform**
-  Drift currently provides builds for macOS, Windows, Linux, and Android. iOS support is planned.
+  Wisp currently provides builds for macOS, Windows, Linux, and Android. iOS support is planned.
 
 - **End-to-end encrypted connections**
   Files are sent over an end-to-end encrypted peer-to-peer connection. Files are never stored in the cloud, and only the sender and receiver can read them.
 
+- **Self-diagnose**
+  A built-in Connection Test surfaces network, rendezvous, LAN, and permission issues with actionable hints when things go wrong.
+
 - **Free and open source**
-  Drift is MIT-licensed and open to contributions. No ads, accounts, or limits on what you send.
+  Wisp is MIT-licensed and open to contributions. No ads, accounts, or limits on what you send.
 
 ## Installation
 
 | Platform | Download |
 | --- | --- |
-| macOS | [drift-macos-v0.4.3.dmg](https://github.com/vsamarth/drift/releases/download/v0.4.3/drift-macos-v0.4.3.dmg) |
-| Windows | [drift-windows-setup-v0.4.3.exe](https://github.com/vsamarth/drift/releases/download/v0.4.3/drift-windows-setup-v0.4.3.exe) |
-| Linux | [drift-linux-v0.4.3.deb](https://github.com/vsamarth/drift/releases/download/v0.4.3/drift-linux-v0.4.3.deb) |
-| Android | [drift-android-v0.4.3.apk](https://github.com/vsamarth/drift/releases/download/v0.4.3/drift-android-v0.4.3.apk) |
+| macOS | _coming with first Wisp release_ |
+| Windows | _coming with first Wisp release_ |
+| Linux | _coming with first Wisp release_ |
+| Android | _coming with first Wisp release_ |
 | iOS | Coming soon |
 
 > [!TIP]
-> **macOS:** Drift is currently unsigned. If Gatekeeper blocks the app, you can remove the quarantine flag:
+> **macOS:** Wisp is currently unsigned. If Gatekeeper blocks the app, you can remove the quarantine flag:
 >
 > ```sh
-> xattr -rd com.apple.quarantine /Applications/Drift.app
+> xattr -rd com.apple.quarantine /Applications/Wisp.app
 > ```
 
 ### Build from source
@@ -65,22 +80,31 @@ See [`flutter/README.md`](flutter/README.md) for build instructions.
 ## Getting started
 
 1. Choose or drop the files you want to send.
-2. Select a nearby device, or connect using the 6-character pairing code shown on the receiving device.
+2. Pick a recipient — one of:
+   - a nearby device discovered on your LAN,
+   - the 6-character pairing code shown on the receiving device, or
+   - the QR code shown on the receiving device (scan it from the sender to pair offline, no internet needed).
 3. The receiver reviews the files and accepts the transfer.
-4. Drift sends the files directly to the other device.
+4. Wisp sends the files directly to the other device.
 
 ## Contributing
 
-Drift is usable, but still early. Contributions, testing, bug reports, and UX feedback are welcome.
+Wisp is usable, but still early. Contributions, testing, bug reports, and UX feedback are welcome.
 
 Some of the things planned next:
 
 - [x] Resumable transfers for interrupted sessions
-- [ ] Remember trusted devices for faster repeat transfers
-- [ ] Keep Drift listening in the background
+- [x] Remember recent devices for quick re-send
+- [x] Self-diagnose connection test
+- [x] Offline QR pairing
+- [ ] Trusted devices with auto-approve (skip the accept prompt on known peers)
+- [ ] Dark / light theme
+- [ ] Keep Wisp listening in the background
 - [ ] Set up app distribution through app stores and package managers
 - [ ] Add iOS support
 
 ## License
 
-Drift is licensed under the MIT License. See [`LICENSE`](LICENSE).
+Wisp is licensed under the MIT License. See [`LICENSE`](LICENSE). The original
+copyright (Drift, Samarth Verma) is preserved alongside the Wisp fork's
+copyright per MIT's notice requirement.

@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 mod actor;
-mod drift_handler;
 mod runtime;
 mod session;
+mod wisp_handler;
 
 #[cfg(test)]
 mod tests;
@@ -19,11 +19,11 @@ use crate::types::{
     ConflictPolicy, ConnectionPath, NearbyReceiver, PairingCodeState, QrPairingInfo,
     ReceiverConfig, ReceiverOfferEvent, ReceiverRegistration,
 };
-use drift_core::protocol::{ALPN, DeviceType};
+use wisp_core::protocol::{ALPN, DeviceType};
 
 use self::actor::{ReceiverCommand, run_receiver_actor};
-use self::drift_handler::DriftProtocolHandler;
 use self::runtime::ReceiverRuntime;
+use self::wisp_handler::WispProtocolHandler;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiverLifecycle {
@@ -78,7 +78,7 @@ pub struct ReceiverService {
 impl ReceiverService {
     pub async fn start(config: ReceiverConfig) -> AppResult<Self> {
         // Bind a single endpoint that advertises **both** ALPNs we speak:
-        // `drift_core::protocol::ALPN` for handshake/control and
+        // `wisp_core::protocol::ALPN` for handshake/control and
         // `iroh_blobs::ALPN` for data transfers.  An active sender (running
         // in the same process) reuses this endpoint via `BlobDispatcher`
         // rather than binding its own — that's what avoids the "two
@@ -142,10 +142,10 @@ impl ReceiverService {
         let (event_tx, _) = broadcast::channel(256);
 
         // Build the Router that multiplexes inbound ALPNs.  We accept
-        // `drift_ALPN` ourselves (delegates to `ReceiverSession`) and route
+        // `wisp_ALPN` ourselves (delegates to `ReceiverSession`) and route
         // `iroh_blobs::ALPN` to the global `BlobDispatcher`, which forwards
         // to whichever sender (in the same process) is currently active.
-        let drift_handler = DriftProtocolHandler::new(
+        let wisp_handler = WispProtocolHandler::new(
             cmd_tx.clone(),
             config.download_root.clone(),
             config.device_name.clone(),
@@ -154,13 +154,13 @@ impl ReceiverService {
             endpoint.clone(),
         );
         let router = Router::builder(endpoint.clone())
-            .accept(ALPN, drift_handler)
+            .accept(ALPN, wisp_handler)
             .accept(iroh_blobs::ALPN, BlobDispatcher::global())
             .spawn();
         tracing::info!(
-            target: "drift_app::receiver",
+            target: "wisp_app::receiver",
             endpoint_id = %endpoint.addr().id,
-            "receiver service started; Router accepting drift_ALPN + iroh_blobs ALPN \
+            "receiver service started; Router accepting wisp_ALPN + iroh_blobs ALPN \
              on shared endpoint"
         );
 
@@ -200,13 +200,10 @@ impl ReceiverService {
         self.endpoint.clone()
     }
 
-    pub fn qr_pairing_info(&self) -> Result<QrPairingInfo, drift_core::util::TicketError> {
-        let ticket = drift_core::util::make_qr_payload(
-            &self.endpoint,
-            &self.device_name,
-            &self.device_type,
-        )?;
-        let lan_ips = drift_core::util::lan_direct_addrs(&self.endpoint)
+    pub fn qr_pairing_info(&self) -> Result<QrPairingInfo, wisp_core::util::TicketError> {
+        let ticket =
+            wisp_core::util::make_qr_payload(&self.endpoint, &self.device_name, &self.device_type)?;
+        let lan_ips = wisp_core::util::lan_direct_addrs(&self.endpoint)
             .into_iter()
             .map(|s| s.to_string())
             .collect();

@@ -1,4 +1,4 @@
-package com.example.drift
+package dev.vigov5.wisp
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -23,8 +23,8 @@ class TransferKeepaliveService : Service() {
 
     companion object {
         const val NOTIFICATION_ID = 4711
-        const val CHANNEL_ID = "drift_transfer"
-        const val ACTION_STOP = "com.example.drift.TRANSFER_STOP"
+        const val CHANNEL_ID = "wisp_transfer"
+        const val ACTION_STOP = "dev.vigov5.wisp.TRANSFER_STOP"
         const val EXTRA_TITLE = "title"
         const val EXTRA_BODY = "body"
     }
@@ -47,7 +47,7 @@ class TransferKeepaliveService : Service() {
         // the framework counts the service as "started as FGS" the moment
         // it was launched via startForegroundService(), so we MUST call
         // startForeground() before stopping — otherwise the system kills us.
-        val title = intent?.getStringExtra(EXTRA_TITLE) ?: "Drift"
+        val title = intent?.getStringExtra(EXTRA_TITLE) ?: "Wisp"
         val body = intent?.getStringExtra(EXTRA_BODY) ?: ""
         val notif = buildNotification(title, body)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -90,7 +90,7 @@ class TransferKeepaliveService : Service() {
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Drift transfer",
+            "Wisp transfer",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
             description = "Keeps active file transfers running while the screen is off."
@@ -138,7 +138,7 @@ class TransferKeepaliveService : Service() {
 
     private fun acquireLocks() {
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "drift:transfer-cpu").apply {
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "wisp:transfer-cpu").apply {
             setReferenceCounted(false)
             acquire()
         }
@@ -151,7 +151,7 @@ class TransferKeepaliveService : Service() {
             @Suppress("DEPRECATION")
             WifiManager.WIFI_MODE_FULL_HIGH_PERF
         }
-        wifiLock = wm.createWifiLock(wifiMode, "drift:transfer-wifi").apply {
+        wifiLock = wm.createWifiLock(wifiMode, "wisp:transfer-wifi").apply {
             setReferenceCounted(false)
             acquire()
         }

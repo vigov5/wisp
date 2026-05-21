@@ -3,7 +3,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const DEFAULT_RENDEZVOUS_URL: &str = "https://drift.samarthv.com";
+pub const DEFAULT_RENDEZVOUS_URL: &str = "https://rendezvous.wisp.mooo.com";
 pub const CODE_LENGTH: usize = 6;
 pub const CODE_ALPHABET: &str = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
@@ -164,7 +164,7 @@ pub fn validate_code(code: &str) -> std::result::Result<(), RendezvousError> {
 }
 
 pub fn resolve_server_url(override_url: Option<&str>) -> String {
-    resolve_server_url_with_env(override_url, std::env::var("DRIFT_RENDEZVOUS_URL").ok())
+    resolve_server_url_with_env(override_url, std::env::var("WISP_RENDEZVOUS_URL").ok())
 }
 
 fn resolve_server_url_with_env(override_url: Option<&str>, env_url: Option<String>) -> String {
