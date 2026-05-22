@@ -9,4 +9,5 @@ baseurl: /wisp
 exclude:
   - rename-to-wisp.md
   - deploy-rendezvous-server.md
+  - upstream-bug-audit.md
   - connection-test-plan.md
