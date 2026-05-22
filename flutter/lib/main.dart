@@ -20,7 +20,7 @@ Future<void> main() async {
   }
   await RustLib.init();
 
-  const initialSize = Size(440, 560);
+  const initialSize = Size(440, 840);
   final bootstrap = await loadAppBootstrap();
   runApp(
     ProviderScope(
