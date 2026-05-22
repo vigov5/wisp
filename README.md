@@ -19,9 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="flutter/assets/laptop.gif" width="300" alt="Wisp Desktop Demo">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="flutter/assets/mobile.gif" height="400" alt="Wisp Mobile Demo">
+  <img src="flutter/assets/demo.gif" width="500" alt="Wisp Demo">
 </p>
 
 Wisp is a free and open-source app for sending files directly between devices, built using [iroh](https://www.iroh.computer/).
@@ -58,10 +56,10 @@ It is designed to feel as simple as AirDrop, but without being limited to Apple 
 
 | Platform | Download |
 | --- | --- |
-| macOS | _coming with first Wisp release_ |
-| Windows | _coming with first Wisp release_ |
-| Linux | _coming with first Wisp release_ |
-| Android | _coming with first Wisp release_ |
+| macOS | [wisp-macos-v1.0.0.dmg](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-macos-v1.0.0.dmg) |
+| Windows | [wisp-windows-setup-v1.0.0.exe](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-windows-setup-v1.0.0.exe) · [portable .zip](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-windows-portable-v1.0.0.zip) |
+| Linux | [wisp-linux-v1.0.0.deb](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-linux-v1.0.0.deb) · [.flatpak](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-v1.0.0.flatpak) · [bundle .zip](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-linux-v1.0.0.zip) |
+| Android | [wisp-android-v1.0.0.apk](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-android-v1.0.0.apk) (sideload) — Play Store listing pending review |
 | iOS | Coming soon |
 
 > [!TIP]
