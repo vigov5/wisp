@@ -346,11 +346,26 @@ jobs:
       - name: Package Android APK
         run: mv build/app/outputs/flutter-apk/app-release.apk "wisp-android-${{ env.SAFE_VERSION }}.apk"
 
-      - name: Upload Android artifact
+      - name: Upload Android APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: wisp-android
           path: flutter/wisp-android-${{ env.SAFE_VERSION }}.apk
+          if-no-files-found: error
+
+      # Play Store requires AAB.  Build it after the APK so the keystore +
+      # release signing config (already loaded into Gradle) get reused.
+      - name: Build Android App Bundle (Play Store)
+        run: flutter build appbundle --release
+
+      - name: Package Android AAB
+        run: mv build/app/outputs/bundle/release/app-release.aab "wisp-android-${{ env.SAFE_VERSION }}.aab"
+
+      - name: Upload Android AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wisp-android-aab
+          path: flutter/wisp-android-${{ env.SAFE_VERSION }}.aab
           if-no-files-found: error
 
   flatpak:
