@@ -1,0 +1,12 @@
+title: Wisp
+description: Peer-to-peer file sharing for any device, anywhere.
+url: https://vigov5.github.io
+baseurl: /wisp
+
+# Internal dev/planning documents — keep them in the repo for git
+# history but exclude from the published GitHub Pages site so the only
+# public-facing page is the privacy policy.
+exclude:
+  - rename-to-wisp.md
+  - deploy-rendezvous-server.md
+  - connection-test-plan.md
