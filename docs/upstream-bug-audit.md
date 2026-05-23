@@ -212,9 +212,26 @@ partial fix already: it preserves `preview.file_count`,
 
 ### Follow-up
 
-- [ ] Implement the fixes above
-- [ ] Add the two regression tests
-- [ ] Reply on upstream issue with the fix link once merged
+- [x] Implemented receiver fix in `crates/app/src/receiver/session.rs`:
+      `failed_offer_event` now takes plan / item counts / bytes_received /
+      connection_path / sender_endpoint_id / sender_ticket / files
+      explicitly; all 5 in-stream + post-loop call sites pass the
+      context they have; defensive `offer_rx` failure paths still use
+      zeros / `None`.  Tracks `latest_snapshot` across the run loop so
+      the in-stream `CoreReceiverEvent::Failed` arm can carry it.
+- [x] Implemented sender fix in `crates/app/src/send/session.rs`:
+      `failed_event_from_error` takes `&preview` + `Option<TransferPlan>`
+      + `Option<TransferSnapshot>` and derives item_count / total_size /
+      bytes_sent from them (plan-then-preview-then-zero fallback).
+      `map_sender_event` got a `&mut Option<TransferSnapshot>` so the
+      TransferProgress arm caches the latest snapshot for the Failed
+      arm and the post-loop call site to use.
+- [x] Added 2 regression tests:
+      - `receiver::session::tests::failed_offer_event_preserves_plan_and_progress_context`
+      - `send::session::tests::failed_event_preserves_plan_and_snapshot`
+      Existing `failed_event_uses_structured_error` tests updated for
+      the new signatures (sender + draft).
+- [ ] Reply on upstream issue with the fix link once merged.
 
 ---
 

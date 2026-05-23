@@ -241,7 +241,18 @@ mod tests {
         let error = AppError::Internal {
             message: "boom".to_owned(),
         };
-        let event = super::super::session::failed_event_from_error("Remote", error.into());
+        let preview = crate::types::SelectionPreview {
+            items: Vec::new(),
+            file_count: 0,
+            total_size: 0,
+        };
+        let event = super::super::session::failed_event_from_error(
+            "Remote",
+            error.into(),
+            &preview,
+            None,
+            None,
+        );
 
         let error = event.error.expect("structured error");
         assert_eq!(error.kind(), UserFacingErrorKind::Internal);

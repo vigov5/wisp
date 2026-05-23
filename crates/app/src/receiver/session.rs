@@ -117,12 +117,23 @@ impl ReceiverSession {
                 let _ = cmd_tx
                     .send(ReceiverCommand::OfferFinished {
                         offer_id,
+                        // Offer never arrived — no plan / item counts /
+                        // path context to preserve, defensive zeros.
                         final_event: failed_offer_event(
-                            &save_root_label,
+                            save_root_label.clone(),
                             String::new(),
                             device_type,
                             "Transfer failed.".to_owned(),
                             UserFacingError::from(error),
+                            0,
+                            0,
+                            0,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            Vec::new(),
                         ),
                     })
                     .await;
@@ -133,11 +144,20 @@ impl ReceiverSession {
                     .send(ReceiverCommand::OfferFinished {
                         offer_id,
                         final_event: failed_offer_event(
-                            &save_root_label,
+                            save_root_label.clone(),
                             String::new(),
                             device_type,
                             "Transfer failed.".to_owned(),
                             UserFacingError::internal("Transfer failed", format!("{error}")),
+                            0,
+                            0,
+                            0,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            Vec::new(),
                         ),
                     })
                     .await;
@@ -163,11 +183,19 @@ impl ReceiverSession {
         ) {
             Ok(plan) => plan,
             Err(error) => {
+                // Snapshot the connection path BEFORE we cross the await
+                // below — the MutexGuard isn't Send so it can't be held
+                // across an .await inside a tokio task.
+                let path_snapshot = current_path.lock().unwrap().clone();
                 let _ = cmd_tx
                     .send(ReceiverCommand::OfferFinished {
                         offer_id,
+                        // Offer arrived but plan construction failed — we
+                        // still know the file count + total size from the
+                        // offer manifest, but the structured plan itself
+                        // never materialised so leave it as None.
                         final_event: failed_offer_event(
-                            &save_root_label,
+                            save_root_label.clone(),
                             sender_label.clone(),
                             sender_device_type,
                             "Transfer failed.".to_owned(),
@@ -175,6 +203,15 @@ impl ReceiverSession {
                                 "Transfer failed",
                                 format_error_chain(&error),
                             ),
+                            offer.file_count,
+                            offer.total_size,
+                            0,
+                            None,
+                            None,
+                            Some(path_snapshot),
+                            Some(remote_id_str.clone()),
+                            None,
+                            Vec::new(),
                         ),
                     })
                     .await;
@@ -261,6 +298,10 @@ impl ReceiverSession {
             .checked_sub(PROGRESS_EVENT_MIN_INTERVAL)
             .unwrap_or_else(std::time::Instant::now);
         let mut last_progress_bytes = resume_from_bytes;
+        // Latest TransferSnapshot we observed.  drift#29: the Failed
+        // path needs this so the UI can show how far the transfer got
+        // (current bytes_transferred / file / phase) when it failed.
+        let mut latest_snapshot: Option<TransferSnapshot> = None;
         while let Some(event) = events.next().await {
             match event {
                 CoreReceiverEvent::TransferStarted {
@@ -290,6 +331,10 @@ impl ReceiverSession {
                     session_id: _,
                     snapshot,
                 } => {
+                    // Always track the latest snapshot regardless of whether
+                    // we end up emitting a UI tick — needed so the Failed
+                    // arm below can report how far we got (drift#29).
+                    latest_snapshot = Some(snapshot.clone());
                     let now = std::time::Instant::now();
                     let interval_elapsed =
                         now.duration_since(last_progress_emit_at) >= PROGRESS_EVENT_MIN_INTERVAL;
@@ -348,12 +393,33 @@ impl ReceiverSession {
                 CoreReceiverEvent::Failed { error, .. } => {
                     let _ = progress_cmd_tx.try_send(ReceiverCommand::OfferFinished {
                         offer_id,
+                        // drift#29: carry the plan + latest snapshot +
+                        // last_progress_bytes + connection path so the UI
+                        // can show "Transfer from <peer> failed at
+                        // 12 / 50 MB" instead of dropping everything
+                        // we already knew.
                         final_event: failed_offer_event(
-                            &save_root_label,
+                            save_root_label.clone(),
                             sender_label.clone(),
                             sender_device_type,
                             "Transfer failed.".to_owned(),
                             UserFacingError::from(error),
+                            offer.file_count,
+                            offer.total_size,
+                            last_progress_bytes,
+                            Some(plan.clone()),
+                            latest_snapshot.clone(),
+                            Some(current_path.lock().unwrap().clone()),
+                            Some(remote_id_str.clone()),
+                            None,
+                            offer
+                                .items
+                                .iter()
+                                .map(|file| ReceiverOfferFile {
+                                    path: file.path.clone(),
+                                    size: file.size,
+                                })
+                                .collect(),
                         ),
                     });
                     let _ = path_shutdown_tx.send(());
@@ -450,18 +516,50 @@ impl ReceiverSession {
                 },
             },
             Ok(Err(error)) => failed_offer_event(
-                &save_root_label,
+                save_root_label,
                 sender_label,
                 sender_device_type,
                 "Transfer failed.".to_owned(),
                 UserFacingError::from(error),
+                offer.file_count,
+                offer.total_size,
+                last_progress_bytes,
+                Some(plan.clone()),
+                latest_snapshot.clone(),
+                final_path.clone(),
+                Some(remote_id_str.clone()),
+                sender_ticket.clone(),
+                offer
+                    .items
+                    .iter()
+                    .map(|file| ReceiverOfferFile {
+                        path: file.path.clone(),
+                        size: file.size,
+                    })
+                    .collect(),
             ),
             Err(error) => failed_offer_event(
-                &save_root_label,
+                save_root_label,
                 sender_label,
                 sender_device_type,
                 "Transfer failed.".to_owned(),
                 UserFacingError::internal("Transfer failed", format!("{error}")),
+                offer.file_count,
+                offer.total_size,
+                last_progress_bytes,
+                Some(plan.clone()),
+                latest_snapshot.clone(),
+                final_path.clone(),
+                Some(remote_id_str.clone()),
+                sender_ticket.clone(),
+                offer
+                    .items
+                    .iter()
+                    .map(|file| ReceiverOfferFile {
+                        path: file.path.clone(),
+                        size: file.size,
+                    })
+                    .collect(),
             ),
         };
 
@@ -635,30 +733,53 @@ fn build_offer_event(
     }
 }
 
+/// Builds a final ReceiverOfferEvent for the `Failed` phase.
+///
+/// drift#29: failure events used to discard the plan / item counts /
+/// bytes_received / connection path / files context the caller already
+/// knew, leaving the UI to show "zero items, zero bytes, plan: None"
+/// at the moment the user most needs that information.  All those
+/// fields are now passed through explicitly — call sites that have the
+/// context fill it; defensive call sites (offer never arrived) pass
+/// zeros / `None`.
+#[allow(clippy::too_many_arguments)]
 fn failed_offer_event(
-    save_root_label: &str,
+    save_root_label: String,
     sender_name: String,
     sender_device_type: DeviceType,
     status_message: String,
     error: UserFacingError,
+    item_count: u64,
+    total_size_bytes: u64,
+    bytes_received: u64,
+    plan: Option<TransferPlan>,
+    snapshot: Option<TransferSnapshot>,
+    connection_path: Option<ConnectionPath>,
+    sender_endpoint_id: Option<String>,
+    sender_ticket: Option<String>,
+    files: Vec<ReceiverOfferFile>,
 ) -> ReceiverOfferEvent {
+    // Mirror the Cancelled arm's behaviour: when we know who the peer was,
+    // reflect it as the destination_label so the UI can show "Transfer
+    // from <peer> failed" rather than an empty header.
+    let destination_label = sender_name.clone();
     ReceiverOfferEvent {
         phase: ReceiverOfferPhase::Failed,
         sender_name,
         sender_device_type: device_type_to_str(sender_device_type),
-        destination_label: String::new(),
-        save_root_label: save_root_label.to_owned(),
+        destination_label,
+        save_root_label,
         status_message,
-        item_count: 0,
-        total_size_bytes: 0,
-        bytes_received: 0,
-        plan: None,
-        snapshot: None,
-        connection_path: None,
-        sender_endpoint_id: None,
-        sender_ticket: None,
-        total_size_label: String::new(),
-        files: Vec::new(),
+        item_count,
+        total_size_bytes,
+        bytes_received,
+        plan,
+        snapshot,
+        connection_path,
+        sender_endpoint_id,
+        sender_ticket,
+        total_size_label: human_size(total_size_bytes),
+        files,
         error: Some(error),
     }
 }
@@ -669,9 +790,9 @@ mod tests {
         build_core_receiver_request, build_offer_event, completed_offer_event, failed_offer_event,
     };
     use crate::error::UserFacingErrorKind;
-    use crate::types::{ConflictPolicy, ConnectionPath};
+    use crate::types::{ConflictPolicy, ConnectionPath, ReceiverOfferFile};
     use wisp_core::protocol::DeviceType;
-    use wisp_core::transfer::TransferPlan;
+    use wisp_core::transfer::{TransferPhase, TransferPlan, TransferPlanFile, TransferSnapshot};
     use wisp_core::util::ConnectionPathKind;
 
     #[test]
@@ -689,11 +810,20 @@ mod tests {
     #[test]
     fn failed_offer_event_uses_structured_error() {
         let event = failed_offer_event(
-            "Downloads",
+            "Downloads".to_owned(),
             "Maya".to_owned(),
             DeviceType::Laptop,
             "Transfer failed.".to_owned(),
             crate::error::UserFacingError::internal("Transfer failed", "boom"),
+            0,
+            0,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
         );
 
         assert_eq!(event.sender_name, "Maya");
@@ -701,6 +831,88 @@ mod tests {
         assert_eq!(error.kind(), UserFacingErrorKind::Internal);
         assert_eq!(error.title(), "Transfer failed");
         assert_eq!(error.message(), "boom");
+    }
+
+    /// drift#29 regression: when failure fires after the receiver has
+    /// already seen an offer + transfer progress, the final event must
+    /// carry the plan, item counts, bytes_received, connection path,
+    /// and file list rather than dropping all of them.
+    #[test]
+    fn failed_offer_event_preserves_plan_and_progress_context() {
+        let plan = TransferPlan::try_new(
+            "session-1".to_owned(),
+            vec![
+                TransferPlanFile {
+                    id: 0,
+                    path: "a.txt".to_owned(),
+                    size: 4,
+                },
+                TransferPlanFile {
+                    id: 1,
+                    path: "b.txt".to_owned(),
+                    size: 8,
+                },
+            ],
+        )
+        .unwrap();
+        let snapshot = TransferSnapshot {
+            session_id: "session-1".to_owned(),
+            phase: TransferPhase::Transferring,
+            total_files: 2,
+            completed_files: 1,
+            total_bytes: 12,
+            bytes_transferred: 7,
+            active_file_id: Some(1),
+            active_file_bytes: Some(3),
+            bytes_per_sec: Some(100),
+            eta_seconds: Some(1),
+        };
+        let path = ConnectionPath {
+            kind: ConnectionPathKind::Direct,
+            relay_url: None,
+            direct_addr: Some("192.168.1.5:5000".to_owned()),
+        };
+        let files = vec![
+            ReceiverOfferFile {
+                path: "a.txt".to_owned(),
+                size: 4,
+            },
+            ReceiverOfferFile {
+                path: "b.txt".to_owned(),
+                size: 8,
+            },
+        ];
+
+        let event = failed_offer_event(
+            "Downloads".to_owned(),
+            "Maya".to_owned(),
+            DeviceType::Laptop,
+            "Transfer failed.".to_owned(),
+            crate::error::UserFacingError::internal("Transfer failed", "boom"),
+            2,
+            12,
+            7,
+            Some(plan.clone()),
+            Some(snapshot.clone()),
+            Some(path.clone()),
+            Some("endpoint-abc".to_owned()),
+            Some("wisp-pair:xyz".to_owned()),
+            files.clone(),
+        );
+
+        assert_eq!(event.sender_name, "Maya");
+        assert_eq!(event.destination_label, "Maya");
+        assert_eq!(event.item_count, 2);
+        assert_eq!(event.total_size_bytes, 12);
+        assert_eq!(event.bytes_received, 7);
+        assert_eq!(event.plan.as_ref(), Some(&plan));
+        assert_eq!(event.snapshot.as_ref(), Some(&snapshot));
+        assert_eq!(event.connection_path.as_ref(), Some(&path));
+        assert_eq!(event.sender_endpoint_id.as_deref(), Some("endpoint-abc"));
+        assert_eq!(event.sender_ticket.as_deref(), Some("wisp-pair:xyz"));
+        assert_eq!(event.files, files);
+        assert!(!event.total_size_label.is_empty());
+        assert!(event.error.is_some());
     }
 
     #[test]

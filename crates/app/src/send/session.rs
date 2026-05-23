@@ -9,7 +9,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use wisp_core::protocol::{Identity, TransferRole};
 use wisp_core::transfer::{
     SendRequest, Sender, SenderEvent as CoreSenderEvent, TransferOutcome as CoreTransferOutcome,
-    TransferPlan,
+    TransferPlan, TransferSnapshot,
 };
 use wisp_core::util::snapshot_connection_path;
 
@@ -151,7 +151,13 @@ impl SendSession {
             Err(error) => {
                 emit_send_event(
                     &event_tx,
-                    failed_event_from_error(&destination_label, error.clone().into()),
+                    failed_event_from_error(
+                        &destination_label,
+                        error.clone().into(),
+                        &preview,
+                        None,
+                        None,
+                    ),
                 );
                 return Err(error);
             }
@@ -242,6 +248,10 @@ impl SendSession {
         }
         let mut current_label = destination_label.clone();
         let mut current_plan: Option<TransferPlan> = None;
+        // drift#29: track the latest transfer snapshot so the Failed
+        // event can report how far we got (bytes_sent / phase /
+        // completed_files) instead of dropping back to zero.
+        let mut current_snapshot: Option<TransferSnapshot> = None;
 
         let (path_shutdown_tx, path_shutdown_rx) = oneshot::channel::<()>();
         let path_watcher = spawn_send_path_watcher(
@@ -254,8 +264,13 @@ impl SendSession {
         );
 
         while let Some(core_event) = core_events.next().await {
-            let mut mapped =
-                map_sender_event(&mut current_label, &preview, &mut current_plan, core_event);
+            let mut mapped = map_sender_event(
+                &mut current_label,
+                &preview,
+                &mut current_plan,
+                &mut current_snapshot,
+                core_event,
+            );
             mapped.remote_ticket = remote_ticket.clone();
             let mapped = maybe_demote_pre_handshake_failure(&last_event, mapped);
             emit_send_event_stamped(&event_tx, &current_path, &last_event, mapped);
@@ -290,7 +305,13 @@ impl SendSession {
             Err(error) => {
                 emit_send_event(
                     &event_tx,
-                    failed_event_from_error(&current_label, error.into()),
+                    failed_event_from_error(
+                        &current_label,
+                        error.into(),
+                        &preview,
+                        current_plan.clone(),
+                        current_snapshot.clone(),
+                    ),
                 );
                 Err(AppError::Internal {
                     message: "transfer failed".to_owned(),
@@ -460,19 +481,35 @@ fn spawn_send_path_watcher(
     })
 }
 
+/// drift#29: failure events used to clobber `item_count`, `total_size`,
+/// `bytes_sent`, `plan`, and `snapshot` with zero / `None` — losing the
+/// context the UI needs to render "Transfer to <peer> failed at
+/// 7 / 12 MB" instead of "0 / 0".  Callers now pass whatever they have
+/// in scope (a freshly-resolved destination has only `preview`; the
+/// post-run-loop call has `preview` + `current_plan` + the last
+/// observed `current_snapshot`).
 pub(crate) fn failed_event_from_error(
     destination_label: &str,
     error: UserFacingError,
+    preview: &crate::types::SelectionPreview,
+    plan: Option<TransferPlan>,
+    snapshot: Option<TransferSnapshot>,
 ) -> SendEvent {
+    let (item_count, total_size) = if let Some(plan) = plan.as_ref() {
+        (u64::from(plan.total_files), plan.total_bytes)
+    } else {
+        (preview.file_count, preview.total_size)
+    };
+    let bytes_sent = snapshot.as_ref().map(|s| s.bytes_transferred).unwrap_or(0);
     SendEvent {
         phase: SendPhase::Failed,
         destination_label: destination_label.to_owned(),
-        status_message: format!("Starting transfer to {destination_label}."),
-        item_count: 0,
-        total_size: 0,
-        bytes_sent: 0,
-        plan: None,
-        snapshot: None,
+        status_message: format!("Transfer to {destination_label} failed."),
+        item_count,
+        total_size,
+        bytes_sent,
+        plan,
+        snapshot,
         remote_device_type: None,
         remote_endpoint_id: None,
         remote_ticket: None,
@@ -485,6 +522,7 @@ fn map_sender_event(
     current_label: &mut String,
     preview: &crate::types::SelectionPreview,
     current_plan: &mut Option<TransferPlan>,
+    current_snapshot: &mut Option<TransferSnapshot>,
     event: CoreSenderEvent,
 ) -> SendEvent {
     match event {
@@ -578,21 +616,30 @@ fn map_sender_event(
             error,
             prepared_plan,
             ..
-        } => SendEvent {
-            phase: SendPhase::Failed,
-            destination_label: current_label.clone(),
-            status_message: format!("Starting transfer to {current_label}."),
-            item_count: preview.file_count,
-            total_size: preview.total_size,
-            bytes_sent: 0,
-            plan: Some(prepared_plan),
-            snapshot: None,
-            remote_device_type: None,
-            remote_endpoint_id: None,
-            remote_ticket: None,
-            connection_path: None,
-            error: Some(UserFacingError::from(error)),
-        },
+        } => {
+            // drift#29: surface the most recent snapshot (if any) so
+            // bytes_sent reflects how far the transfer actually got
+            // before the failure, instead of resetting to 0.
+            let bytes_sent = current_snapshot
+                .as_ref()
+                .map(|s| s.bytes_transferred)
+                .unwrap_or(0);
+            SendEvent {
+                phase: SendPhase::Failed,
+                destination_label: current_label.clone(),
+                status_message: format!("Transfer to {current_label} failed."),
+                item_count: u64::from(prepared_plan.total_files).max(preview.file_count),
+                total_size: prepared_plan.total_bytes.max(preview.total_size),
+                bytes_sent,
+                plan: Some(prepared_plan),
+                snapshot: current_snapshot.clone(),
+                remote_device_type: None,
+                remote_endpoint_id: None,
+                remote_ticket: None,
+                connection_path: None,
+                error: Some(UserFacingError::from(error)),
+            }
+        }
         CoreSenderEvent::TransferStarted { plan, .. } => {
             *current_plan = Some(plan.clone());
             SendEvent {
@@ -625,7 +672,12 @@ fn map_sender_event(
                 .unwrap_or(snapshot.total_bytes),
             bytes_sent: snapshot.bytes_transferred,
             plan: current_plan.clone(),
-            snapshot: Some(snapshot.clone()),
+            snapshot: {
+                // drift#29: track the latest progress so a later Failed
+                // event can carry it as the "last known snapshot".
+                *current_snapshot = Some(snapshot.clone());
+                Some(snapshot.clone())
+            },
             remote_device_type: None,
             remote_endpoint_id: None,
             remote_ticket: None,
@@ -792,12 +844,82 @@ mod tests {
         let error = AppError::Internal {
             message: "boom".to_owned(),
         };
-        let event = failed_event_from_error("Remote", error.into());
+        let preview = crate::types::SelectionPreview {
+            items: Vec::new(),
+            file_count: 0,
+            total_size: 0,
+        };
+        let event = failed_event_from_error("Remote", error.into(), &preview, None, None);
 
         let error = event.error.expect("structured error");
         assert_eq!(error.kind(), UserFacingErrorKind::Internal);
         assert_eq!(error.title(), "Wisp internal error");
         assert!(error.message().contains("boom"));
+    }
+
+    /// drift#29 regression: when the run loop ends with an Err outcome
+    /// after the sender has already observed transfer progress, the
+    /// emitted Failed SendEvent must carry the plan + snapshot and a
+    /// non-zero bytes_sent rather than dropping back to the empty
+    /// `Sending to <peer>` placeholder.
+    #[test]
+    fn failed_event_preserves_plan_and_snapshot() {
+        use wisp_core::transfer::{
+            TransferPhase, TransferPlan, TransferPlanFile, TransferSnapshot,
+        };
+
+        let plan = TransferPlan::try_new(
+            "session-1".to_owned(),
+            vec![
+                TransferPlanFile {
+                    id: 0,
+                    path: "a.txt".to_owned(),
+                    size: 4,
+                },
+                TransferPlanFile {
+                    id: 1,
+                    path: "b.txt".to_owned(),
+                    size: 8,
+                },
+            ],
+        )
+        .unwrap();
+        let snapshot = TransferSnapshot {
+            session_id: "session-1".to_owned(),
+            phase: TransferPhase::Transferring,
+            total_files: 2,
+            completed_files: 1,
+            total_bytes: 12,
+            bytes_transferred: 7,
+            active_file_id: Some(1),
+            active_file_bytes: Some(3),
+            bytes_per_sec: Some(100),
+            eta_seconds: Some(1),
+        };
+        let preview = crate::types::SelectionPreview {
+            items: Vec::new(),
+            file_count: 2,
+            total_size: 12,
+        };
+        let error = AppError::Internal {
+            message: "boom".to_owned(),
+        };
+
+        let event = failed_event_from_error(
+            "Receiver",
+            error.into(),
+            &preview,
+            Some(plan.clone()),
+            Some(snapshot.clone()),
+        );
+
+        assert!(matches!(event.phase, SendPhase::Failed));
+        assert_eq!(event.item_count, 2);
+        assert_eq!(event.total_size, 12);
+        assert_eq!(event.bytes_sent, 7);
+        assert_eq!(event.plan.as_ref(), Some(&plan));
+        assert_eq!(event.snapshot.as_ref(), Some(&snapshot));
+        assert!(event.error.is_some());
     }
 
     #[test]
