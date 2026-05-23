@@ -429,6 +429,14 @@ where
 
     let mut progress_active = true;
     let mut control_done = false;
+    // Set when the receiver has successfully signalled TransferCompleted on
+    // the progress stream — at that point bytes + export are confirmed done
+    // on the receiver side, so a subsequent control-stream read error
+    // (idle-timeout, transient network loss before the explicit
+    // TransferResult arrived) shouldn't fail the whole transfer.  See
+    // docs/upstream-bug-audit.md for the "Sender errors with Protocol
+    // mismatch while receiver completes" entry.
+    let mut seen_transfer_completed = false;
     // The wire protocol doesn't carry bytes_per_sec / eta — both peers measure
     // their own throughput against their own clock. We record each progress
     // tick locally so the sender's UI can show the same speed/ETA the receiver
@@ -466,6 +474,7 @@ where
                             plan.total_bytes,
                             &mut speed,
                         );
+                        seen_transfer_completed = true;
                         events.emit(SenderEvent::TransferCompleted {
                             session_id: session_id.to_owned(),
                             snapshot,
@@ -479,8 +488,8 @@ where
                 }
             }
             msg = &mut control_fut, if !control_done => {
-                match msg? {
-                    protocol_message::ReceiverMessage::TransferResult(r) => {
+                match msg {
+                    Ok(protocol_message::ReceiverMessage::TransferResult(r)) => {
                         match r.status {
                             protocol_message::TransferStatus::Ok => {
                                 control_done = true;
@@ -490,10 +499,25 @@ where
                             }
                         }
                     }
-                    protocol_message::ReceiverMessage::Cancel(c) => {
+                    Ok(protocol_message::ReceiverMessage::Cancel(c)) => {
                         return Ok(TransferOutcome::from_remote_cancel(c, session_id)?);
                     }
-                    other => return Err(ProtocolError::unexpected_message_kind("receiver control", MessageKind::TransferResult, other.kind()).into()),
+                    Ok(other) => return Err(ProtocolError::unexpected_message_kind("receiver control", MessageKind::TransferResult, other.kind()).into()),
+                    // If we've already seen TransferCompleted on the progress
+                    // stream, the byte transfer + receiver-side export are
+                    // confirmed done — a subsequent control-stream read error
+                    // is most likely the QUIC keepalive losing the path during
+                    // the brief post-export window (see audit doc).  Treat
+                    // it as a successful end-of-control rather than failing
+                    // the whole transfer.  Errors before TransferCompleted
+                    // still propagate.
+                    Err(error) => {
+                        if seen_transfer_completed {
+                            control_done = true;
+                        } else {
+                            return Err(error.into());
+                        }
+                    }
                 }
             }
         }
@@ -732,6 +756,135 @@ mod tests {
                 SenderEvent::TransferCompleted { .. },
             ] if started_plan == &plan
         ));
+        Ok(())
+    }
+
+    /// Regression: if the receiver finishes the byte transfer, ships
+    /// TransferCompleted on progress, and then the control stream goes
+    /// dark before TransferResult arrives (idle timeout / lost keepalive
+    /// during the post-export window), the sender must still return
+    /// Completed instead of failing with ProtocolIncompatible.
+    #[tokio::test]
+    async fn control_stream_close_after_transfer_completed_yields_completed() -> TestResult<()> {
+        let (mut progress_write, mut progress_read) = duplex(4096);
+        let (mut control_write, mut control_read) = duplex(4096);
+        let plan = TransferPlan::from_manifest("session-1", &manifest())?;
+
+        let receiver_task = tokio::spawn(async move {
+            write_receiver_message(
+                &mut progress_write,
+                &ReceiverMessage::TransferProgress(TransferProgress {
+                    session_id: "session-1".to_owned(),
+                    snapshot: TransferProgressPayload {
+                        phase: TransferPhase::Transferring,
+                        completed_files: 1,
+                        total_files: 2,
+                        bytes_transferred: 5,
+                        total_bytes: 11,
+                        active_file_id: Some(1),
+                        active_file_bytes: Some(0),
+                    },
+                }),
+            )
+            .await?;
+            write_receiver_message(
+                &mut progress_write,
+                &ReceiverMessage::TransferCompleted(TransferCompleted {
+                    session_id: "session-1".to_owned(),
+                    snapshot: TransferProgressPayload {
+                        phase: TransferPhase::Completed,
+                        completed_files: 2,
+                        total_files: 2,
+                        bytes_transferred: 11,
+                        total_bytes: 11,
+                        active_file_id: None,
+                        active_file_bytes: None,
+                    },
+                }),
+            )
+            .await?;
+            progress_write.shutdown().await?;
+            sleep(Duration::from_millis(10)).await;
+            // Simulate the lost keepalive / dead path: receiver writes
+            // nothing on the control stream and drops the write half.
+            drop(control_write);
+            TestResult::Ok(())
+        });
+
+        let events = event_sink("session-1");
+        let outcome = do_transfer(
+            "session-1",
+            &plan,
+            &mut progress_read,
+            &mut control_read,
+            &events.sink,
+        )
+        .await?;
+
+        assert!(matches!(outcome, TransferOutcome::Completed));
+        receiver_task.await??;
+
+        let observed = events.collect();
+        assert!(
+            observed
+                .iter()
+                .any(|e| matches!(e, SenderEvent::TransferCompleted { .. })),
+            "expected TransferCompleted event before control close, got {observed:?}",
+        );
+        Ok(())
+    }
+
+    /// Negative pairing for the previous test: if the control stream closes
+    /// BEFORE TransferCompleted has been observed on progress, the sender
+    /// has no proof the receiver finished and must still fail.  This
+    /// guards against silently swallowing a real protocol error.
+    #[tokio::test]
+    async fn control_stream_close_before_transfer_completed_still_fails() -> TestResult<()> {
+        let (mut progress_write, mut progress_read) = duplex(4096);
+        let (control_write, mut control_read) = duplex(4096);
+        let plan = TransferPlan::from_manifest("session-1", &manifest())?;
+
+        let receiver_task = tokio::spawn(async move {
+            // Only a mid-transfer progress message — never TransferCompleted.
+            write_receiver_message(
+                &mut progress_write,
+                &ReceiverMessage::TransferProgress(TransferProgress {
+                    session_id: "session-1".to_owned(),
+                    snapshot: TransferProgressPayload {
+                        phase: TransferPhase::Transferring,
+                        completed_files: 0,
+                        total_files: 2,
+                        bytes_transferred: 1,
+                        total_bytes: 11,
+                        active_file_id: Some(0),
+                        active_file_bytes: Some(1),
+                    },
+                }),
+            )
+            .await?;
+            sleep(Duration::from_millis(10)).await;
+            // Tear down both streams without delivering TransferCompleted /
+            // TransferResult — simulates a real connection failure mid-flow.
+            drop(progress_write);
+            drop(control_write);
+            TestResult::Ok(())
+        });
+
+        let events = event_sink("session-1");
+        let result = do_transfer(
+            "session-1",
+            &plan,
+            &mut progress_read,
+            &mut control_read,
+            &events.sink,
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "expected Err when control closes before TransferCompleted, got {result:?}",
+        );
+        receiver_task.await??;
         Ok(())
     }
 

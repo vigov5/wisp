@@ -215,3 +215,131 @@ partial fix already: it preserves `preview.file_count`,
 - [ ] Implement the fixes above
 - [ ] Add the two regression tests
 - [ ] Reply on upstream issue with the fix link once merged
+
+---
+
+## Wisp-only: sender errors with "Protocol mismatch" while receiver completes
+
+**Reported:** 2026-05-22 (user observation, no upstream issue filed yet)
+**Audited:** 2026-05-22
+
+### Status in Wisp fork: **Present**
+
+User report: receiver UI reaches Completed, sender UI stays in "Sending"
+for several seconds, then transitions to Failed with a message along
+the lines of "the devices could not agree on how to complete the
+transfer" (the user-facing label for `UserFacingErrorKind::Protocol-
+Incompatible`).
+
+### Hypothesis
+
+The sender's `do_transfer` (`crates/core/src/transfer/sender.rs:414-506`)
+sits in a `tokio::select!` polling `progress_recv` and `control_recv`
+during the receiver's Phase-5 export window.  During export the
+receiver sends **no application data** on either stream — the only
+thing keeping the connection up is the QUIC-level keepalive configured
+in `crates/app/src/quic_keepalive.rs`:
+
+```
+default_path_max_idle_timeout    = 6_000 ms
+default_path_keep_alive_interval = 4_500 ms
+```
+
+These are tight (iroh caps at 6.5s / 5s).  Losing a single keepalive
+ping on a flaky mobile / Wi-Fi link is enough to trip the 6s idle
+timeout.  When that fires the QUIC path is torn down, both reads on
+the sender's `progress_recv` and `control_recv` resolve with
+`ProtocolError::FrameRead`, and the sender's `do_transfer`'s
+`match msg?` at sender.rs:482 propagates the error.  The app-layer
+mapping at `crates/app/src/error.rs:450-475` turns FrameRead into
+`UserFacingErrorKind::ProtocolIncompatible`, which renders as the
+"could not agree on how to complete the transfer" message.
+
+On the receiver side the byte transfer already finished and the
+export already wrote files to disk before the path went idle, so the
+receiver's outer session reaches `await_final_sender_ack`, never sees
+the Ack, logs a warning, calls `finish_control_stream`, and returns
+`TransferOutcome::Completed`.  The receiver's UI therefore shows
+Completed even though the sender errored.
+
+This explains:
+
+- The lag: it's the receiver's export window plus whatever extra time
+  before the idle timer fires.
+- The asymmetry: receiver UI Completed, sender UI Failed.
+- The error label: it's `ProtocolIncompatible` because FrameRead /
+  ChannelClosed errors share that bucket in `From<ProtocolError> for
+  UserFacingError`.
+
+The window is more likely to be hit when the export is slow — large
+files, Android MediaStore writes to public Downloads, slow SD-card
+storage.
+
+### Fix plan
+
+Both layers should change:
+
+**A. Keep application traffic flowing during export (`crates/core/
+src/transfer/receiver.rs`)**
+
+Around lines 475-484, the `tokio::select!` that drives
+`export_downloaded_collection` should also tick an interval (e.g.
+every 2 seconds) and write a finalizing `TransferProgress` message on
+`progress_send` each tick.  This gives the keepalive a backup —
+real frames go on the wire, so a lost ping doesn't kill the
+connection — and as a bonus the sender's UI can show "Finalizing on
+receiver" with a live timer instead of looking frozen.
+
+**B. Make sender's control_recv read tolerant after the success
+signal (`crates/core/src/transfer/sender.rs`)**
+
+Track `let mut seen_transfer_completed = false;` in `do_transfer`,
+set it to `true` on the `Ok(TransferCompleted)` arm of the progress
+read.  Change the control arm at line 481-498 from `match msg?` to a
+match that, on `Err(_)` and `seen_transfer_completed`, sets
+`control_done = true` and continues (the equivalent of "trust the
+in-band signal — bytes finished, export confirmed by
+TransferCompleted, lost the explicit Ok confirmation but transfer
+was successful").  Errors before `seen_transfer_completed` still
+propagate.
+
+This is a belt-and-suspenders approach: fix A reduces how often the
+race fires; fix B prevents user-visible failure when it still does
+(e.g. the keepalive really did fail because the network is gone, but
+we managed to receive the TransferCompleted frame before that).
+
+### Test plan
+
+- Receiver-side test: mock a slow export (sleep 8s inside the export
+  future), assert that periodic `TransferProgress` frames are written
+  during the wait.
+- Sender-side test: drive `do_transfer` against an in-memory pair of
+  streams, deliver TransferProgress + TransferCompleted on progress,
+  then close (Err) `control_recv` before delivering TransferResult.
+  Assert `do_transfer` returns `TransferOutcome::Completed`.
+- Symmetric negative test: close `control_recv` BEFORE delivering
+  TransferCompleted on progress, assert the sender still returns
+  Err (don't silently swallow real errors).
+
+### Follow-up
+
+- [x] Implement A (receiver heartbeat) — extracted as
+      `run_with_progress_heartbeat` helper in
+      `crates/core/src/transfer/receiver.rs`, called from the
+      Phase-5 export window with `EXPORT_HEARTBEAT_INTERVAL = 2 s`.
+- [x] Implement B (sender lenient on control EOF after success) —
+      `do_transfer` in `crates/core/src/transfer/sender.rs` now
+      tracks `seen_transfer_completed` and treats subsequent
+      control-stream read errors as `control_done = true` rather
+      than propagating.
+- [x] Add the 3 regression tests:
+      - `transfer::receiver::tests::
+         run_with_progress_heartbeat_emits_periodic_frames_during_slow_future`
+      - `transfer::sender::tests::
+         control_stream_close_after_transfer_completed_yields_completed`
+      - `transfer::sender::tests::
+         control_stream_close_before_transfer_completed_still_fails`
+- [ ] Consider widening `default_path_max_idle_timeout` to the iroh
+      max (6_500 ms) and `default_path_keep_alive_interval` to 5_000
+      ms — gives slightly more headroom without changing semantics.
+      Deferred — heartbeat backup makes this less urgent.

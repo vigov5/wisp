@@ -472,15 +472,49 @@ async fn run_session(
         .await
         .map_err(|e| TransferError::other("loading blob store for export", e))?;
 
-    let final_snapshot = tokio::select! {
-        res = export_downloaded_collection(&blob_store, receiver_offer.collection_hash, &expected_transfer_files, &mut record, &record_dir) => {
-            res?;
-            tracker.mark_completed(std::time::Instant::now());
-            tracker.snapshot(std::time::Instant::now())
-        },
-        _ = wait_for_cancel(&mut cancel_rx) => {
-            return abort_session(&mut control_send, &session_id, protocol_message::CancelPhase::Transferring).await;
-        },
+    // Drive `export_downloaded_collection` to completion while keeping the
+    // application-level wire busy with periodic Finalizing progress frames.
+    // Without these the export window has no app traffic, so iroh's tight
+    // path keepalive (6_000 ms idle / 4_500 ms ping) is the only thing
+    // keeping the QUIC path up — a single lost keepalive on flaky mobile
+    // networks then tears the path and the sender side errors with a
+    // generic "Protocol mismatch" the moment it tries to read the
+    // post-export TransferResult.  Heartbeating real progress messages
+    // here gives the keepalive a backup and lets the sender's UI show
+    // "Finalizing" instead of looking frozen.  See
+    // docs/upstream-bug-audit.md for the full analysis.
+    let final_snapshot = {
+        let export_fut = export_downloaded_collection(
+            &blob_store,
+            receiver_offer.collection_hash,
+            &expected_transfer_files,
+            &mut record,
+            &record_dir,
+        );
+        match run_with_progress_heartbeat(
+            export_fut,
+            &mut progress_send,
+            &session_id,
+            &mut tracker,
+            &mut cancel_rx,
+            EXPORT_HEARTBEAT_INTERVAL,
+        )
+        .await
+        {
+            HeartbeatOutcome::Completed => {
+                tracker.mark_completed(std::time::Instant::now());
+                tracker.snapshot(std::time::Instant::now())
+            }
+            HeartbeatOutcome::Failed(error) => return Err(error),
+            HeartbeatOutcome::Cancelled => {
+                return abort_session(
+                    &mut control_send,
+                    &session_id,
+                    protocol_message::CancelPhase::Transferring,
+                )
+                .await;
+            }
+        }
     };
 
     record.status = TransferStatus::Completed;
@@ -912,6 +946,84 @@ mod tests {
         record
     }
 
+    /// Regression: `run_with_progress_heartbeat` must keep pumping
+    /// TransferProgress frames onto the progress stream while the wrapped
+    /// future is pending, so iroh's QUIC keepalive isn't the only thing
+    /// holding the path up during a slow `export_downloaded_collection`.
+    /// Without these heartbeats the sender often errors out with a
+    /// generic "Protocol mismatch" the moment it tries to read the
+    /// post-export TransferResult on a flaky mobile network — see the
+    /// audit doc entry "Sender errors with Protocol mismatch while
+    /// receiver completes".
+    #[tokio::test]
+    async fn run_with_progress_heartbeat_emits_periodic_frames_during_slow_future() {
+        use crate::protocol::message::{ReceiverMessage, TransferProgress};
+        use crate::protocol::wire::read_receiver_message;
+        use crate::transfer::types::TransferPlan;
+
+        let plan = TransferPlan::try_new(
+            "session-1".to_owned(),
+            vec![super::super::types::TransferPlanFile {
+                id: 0,
+                path: "f.bin".to_owned(),
+                size: 100,
+            }],
+        )
+        .unwrap();
+        let mut tracker = ProgressTracker::new(plan);
+        tracker.set_phase(TransferPhase::Finalizing, std::time::Instant::now());
+
+        let (mut sender_recv, mut receiver_send) = duplex(8192);
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+
+        // Fake export that takes ~250 ms.  At a 50 ms heartbeat that
+        // gives us at least 4 ticks (with set_missed_tick_behavior::Skip
+        // we'll see fewer if the runtime stalls — pin the assertion at
+        // ≥2 to keep CI green on slow runners).
+        let slow_export = async {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            Result::Ok(())
+        };
+
+        let outcome = run_with_progress_heartbeat(
+            slow_export,
+            &mut receiver_send,
+            "session-1",
+            &mut tracker,
+            &mut cancel_rx,
+            Duration::from_millis(50),
+        )
+        .await;
+
+        // Future succeeded → outcome is Completed.
+        assert!(
+            matches!(outcome, HeartbeatOutcome::Completed),
+            "{outcome:?}"
+        );
+
+        // Close the writer so the reader sees EOF and the read loop
+        // terminates instead of blocking.
+        drop(receiver_send);
+
+        let mut heartbeats = 0u32;
+        while let Ok(msg) = read_receiver_message(&mut sender_recv).await {
+            match msg {
+                ReceiverMessage::TransferProgress(TransferProgress { snapshot, .. }) => {
+                    assert_eq!(snapshot.phase, TransferPhase::Finalizing);
+                    heartbeats += 1;
+                }
+                other => panic!(
+                    "expected only TransferProgress heartbeats, got {:?}",
+                    other.kind()
+                ),
+            }
+        }
+        assert!(
+            heartbeats >= 2,
+            "expected at least 2 heartbeat frames during the 250 ms export, got {heartbeats}",
+        );
+    }
+
     #[test]
     fn resume_offset_uses_persisted_progress_for_incomplete_records() {
         let mut record = record_with_exported(&[]);
@@ -1255,6 +1367,91 @@ async fn send_receiver_decline(
     )
     .await
     .map_err(Into::into)
+}
+
+/// How often the receiver pumps a Finalizing TransferProgress frame onto
+/// the progress stream while `export_downloaded_collection` runs.
+///
+/// Lower bound: must be safely below iroh's QUIC keepalive idle timeout
+/// (6 000 ms — see `crates/app/src/quic_keepalive.rs`) so a single
+/// dropped ping doesn't kill the path during a slow export.  2 s gives
+/// plenty of headroom while keeping the UI's Finalizing indicator
+/// responsive.
+pub(super) const EXPORT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Result of running a long-running future under
+/// [`run_with_progress_heartbeat`].
+#[derive(Debug)]
+pub(super) enum HeartbeatOutcome {
+    /// The future resolved successfully.
+    Completed,
+    /// The future returned an error — propagated as-is.
+    Failed(TransferError),
+    /// `cancel_rx` flipped to `true` before the future resolved.
+    Cancelled,
+}
+
+/// Drives a long-running future to completion while pumping periodic
+/// `TransferProgress` frames onto the receiver's progress stream.
+///
+/// This exists to keep application traffic flowing during the receiver's
+/// Phase-5 export window.  Without it the export window has no app data
+/// on either stream, so iroh's tight QUIC keepalive (≤6 s idle / ≤5 s
+/// ping) is the only thing holding the path up — a single lost ping on
+/// flaky mobile networks then tears the path and the sender hits a
+/// generic "Protocol mismatch" the moment it tries to read the
+/// post-export `TransferResult`.  See `docs/upstream-bug-audit.md` for
+/// the full root-cause analysis.
+///
+/// Heartbeat writes use `let _ = ...` semantics — a dropped frame is
+/// purely a missed keepalive backup; the actual completion outcome is
+/// still determined by `fut`.
+pub(super) async fn run_with_progress_heartbeat<F, W>(
+    fut: F,
+    progress_send: &mut W,
+    session_id: &str,
+    tracker: &mut ProgressTracker,
+    cancel_rx: &mut watch::Receiver<bool>,
+    interval: Duration,
+) -> HeartbeatOutcome
+where
+    F: std::future::Future<Output = Result<()>>,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut fut = Box::pin(fut);
+    let mut heartbeat = tokio::time::interval(interval);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Skip the initial immediate tick — callers normally write a
+    // finalizing snapshot just before invoking this helper, so the wire
+    // already has a fresh frame when we enter the loop.
+    heartbeat.tick().await;
+
+    loop {
+        tokio::select! {
+            res = &mut fut => {
+                return match res {
+                    Ok(()) => HeartbeatOutcome::Completed,
+                    Err(error) => HeartbeatOutcome::Failed(error),
+                };
+            }
+            _ = wait_for_cancel(cancel_rx) => {
+                return HeartbeatOutcome::Cancelled;
+            }
+            _ = heartbeat.tick() => {
+                let snapshot = tracker.snapshot(std::time::Instant::now());
+                let _ = protocol_wire::write_receiver_message(
+                    progress_send,
+                    &protocol_message::ReceiverMessage::TransferProgress(
+                        protocol_message::TransferProgress {
+                            session_id: session_id.to_owned(),
+                            snapshot: to_wire_snapshot(&snapshot),
+                        },
+                    ),
+                )
+                .await;
+            }
+        }
+    }
 }
 
 async fn await_final_sender_ack<R>(recv: &mut R, session_id: &str)
