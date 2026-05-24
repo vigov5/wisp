@@ -18,6 +18,7 @@ import 'settings_error_banner.dart';
 import 'settings_download_root_field.dart';
 import 'settings_section_field.dart';
 import 'settings_path_display.dart';
+import 'settings_storage_section.dart';
 import 'settings_toggle_field.dart';
 
 class SettingsPageBody extends ConsumerStatefulWidget {
@@ -380,39 +381,10 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                         const SizedBox(height: 18),
                         const ReliabilitySettingsSection(),
                         const SizedBox(height: 18),
-                        SettingsSectionField(
-                          label: 'Saved devices',
-                          child: InkWell(
-                            onTap: () => context.pushSavedDevices(),
-                            borderRadius: BorderRadius.circular(12),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                color: kSurface,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: kBorder),
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      'Manage devices used for fast resends',
-                                      style: wispSans(
-                                        fontSize: 13,
-                                        color: kInk,
-                                      ),
-                                    ),
-                                  ),
-                                  const Icon(
-                                    Icons.chevron_right_rounded,
-                                    color: kMuted,
-                                  ),
-                                ],
-                              ),
-                            ),
+                        SettingsStorageSection(
+                          downloadRoot: _downloadRootValue,
+                          downloadFolderLabel: _downloadRootDisplayText(
+                            _downloadRootValue,
                           ),
                         ),
                         const SizedBox(height: 28),

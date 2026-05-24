@@ -26,5 +26,6 @@ thiserror.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]
+filetime = "0.2"
 tempfile = "3.27.0"
 tracing-subscriber.workspace = true

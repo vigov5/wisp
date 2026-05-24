@@ -25,6 +25,14 @@ use self::actor::{ReceiverCommand, run_receiver_actor};
 use self::runtime::ReceiverRuntime;
 use self::wisp_handler::WispProtocolHandler;
 
+/// How long an abandoned per-transfer record dir under
+/// `<download_root>/.wisp/transfers/<hash>/` is kept on disk before
+/// the receiver-service startup sweep deletes it.  Failed /
+/// connection-dropped transfers leave their resume state behind so
+/// the user can retry; this TTL bounds how long that state lingers
+/// before we GC it.
+const STALE_TRANSFER_RECORD_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiverLifecycle {
     Starting,
@@ -108,6 +116,25 @@ impl ReceiverService {
                     config.download_root.display()
                 ),
             });
+        }
+
+        // Sweep abandoned `.wisp/transfers/<hash>/` dirs older than the TTL.
+        // Failed / connection-dropped transfers leave their per-transfer
+        // resume state on disk so the user can retry, but if no retry
+        // happens within the TTL we GC them so the cache doesn't grow
+        // unbounded.  Best-effort: a sweep error doesn't block startup.
+        let swept = wisp_core::transfer::path::sweep_stale_transfer_records(
+            &config.download_root,
+            STALE_TRANSFER_RECORD_TTL,
+        )
+        .await;
+        if swept > 0 {
+            tracing::info!(
+                target: "wisp_app::receiver",
+                count = swept,
+                "swept stale transfer record dirs older than {}d",
+                STALE_TRANSFER_RECORD_TTL.as_secs() / 86_400,
+            );
         }
 
         // Channel sized for high-throughput receivers.  Progress events emit

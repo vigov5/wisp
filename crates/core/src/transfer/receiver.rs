@@ -30,7 +30,7 @@ use crate::{
 
 use super::error::{Result as TransferResult, TransferError};
 use super::path::{
-    ensure_destination_available, local_record_dir, resolve_output_dir,
+    RecordDirGuard, ensure_destination_available, local_record_dir, resolve_output_dir,
     resolve_transfer_destination,
 };
 use super::progress::ProgressTracker;
@@ -226,6 +226,19 @@ async fn run_session(
     let plan = TransferPlan::from_manifest(session_id.clone(), &offer.manifest)?;
     let record_dir =
         local_record_dir(&request.out_dir, offer.collection_hash).map_err(TransferError::from)?;
+
+    // RAII guard for the per-transfer record dir under `<out_dir>/.wisp/
+    // transfers/<hash>/`.  Default `delete_on_drop = false` (keep state in
+    // case the user wants to resume); we flip it to `true` below for
+    // terminal outcomes where there's no point keeping resume state
+    // (Completed / Cancelled / Declined).  Any `Err(_)` exit — including
+    // `TransferError::ConnectionClosed` from a transient network drop —
+    // leaves the guard alone so the data sticks around for a retry.  Stale
+    // dirs from those failure paths get garbage-collected by
+    // `sweep_stale_transfer_records` at next receiver-service startup.
+    let mut record_guard = RecordDirGuard::new(record_dir.clone());
+
+    let outcome: Result<TransferOutcome> = async {
     let resume_record = load_resume_record(&record_dir, offer.collection_hash, &offer.manifest);
     let resume_from_bytes = resume_record
         .as_ref()
@@ -559,8 +572,25 @@ async fn run_session(
             session_id: session_id.clone(),
         },
     );
-    cleanup_transfer_workspace(&record_dir).await;
     Ok(TransferOutcome::Completed)
+    }
+    .await;
+
+    // Terminal outcomes where the user clearly doesn't want to resume:
+    // mark the record dir for deletion before the guard drops.  Any
+    // `Err(_)` (including transient ConnectionClosed) leaves the guard
+    // alone — the receiver-service startup sweep will GC it after the
+    // TTL elapses if no retry comes through.
+    if matches!(
+        &outcome,
+        Ok(TransferOutcome::Completed)
+            | Ok(TransferOutcome::Cancelled(_))
+            | Ok(TransferOutcome::Declined { .. })
+    ) {
+        record_guard.mark_for_delete();
+    }
+
+    outcome
 }
 
 enum HandshakeResult {
