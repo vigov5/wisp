@@ -59,7 +59,7 @@ It is designed to feel as simple as AirDrop, but without being limited to Apple 
 | macOS | [wisp-macos-v1.0.0.dmg](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-macos-v1.0.0.dmg) |
 | Windows | [wisp-windows-setup-v1.0.0.exe](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-windows-setup-v1.0.0.exe) · [portable .zip](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-windows-portable-v1.0.0.zip) |
 | Linux | [wisp-linux-v1.0.0.deb](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-linux-v1.0.0.deb) · [.flatpak](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-v1.0.0.flatpak) · [bundle .zip](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-linux-v1.0.0.zip) |
-| Android | [wisp-android-v1.0.0.apk](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-android-v1.0.0.apk) (sideload) — Play Store listing pending review |
+| Android | <a href="https://play.google.com/store/apps/details?id=dev.vigov5.wisp"><img src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" alt="Get it on Google Play" height="40"></a> · [wisp-android-v1.0.0.apk](https://github.com/vigov5/wisp/releases/download/v1.0.0/wisp-android-v1.0.0.apk) (sideload) |
 | iOS | Coming soon |
 
 > [!TIP]
