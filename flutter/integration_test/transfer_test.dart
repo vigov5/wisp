@@ -1,19 +1,15 @@
 import 'dart:io';
 import 'package:app/app/app.dart';
 import 'package:app/features/settings/feature.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
-  testWidgets('launches the Wisp shell', (WidgetTester tester) async {
-    await tester.pumpWidget(
-      ProviderScope(
+  Widget app() => ProviderScope(
         overrides: [
           initialAppSettingsProvider.overrideWithValue(
-            AppSettings(
+            const AppSettings(
               deviceName: 'Wisp',
               downloadRoot: '/tmp/Wisp',
               discoverableByDefault: true,
@@ -21,10 +17,14 @@ void main() {
             ),
           ),
         ],
-        child: WispApp(),
-      ),
-    );
+        child: const WispApp(),
+      );
 
+  testWidgets('launches the Wisp shell', (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1024, 768));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(app());
     await tester.pumpAndSettle();
 
     final isMobile = Platform.isAndroid || Platform.isIOS;

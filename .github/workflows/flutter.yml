@@ -52,3 +52,6 @@ jobs:
 
       - name: Run unit tests
         run: flutter test
+
+      - name: Run integration tests
+        run: flutter test integration_test/transfer_test.dart
