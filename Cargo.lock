@@ -4945,7 +4945,7 @@ dependencies = [
 
 [[package]]
 name = "wisp"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4966,7 +4966,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-app"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "flume",
@@ -4986,7 +4986,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "base64",
  "bincode",
@@ -5015,7 +5015,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-server"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "axum",
