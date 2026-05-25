@@ -4979,7 +4979,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-app"
-version = "0.4.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "flume",
@@ -4999,7 +4999,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-core"
-version = "0.4.3"
+version = "1.0.0"
 dependencies = [
  "base64",
  "bincode",
@@ -5025,7 +5025,7 @@ dependencies = [
 
 [[package]]
 name = "wisp_bridge"
-version = "0.4.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "flutter_rust_bridge",
