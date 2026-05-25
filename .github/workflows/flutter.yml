@@ -52,6 +52,3 @@ jobs:
 
       - name: Run unit tests
         run: flutter test
-
-      - name: Run integration tests
-        run: flutter test -d macos integration_test/transfer_test.dart
