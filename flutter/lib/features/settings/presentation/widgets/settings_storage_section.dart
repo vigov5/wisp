@@ -4,40 +4,22 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../app/app_router.dart';
+import '../../../../app/app_bootstrap.dart';
 import '../../../../theme/wisp_theme.dart';
-import '../../../saved_devices/application/saved_devices_controller.dart';
-import 'settings_section_field.dart';
 
 /// Settings → Storage section.
 ///
-/// Surfaces three figures the user might want at a glance + an action
-/// per row:
+/// Shows the receiver cache size with a Clear button.
 ///
-/// - **Receiver cache** — total size of `<downloadRoot>/.wisp/`
-///   (per-transfer resume state from completed-and-not-GC'd or
-///   failed-pending-retry transfers).  Has a "Clear" button that
-///   deletes the directory.
-/// - **Saved devices** — count from [savedDevicesProvider] with a
-///   chevron to the existing manage page.
-/// - **Download folder** — read-only display of where files land.
-///
-/// On Android with a SAF folder selected, dart:io can't walk the
-/// content:// URI, so the cache row shows "—" with a note pointing
-/// at device Settings → Apps → Wisp → Storage.
+/// On Android, Rust always writes its temporary cache to
+/// `<tmpDir>/Download/Wisp/.wisp/` regardless of the user's download root
+/// or SAF configuration, matching the logic in `app_bootstrap.dart`.
+/// On other platforms the cache lives at `<downloadRoot>/.wisp/`.
 class SettingsStorageSection extends ConsumerStatefulWidget {
-  const SettingsStorageSection({
-    super.key,
-    required this.downloadRoot,
-    required this.downloadFolderLabel,
-  });
+  const SettingsStorageSection({super.key, required this.downloadRoot});
 
   /// Raw value of `settings.downloadRoot` (path or SAF URI).
   final String downloadRoot;
-
-  /// User-facing label for the download folder (already formatted via
-  /// `_downloadRootDisplayText`).
-  final String downloadFolderLabel;
 
   @override
   ConsumerState<SettingsStorageSection> createState() =>
@@ -49,48 +31,66 @@ class _SettingsStorageSectionState
   int? _cacheSizeBytes;
   bool _clearing = false;
 
+  /// The resolved directory that actually contains `.wisp/`.
+  /// Null means the path cannot be walked (will show '—').
+  String? _effectiveCacheDir;
+
   @override
   void initState() {
     super.initState();
-    _refreshCacheSize();
+    _resolveAndRefresh();
   }
 
   @override
   void didUpdateWidget(covariant SettingsStorageSection oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.downloadRoot != widget.downloadRoot) {
-      _refreshCacheSize();
+      _resolveAndRefresh();
     }
   }
 
-  bool get _isSafUri => widget.downloadRoot.startsWith('content://');
+  Future<void> _resolveAndRefresh() async {
+    final dir = await _computeCacheDir();
+    if (!mounted) return;
+    setState(() => _effectiveCacheDir = dir);
+    await _refreshCacheSize();
+  }
+
+  /// Returns the directory whose `.wisp/` sub-directory holds the cache,
+  /// or null if it cannot be determined (e.g. non-Android SAF URI).
+  Future<String?> _computeCacheDir() async {
+    // Delegates to the same function used by app_bootstrap.dart so the path
+    // is always in sync — no duplicated '/Download/Wisp' suffix here.
+    final androidDir = await resolveAndroidReceiveCacheDir();
+    if (androidDir != null) return androidDir;
+    // SAF URIs are Android-only; on other platforms fall back to downloadRoot.
+    if (widget.downloadRoot.startsWith('content://')) return null;
+    final root = widget.downloadRoot.trim();
+    return root.isEmpty ? null : root;
+  }
 
   Future<void> _refreshCacheSize() async {
-    if (_isSafUri) {
+    final dir = _effectiveCacheDir;
+    if (dir == null) {
       setState(() => _cacheSizeBytes = null);
       return;
     }
-    final root = widget.downloadRoot.trim();
-    if (root.isEmpty) {
-      setState(() => _cacheSizeBytes = 0);
-      return;
-    }
     final size = await _walkDirSize(
-      Directory('$root${Platform.pathSeparator}.wisp'),
+      Directory('$dir${Platform.pathSeparator}.wisp'),
     );
     if (!mounted) return;
     setState(() => _cacheSizeBytes = size);
   }
 
   Future<void> _clearCache() async {
-    if (_clearing || _isSafUri) return;
+    if (_clearing) return;
+    final dir = _effectiveCacheDir;
+    if (dir == null) return;
     setState(() => _clearing = true);
-    final dir = Directory(
-      '${widget.downloadRoot}${Platform.pathSeparator}.wisp',
-    );
+    final cacheDir = Directory('$dir${Platform.pathSeparator}.wisp');
     try {
-      if (await dir.exists()) {
-        await dir.delete(recursive: true);
+      if (await cacheDir.exists()) {
+        await cacheDir.delete(recursive: true);
       }
     } catch (e) {
       if (mounted) {
@@ -113,120 +113,58 @@ class _SettingsStorageSectionState
 
   @override
   Widget build(BuildContext context) {
-    final savedDevices = ref.watch(savedDevicesProvider);
-    final savedCount = savedDevices.length;
+    final canClear =
+        _effectiveCacheDir != null && (_cacheSizeBytes ?? 0) > 0 && !_clearing;
+    final sizeText = _effectiveCacheDir == null
+        ? '—'
+        : (_cacheSizeBytes == null ? '…' : _formatBytes(_cacheSizeBytes!));
 
-    return SettingsSectionField(
-      label: 'Storage',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _StorageRow(
-            label: 'Receiver cache',
-            valueText: _cacheSizeText(),
-            trailing: _isSafUri
-                ? null
-                : TextButton(
-                    onPressed: (_cacheSizeBytes ?? 0) > 0 && !_clearing
-                        ? _clearCache
-                        : null,
-                    child: Text(_clearing ? 'Clearing…' : 'Clear'),
-                  ),
-            footnote: _isSafUri
-                ? 'Files land in your chosen SAF folder via the system '
-                      'picker. Clear via device Settings → Apps → Wisp '
-                      '→ Storage.'
-                : null,
-          ),
-          const SizedBox(height: 10),
-          _StorageRow(
-            label: 'Saved devices',
-            valueText: savedCount.toString(),
-            trailing: IconButton(
-              icon: const Icon(Icons.chevron_right_rounded, color: kMuted),
-              tooltip: 'Manage',
-              onPressed: () => context.pushSavedDevices(),
-            ),
-          ),
-          const SizedBox(height: 10),
-          _StorageRow(
-            label: 'Download folder',
-            valueText: widget.downloadFolderLabel,
-            trailing: null,
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _cacheSizeText() {
-    if (_isSafUri) return '—';
-    final bytes = _cacheSizeBytes;
-    if (bytes == null) return '…';
-    return _formatBytes(bytes);
-  }
-}
-
-class _StorageRow extends StatelessWidget {
-  const _StorageRow({
-    required this.label,
-    required this.valueText,
-    this.trailing,
-    this.footnote,
-  });
-
-  final String label;
-  final String valueText;
-  final Widget? trailing;
-  final String? footnote;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: kSurface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: kBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Text(
-                  label,
-                  style: wispSans(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: kInk,
-                  ),
+              Text(
+                'Storage',
+                style: wispSans(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  color: kInk,
                 ),
               ),
-              Text(
-                valueText,
-                style: wispMono(fontSize: 13, color: kInk),
+              const SizedBox(height: 4),
+              Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(
+                      text: 'Received Cache: ',
+                      style: wispSans(fontSize: 11.5, color: kMuted),
+                    ),
+                    TextSpan(
+                      text: sizeText,
+                      style: wispSans(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500,
+                        color: kInk,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              if (trailing != null) ...[
-                const SizedBox(width: 4),
-                trailing!,
-              ],
             ],
           ),
-          if (footnote != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              footnote!,
-              style: wispSans(
-                fontSize: 11.5,
-                color: kMuted,
-                height: 1.45,
-              ),
-            ),
-          ],
-        ],
-      ),
+        ),
+        const SizedBox(width: 12),
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: TextButton(
+            onPressed: canClear ? _clearCache : null,
+            child: Text(_clearing ? 'Clearing…' : 'Clear'),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -259,6 +197,7 @@ String _formatBytes(int bytes) {
     value /= 1024;
     idx++;
   }
-  final fixed = value < 10 ? value.toStringAsFixed(1) : value.toStringAsFixed(0);
+  final fixed =
+      value < 10 ? value.toStringAsFixed(1) : value.toStringAsFixed(0);
   return '$fixed ${units[idx]}';
 }

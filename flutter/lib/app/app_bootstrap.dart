@@ -38,11 +38,7 @@ Future<AppBootstrap> loadAppBootstrap({
   // On Android, Rust writes to a temp cache; files are moved to the public
   // Downloads/Wisp/ folder via MediaStore after each transfer completes.
   // The user-configured downloadRoot is ignored on Android.
-  String? androidReceiveCacheDir;
-  if (Platform.isAndroid) {
-    final tmpDir = await getTemporaryDirectory();
-    androidReceiveCacheDir = '${tmpDir.path}/Download/Wisp';
-  }
+  final androidReceiveCacheDir = await resolveAndroidReceiveCacheDir();
 
   final repository = SettingsRepository(
     prefs: prefs,
@@ -97,6 +93,12 @@ Future<AppBootstrap> loadAppBootstrap({
               ? initialSettings.downloadRoot
               : null,
   );
+}
+
+Future<String?> resolveAndroidReceiveCacheDir() async {
+  if (!Platform.isAndroid) return null;
+  final tmpDir = await getTemporaryDirectory();
+  return '${tmpDir.path}/Download/Wisp';
 }
 
 Future<String> resolvePreferredReceiveDownloadRoot() async {
