@@ -75,7 +75,6 @@ flutter pub run build_runner build --delete-conflicting-outputs
 ### Testing
 
 - **Widget & Unit Tests:** `flutter test`
-- **Integration Tests:** `flutter test integration_test/transfer_test.dart`
 
 ### Build Cache Cleanup
 
