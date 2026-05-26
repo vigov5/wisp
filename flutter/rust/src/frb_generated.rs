@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 2121477522;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 999477617;
 
 // Section: executor
 
@@ -144,6 +144,41 @@ fn wire__crate__api__receiver__cancel_receiver_transfer_impl(
                     Ok(output_ok)
                 })(
                 ))
+            }
+        },
+    )
+}
+fn wire__crate__api__diagnostics__create_firewall_rule_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "create_firewall_rule",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok = crate::api::diagnostics::create_firewall_rule().await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
             }
         },
     )
@@ -307,6 +342,43 @@ fn wire__crate__api__receiver__ensure_receiver_registration_impl(
                     Ok(output_ok)
                 })(
                 ))
+            }
+        },
+    )
+}
+fn wire__crate__api__diagnostics__firewall_inbound_warning_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "firewall_inbound_warning",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, ()>(
+                    (move || async move {
+                        let output_ok = Result::<_, ()>::Ok(
+                            crate::api::diagnostics::firewall_inbound_warning().await,
+                        )?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
             }
         },
     )
@@ -935,6 +1007,7 @@ impl SseDecode for crate::api::diagnostics::DiagnosticsActionKind {
             0 => crate::api::diagnostics::DiagnosticsActionKind::OpenAppSettings,
             1 => crate::api::diagnostics::DiagnosticsActionKind::OpenUrl,
             2 => crate::api::diagnostics::DiagnosticsActionKind::Retry,
+            3 => crate::api::diagnostics::DiagnosticsActionKind::CreateFirewallRule,
             _ => unreachable!("Invalid variant for DiagnosticsActionKind: {}", inner),
         };
     }
@@ -1644,55 +1717,67 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        5 => wire__crate__api__receiver__current_qr_pairing_info_impl(
+        4 => wire__crate__api__diagnostics__create_firewall_rule_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        6 => wire__crate__api__receiver__current_receiver_registration_impl(
+        6 => wire__crate__api__receiver__current_qr_pairing_info_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        8 => wire__crate__api__receiver__ensure_receiver_registration_impl(
+        7 => wire__crate__api__receiver__current_receiver_registration_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        10 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__preview__inspect_paths_impl(port, ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__receiver__register_receiver_impl(port, ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__preview__remove_path_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__receiver__respond_to_receiver_offer_impl(
+        9 => wire__crate__api__receiver__ensure_receiver_registration_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        16 => wire__crate__api__diagnostics__run_connection_test_impl(
+        10 => wire__crate__api__diagnostics__firewall_inbound_warning_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        17 => wire__crate__api__lan__scan_nearby_receivers_impl(port, ptr, rust_vec_len, data_len),
-        19 => wire__crate__api__receiver__set_receiver_discoverable_impl(
+        12 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__preview__inspect_paths_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__receiver__register_receiver_impl(port, ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__preview__remove_path_impl(port, ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__receiver__respond_to_receiver_offer_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        20 => wire__crate__api__receiver__start_receiver_transfer_listener_impl(
+        18 => wire__crate__api__diagnostics__run_connection_test_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        21 => wire__crate__api__sender__start_send_transfer_impl(port, ptr, rust_vec_len, data_len),
-        22 => wire__crate__api__receiver__watch_receiver_pairing_impl(
+        19 => wire__crate__api__lan__scan_nearby_receivers_impl(port, ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__receiver__set_receiver_discoverable_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        22 => wire__crate__api__receiver__start_receiver_transfer_listener_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        23 => wire__crate__api__sender__start_send_transfer_impl(port, ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__receiver__watch_receiver_pairing_impl(
             port,
             ptr,
             rust_vec_len,
@@ -1710,11 +1795,11 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        4 => wire__crate__api__simple__current_endpoint_id_impl(ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__lan__decode_ticket_info_impl(ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__device__random_device_name_impl(ptr, rust_vec_len, data_len),
-        18 => wire__crate__api__simple__set_app_identity_impl(ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__simple__current_endpoint_id_impl(ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__lan__decode_ticket_info_impl(ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__device__random_device_name_impl(ptr, rust_vec_len, data_len),
+        20 => wire__crate__api__simple__set_app_identity_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1772,6 +1857,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::diagnostics::DiagnosticsActio
             Self::OpenAppSettings => 0.into_dart(),
             Self::OpenUrl => 1.into_dart(),
             Self::Retry => 2.into_dart(),
+            Self::CreateFirewallRule => 3.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -2461,6 +2547,7 @@ impl SseEncode for crate::api::diagnostics::DiagnosticsActionKind {
                 crate::api::diagnostics::DiagnosticsActionKind::OpenAppSettings => 0,
                 crate::api::diagnostics::DiagnosticsActionKind::OpenUrl => 1,
                 crate::api::diagnostics::DiagnosticsActionKind::Retry => 2,
+                crate::api::diagnostics::DiagnosticsActionKind::CreateFirewallRule => 3,
                 _ => {
                     unimplemented!("");
                 }

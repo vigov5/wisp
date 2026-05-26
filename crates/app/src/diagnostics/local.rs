@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
-use super::{CheckGroup, CheckResult, CheckStatus};
+use super::{CheckAction, CheckActionKind, CheckGroup, CheckResult, CheckStatus};
 
 const WRITABLE_ID: &str = "local.writable";
 const DISK_ID: &str = "local.disk_space";
 const FIREWALL_ID: &str = "local.firewall_win";
+const FIREWALL_RULE_NAME: &str = "Wisp";
 const MIN_FREE_BYTES: u64 = 500 * 1024 * 1024;
 
 pub(super) async fn check_writable(download_root: &str) -> CheckResult {
@@ -222,78 +223,320 @@ pub(super) async fn check_disk_space(download_root: &str) -> CheckResult {
 }
 
 #[cfg(windows)]
-pub(super) async fn check_firewall_windows() -> Option<CheckResult> {
-    let output = tokio::task::spawn_blocking(|| {
-        std::process::Command::new("netsh")
-            .args(["advfirewall", "firewall", "show", "rule", "name=Wisp"])
+fn current_exe_for_firewall() -> Result<String, String> {
+    let path = std::env::current_exe().map_err(|e| e.to_string())?;
+    // current_exe() may return a path with the \\?\ extended-length prefix on
+    // Windows; firewall rules store the literal path without it, so strip.
+    let s = path.to_string_lossy().to_string();
+    Ok(s.strip_prefix(r"\\?\").map(str::to_owned).unwrap_or(s))
+}
+
+#[cfg(windows)]
+fn firewall_check_failed(detail: String) -> CheckResult {
+    CheckResult {
+        id: FIREWALL_ID.to_owned(),
+        group: CheckGroup::Local,
+        status: CheckStatus::Warn,
+        label: "Firewall rule check failed".to_owned(),
+        detail,
+        hint: None,
+        action: None,
+    }
+}
+
+#[cfg(windows)]
+fn create_firewall_action() -> CheckAction {
+    CheckAction {
+        label: "Create firewall rule".to_owned(),
+        kind: CheckActionKind::CreateFirewallRule,
+        target: None,
+    }
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone)]
+enum FirewallProbeStatus {
+    Allow(usize),
+    Block(usize),
+    Disabled(usize),
+    None,
+    Error(String),
+}
+
+/// `CREATE_NO_WINDOW` for `CreateProcessW` — suppresses the brief console
+/// flash you'd otherwise see every time we shell out to PowerShell for the
+/// firewall probe or rule creation.  The elevated child still pops the UAC
+/// dialog (intentional: user has to consent).
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(windows)]
+async fn query_firewall_status(exe: &str) -> FirewallProbeStatus {
+    // Single-quote escape for PowerShell literal string: each ' becomes ''.
+    let exe_for_ps = exe.replace('\'', "''");
+    let script = format!(
+        "$ErrorActionPreference='Stop'\n\
+         $exe = '{exe_for_ps}'\n\
+         try {{\n\
+           $rules = @(Get-NetFirewallApplicationFilter | Where-Object {{ $_.Program -ieq $exe }} | ForEach-Object {{ $_ | Get-NetFirewallRule }})\n\
+           if ($rules.Count -eq 0) {{ Write-Output 'STATUS:NONE'; exit 0 }}\n\
+           $allow = @($rules | Where-Object {{ $_.Action -eq 'Allow' -and $_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' }})\n\
+           if ($allow.Count -gt 0) {{ Write-Output ('STATUS:ALLOW:' + $allow.Count); exit 0 }}\n\
+           $blocked = @($rules | Where-Object {{ $_.Action -eq 'Block' -and $_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' }})\n\
+           if ($blocked.Count -gt 0) {{ Write-Output ('STATUS:BLOCK:' + $blocked.Count); exit 0 }}\n\
+           Write-Output ('STATUS:DISABLED:' + $rules.Count)\n\
+         }} catch {{ Write-Output ('STATUS:ERROR:' + $_.Exception.Message); exit 1 }}\n"
+    );
+
+    let probe = tokio::task::spawn_blocking(move || {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("powershell")
+            .creation_flags(CREATE_NO_WINDOW)
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .output()
     })
-    .await
-    .unwrap_or_else(|err| Err(std::io::Error::other(err.to_string())));
-    Some(match output {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stdout_lower = stdout.to_lowercase();
-            if stdout_lower.contains("no rules match") {
-                CheckResult {
-                    id: FIREWALL_ID.to_owned(),
-                    group: CheckGroup::Local,
-                    status: CheckStatus::Warn,
-                    label: "Firewall rule 'Wisp' not found".to_owned(),
-                    detail: "Direct LAN transfers may be blocked until Windows Firewall \
-                             allows Wisp.exe on UDP inbound."
-                        .to_owned(),
-                    hint: Some(
-                        "Accept the system prompt the first time Wisp binds, or add a \
-                         firewall rule named 'Wisp' for the executable."
-                            .to_owned(),
-                    ),
-                    action: None,
-                }
-            } else if !output.status.success() {
-                CheckResult {
-                    id: FIREWALL_ID.to_owned(),
-                    group: CheckGroup::Local,
-                    status: CheckStatus::Warn,
-                    label: "Firewall rule check failed".to_owned(),
-                    detail: format!(
-                        "netsh exited with {}",
-                        output
-                            .status
-                            .code()
-                            .map(|c| c.to_string())
-                            .unwrap_or_else(|| "<unknown>".to_owned())
-                    ),
-                    hint: None,
-                    action: None,
-                }
-            } else {
-                CheckResult {
-                    id: FIREWALL_ID.to_owned(),
-                    group: CheckGroup::Local,
-                    status: CheckStatus::Pass,
-                    label: "Firewall rule present".to_owned(),
-                    detail: "Found Windows Firewall rule named 'Wisp'.".to_owned(),
-                    hint: None,
-                    action: None,
-                }
-            }
+    .await;
+
+    let output = match probe {
+        Ok(Ok(out)) => out,
+        Ok(Err(error)) => {
+            return FirewallProbeStatus::Error(format!("Couldn't invoke PowerShell: {error}"));
         }
-        Err(error) => CheckResult {
+        Err(join_error) => {
+            return FirewallProbeStatus::Error(format!("Probe task failed: {join_error}"));
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let status_line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("STATUS:"))
+        .unwrap_or("")
+        .trim();
+
+    if let Some(rest) = status_line.strip_prefix("STATUS:ALLOW:") {
+        FirewallProbeStatus::Allow(rest.trim().parse().unwrap_or(0))
+    } else if let Some(rest) = status_line.strip_prefix("STATUS:BLOCK:") {
+        FirewallProbeStatus::Block(rest.trim().parse().unwrap_or(0))
+    } else if let Some(rest) = status_line.strip_prefix("STATUS:DISABLED:") {
+        FirewallProbeStatus::Disabled(rest.trim().parse().unwrap_or(0))
+    } else if status_line == "STATUS:NONE" {
+        FirewallProbeStatus::None
+    } else if let Some(rest) = status_line.strip_prefix("STATUS:ERROR:") {
+        FirewallProbeStatus::Error(format!("PowerShell error: {}", rest.trim()))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        FirewallProbeStatus::Error(format!(
+            "PowerShell exit {} — unexpected output. stderr: {}",
+            output
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "<unknown>".to_owned()),
+            stderr.trim()
+        ))
+    }
+}
+
+#[cfg(windows)]
+pub(super) async fn check_firewall_windows() -> Option<CheckResult> {
+    let exe = match current_exe_for_firewall() {
+        Ok(p) => p,
+        Err(error) => {
+            return Some(firewall_check_failed(format!(
+                "Couldn't resolve current executable: {error}"
+            )));
+        }
+    };
+
+    Some(match query_firewall_status(&exe).await {
+        FirewallProbeStatus::Allow(count) => CheckResult {
             id: FIREWALL_ID.to_owned(),
             group: CheckGroup::Local,
-            status: CheckStatus::Warn,
-            label: "Firewall rule check failed".to_owned(),
-            detail: format!("Couldn't invoke netsh: {error}"),
+            status: CheckStatus::Pass,
+            label: "Firewall rule present".to_owned(),
+            detail: format!("{count} Allow rule(s) match {exe}"),
             hint: None,
             action: None,
         },
+        FirewallProbeStatus::Block(count) => CheckResult {
+            id: FIREWALL_ID.to_owned(),
+            group: CheckGroup::Local,
+            status: CheckStatus::Warn,
+            label: "Firewall is blocking Wisp".to_owned(),
+            detail: format!(
+                "{count} Block rule(s) match {exe} — inbound transfers will fail."
+            ),
+            hint: Some(
+                "Remove the blocking rule(s) in Windows Defender Firewall, then create a new Allow rule."
+                    .to_owned(),
+            ),
+            action: Some(create_firewall_action()),
+        },
+        FirewallProbeStatus::Disabled(count) => CheckResult {
+            id: FIREWALL_ID.to_owned(),
+            group: CheckGroup::Local,
+            status: CheckStatus::Warn,
+            label: "Firewall rule disabled".to_owned(),
+            detail: format!(
+                "Found {count} rule(s) for this exe but none are Enabled+Allow+Inbound."
+            ),
+            hint: Some(
+                "Re-enable the existing rule in Windows Defender Firewall, or create a fresh Allow rule."
+                    .to_owned(),
+            ),
+            action: Some(create_firewall_action()),
+        },
+        FirewallProbeStatus::None => CheckResult {
+            id: FIREWALL_ID.to_owned(),
+            group: CheckGroup::Local,
+            status: CheckStatus::Warn,
+            label: "No firewall rule for Wisp".to_owned(),
+            detail: format!("Direct LAN transfers may be blocked. Program: {exe}"),
+            hint: Some(
+                "Tap the button below to add an inbound Allow rule for this executable. Windows will ask for admin permission."
+                    .to_owned(),
+            ),
+            action: Some(create_firewall_action()),
+        },
+        FirewallProbeStatus::Error(reason) => firewall_check_failed(reason),
     })
 }
 
 #[cfg(not(windows))]
 pub(super) async fn check_firewall_windows() -> Option<CheckResult> {
     None
+}
+
+/// Lightweight version of [`check_firewall_windows`] for surfacing a startup
+/// banner when inbound transfers will silently fail.  Returns:
+///
+/// * `None` — firewall is fine (or non-Windows), no banner needed.
+/// * `Some(detail)` — short user-facing reason the inbound path is at risk.
+///
+/// Re-runs the same PowerShell probe as the full diagnostics check so the
+/// banner state matches what self-test would show.  Probe errors return
+/// `None` rather than warn-spamming — if the probe is broken, the worst
+/// case is a missed banner, not a false alarm.
+#[cfg(windows)]
+pub async fn firewall_inbound_warning() -> Option<String> {
+    let exe = current_exe_for_firewall().ok()?;
+    match query_firewall_status(&exe).await {
+        FirewallProbeStatus::Allow(_) => None,
+        FirewallProbeStatus::None => {
+            Some("No firewall rule for Wisp — inbound transfers may be blocked.".to_owned())
+        }
+        FirewallProbeStatus::Block(_) => Some(
+            "Windows Firewall has a Block rule for Wisp — inbound transfers will fail.".to_owned(),
+        ),
+        FirewallProbeStatus::Disabled(_) => {
+            Some("Wisp's firewall rule is disabled — inbound transfers may be blocked.".to_owned())
+        }
+        // Swallow probe errors here; the full self-test surfaces them.
+        FirewallProbeStatus::Error(_) => None,
+    }
+}
+
+#[cfg(not(windows))]
+pub async fn firewall_inbound_warning() -> Option<String> {
+    None
+}
+
+/// Removes any existing Block rules pointing at the currently-running
+/// executable, then creates a Windows Firewall inbound-Allow rule for it.
+/// Spawns an elevated PowerShell via `Start-Process -Verb RunAs`, which
+/// triggers a UAC prompt unless the caller is already elevated.
+///
+/// The two steps run in a single elevated session: if Windows had auto-
+/// created a Block rule (e.g. the user denied the first-bind prompt), an
+/// Allow rule alone would not unblock the exe because Windows applies the
+/// most-restrictive matching rule.
+///
+/// Returns the human-readable error reason on failure (so it can be surfaced
+/// to the user via a snackbar).  Caller is expected to re-run diagnostics on
+/// success so the firewall check picks up the new rule.
+#[cfg(windows)]
+pub async fn create_firewall_rule_for_current_exe() -> Result<(), String> {
+    use base64::Engine;
+
+    let exe = current_exe_for_firewall()?;
+    let exe_for_ps = exe.replace('\'', "''");
+
+    // The elevated PowerShell receives this via -EncodedCommand so we don't
+    // have to wrestle with nested quoting through Start-Process / -Command.
+    //
+    // Step 1: nuke any existing Block rules pointing at this exe — otherwise
+    // Windows applies the most-restrictive matching rule and our new Allow
+    // sits idle.  This covers the common case where the user denied the
+    // first-bind firewall prompt, which auto-creates an inbound Block rule.
+    //
+    // Step 2: add a fresh inbound-Allow rule for the exe.
+    let inner = format!(
+        "$exe = '{exe_for_ps}'\n\
+         Get-NetFirewallApplicationFilter | Where-Object {{ $_.Program -ieq $exe }} | \
+         ForEach-Object {{ \
+           $rule = $_ | Get-NetFirewallRule; \
+           if ($rule.Action -eq 'Block') {{ $rule | Remove-NetFirewallRule -Confirm:$false }} \
+         }}\n\
+         New-NetFirewallRule -DisplayName '{FIREWALL_RULE_NAME}' \
+         -Direction Inbound -Program $exe \
+         -Action Allow -Profile Any | Out-Null"
+    );
+    let utf16_bytes: Vec<u8> = inner.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&utf16_bytes);
+
+    // Outer wrapper: spawn the elevated process, wait, propagate exit code.
+    // Catch Win32Exception so UAC-denied (0x800704C7 / "operation cancelled")
+    // surfaces as exit 1223 (ERROR_CANCELLED) instead of an uncaught throw.
+    let outer = format!(
+        "try {{\n\
+           $p = Start-Process powershell -Verb RunAs -Wait -PassThru -WindowStyle Hidden \
+                -ArgumentList '-NoProfile','-EncodedCommand','{b64}'\n\
+           exit $p.ExitCode\n\
+         }} catch [System.ComponentModel.Win32Exception] {{ exit 1223 }}\n\
+         catch {{ Write-Error $_.Exception.Message; exit 1 }}\n"
+    );
+
+    let output = tokio::task::spawn_blocking(move || {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("powershell")
+            .creation_flags(CREATE_NO_WINDOW)
+            .args(["-NoProfile", "-NonInteractive", "-Command", &outer])
+            .output()
+    })
+    .await
+    .map_err(|e| format!("Task join failed: {e}"))?
+    .map_err(|e| format!("Couldn't invoke PowerShell: {e}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    // 1223 = ERROR_CANCELLED — user declined the UAC prompt.
+    if output.status.code() == Some(1223) {
+        return Err("Permission denied — admin elevation was cancelled.".to_owned());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let code = output
+        .status
+        .code()
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "<unknown>".to_owned());
+    Err(format!(
+        "PowerShell exited with {code}{}",
+        if stderr.trim().is_empty() {
+            String::new()
+        } else {
+            format!(": {}", stderr.trim())
+        }
+    ))
+}
+
+#[cfg(not(windows))]
+pub async fn create_firewall_rule_for_current_exe() -> Result<(), String> {
+    Err("Firewall rule creation is only supported on Windows.".to_owned())
 }
 
 fn is_saf_uri(path: &str) -> bool {

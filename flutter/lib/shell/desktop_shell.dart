@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../features/diagnostics/application/firewall_warning_controller.dart';
 import '../features/receive/application/controller.dart';
 import '../features/receive/application/service.dart';
 import '../features/receive/presentation/qr_pairing_page.dart';
@@ -16,6 +17,7 @@ import '../features/send/application/send_selection_picker.dart';
 import '../features/send/presentation/send_selection_source_sheet.dart';
 import '../features/send/send_drop_zone.dart';
 import '../theme/wisp_theme.dart';
+import 'widgets/firewall_warning_banner.dart';
 
 class DesktopShell extends ConsumerWidget {
   const DesktopShell({super.key});
@@ -84,6 +86,7 @@ class DesktopShell extends ConsumerWidget {
     final receiverError = ref.watch(
       receiverServiceProvider.select((s) => s.error),
     );
+    final firewallWarning = ref.watch(firewallWarningControllerProvider);
     return ReceiveTransferRouteGate(
       child: Scaffold(
         backgroundColor: kBg,
@@ -91,6 +94,16 @@ class DesktopShell extends ConsumerWidget {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
+              if (firewallWarning.isVisible) ...[
+                FirewallWarningBanner(
+                  detail: firewallWarning.warning!,
+                  onDismiss: () => ref
+                      .read(firewallWarningControllerProvider.notifier)
+                      .dismissForSession(),
+                  onOpenSelfTest: () => context.pushConnectionTest(),
+                ),
+                const SizedBox(height: 12),
+              ],
               if (receiverError != null) ...[
                 ReceiverErrorBanner(
                   error: receiverError,

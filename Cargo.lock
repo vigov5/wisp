@@ -4969,6 +4969,7 @@ name = "wisp-app"
 version = "1.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "flume",
  "fs2",
  "iroh",

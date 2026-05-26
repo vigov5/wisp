@@ -19,6 +19,19 @@ Stream<DiagnosticsCheckData> runConnectionTest({
   downloadRoot: downloadRoot,
 );
 
+/// Creates a Windows Firewall inbound-Allow rule for the currently-running
+/// executable.  Triggers a UAC prompt unless already elevated.  Returns the
+/// error reason on failure (UAC denied, PowerShell missing, etc.) so the UI
+/// can surface it in a snackbar.
+Future<void> createFirewallRule() =>
+    RustLib.instance.api.crateApiDiagnosticsCreateFirewallRule();
+
+/// Lightweight probe used by the home-screen banner: returns a short reason
+/// string when Windows Firewall is likely to block inbound transfers, or
+/// `None` if the firewall is fine (or we're not on Windows).
+Future<String?> firewallInboundWarning() =>
+    RustLib.instance.api.crateApiDiagnosticsFirewallInboundWarning();
+
 class DiagnosticsActionData {
   final String label;
   final DiagnosticsActionKind kind;
@@ -43,7 +56,12 @@ class DiagnosticsActionData {
           target == other.target;
 }
 
-enum DiagnosticsActionKind { openAppSettings, openUrl, retry }
+enum DiagnosticsActionKind {
+  openAppSettings,
+  openUrl,
+  retry,
+  createFirewallRule,
+}
 
 class DiagnosticsCheckData {
   final String id;

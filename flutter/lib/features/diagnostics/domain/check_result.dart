@@ -57,7 +57,7 @@ extension CheckGroupX on CheckGroup {
   }
 }
 
-enum CheckActionKind { openAppSettings, openUrl, retry }
+enum CheckActionKind { openAppSettings, openUrl, retry, createFirewallRule }
 
 class CheckAction {
   final String label;

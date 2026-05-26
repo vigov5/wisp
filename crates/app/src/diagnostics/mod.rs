@@ -13,6 +13,8 @@ mod network;
 mod p2p;
 mod rendezvous;
 
+pub use local::{create_firewall_rule_for_current_exe, firewall_inbound_warning};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckStatus {
     Running,
@@ -37,6 +39,7 @@ pub enum CheckActionKind {
     OpenAppSettings,
     OpenUrl,
     Retry,
+    CreateFirewallRule,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

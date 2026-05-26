@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 anyhow.workspace = true
 wisp-core = { path = "../core" }
+base64.workspace = true
 fs2 = "0.4"
 iroh.workspace = true
 iroh-blobs.workspace = true

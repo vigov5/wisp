@@ -71,5 +71,7 @@ CheckActionKind _mapActionKind(rust.DiagnosticsActionKind kind) {
       return CheckActionKind.openUrl;
     case rust.DiagnosticsActionKind.retry:
       return CheckActionKind.retry;
+    case rust.DiagnosticsActionKind.createFirewallRule:
+      return CheckActionKind.createFirewallRule;
   }
 }

@@ -34,6 +34,7 @@ pub enum DiagnosticsActionKind {
     OpenAppSettings,
     OpenUrl,
     Retry,
+    CreateFirewallRule,
 }
 
 #[derive(Debug, Clone)]
@@ -117,7 +118,25 @@ fn map_action(action: app_diag::CheckAction) -> DiagnosticsActionData {
             app_diag::CheckActionKind::OpenAppSettings => DiagnosticsActionKind::OpenAppSettings,
             app_diag::CheckActionKind::OpenUrl => DiagnosticsActionKind::OpenUrl,
             app_diag::CheckActionKind::Retry => DiagnosticsActionKind::Retry,
+            app_diag::CheckActionKind::CreateFirewallRule => {
+                DiagnosticsActionKind::CreateFirewallRule
+            }
         },
         target: action.target,
     }
+}
+
+/// Creates a Windows Firewall inbound-Allow rule for the currently-running
+/// executable.  Triggers a UAC prompt unless already elevated.  Returns the
+/// error reason on failure (UAC denied, PowerShell missing, etc.) so the UI
+/// can surface it in a snackbar.
+pub async fn create_firewall_rule() -> Result<(), String> {
+    wisp_app::diagnostics::create_firewall_rule_for_current_exe().await
+}
+
+/// Lightweight probe used by the home-screen banner: returns a short reason
+/// string when Windows Firewall is likely to block inbound transfers, or
+/// `None` if the firewall is fine (or we're not on Windows).
+pub async fn firewall_inbound_warning() -> Option<String> {
+    wisp_app::diagnostics::firewall_inbound_warning().await
 }

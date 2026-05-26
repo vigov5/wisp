@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 
+import '../../../src/rust/api/diagnostics.dart' as rust;
 import '../../../theme/wisp_theme.dart';
 import '../application/diagnostics_controller.dart';
+import '../application/firewall_warning_controller.dart';
 import '../domain/check_result.dart';
 import 'widgets/group_section.dart';
 import 'widgets/summary_banner.dart';
@@ -119,6 +121,39 @@ class _ConnectionTestPageState extends ConsumerState<ConnectionTestPage> {
       case CheckActionKind.retry:
         unawaited(_rerun());
         break;
+      case CheckActionKind.createFirewallRule:
+        unawaited(_createFirewallRule());
+        break;
+    }
+  }
+
+  Future<void> _createFirewallRule() async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Requesting admin permission to add firewall rule…'),
+        duration: Duration(seconds: 4),
+      ),
+    );
+    try {
+      await rust.createFirewallRule();
+      if (!mounted) return;
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('Firewall rule created.')),
+        );
+      unawaited(
+        ref.read(firewallWarningControllerProvider.notifier).recheck(),
+      );
+      await _rerun();
+    } catch (error) {
+      if (!mounted) return;
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text('Couldn\'t create firewall rule: $error')),
+        );
     }
   }
 }
