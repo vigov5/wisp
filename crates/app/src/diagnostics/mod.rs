@@ -12,6 +12,7 @@ mod local;
 mod network;
 mod p2p;
 mod rendezvous;
+mod vpn;
 
 pub use local::{create_firewall_rule_for_current_exe, firewall_inbound_warning};
 
@@ -107,6 +108,7 @@ pub async fn run_connection_test(
 
     let _ = tx.send(lan::check_self_scan().await);
     let _ = tx.send(p2p::check_loopback(endpoint).await);
+    let _ = tx.send(vpn::check_vpn_interference().await);
 
     let _ = tx.send(local::check_writable(&download_root).await);
     let _ = tx.send(local::check_disk_space(&download_root).await);

@@ -67,6 +67,12 @@ class DiagnosticsController extends Notifier<DiagnosticsState> {
         status: CheckStatus.running,
         label: 'iroh transport',
       ),
+      const CheckResult(
+        id: 'p2p.vpn',
+        group: CheckGroup.p2p,
+        status: CheckStatus.running,
+        label: 'VPN interference',
+      ),
       ..._permissionProbe.initialPendingChecks(),
       const CheckResult(
         id: 'local.writable',

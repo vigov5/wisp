@@ -12,6 +12,7 @@ iroh.workspace = true
 iroh-blobs.workspace = true
 flume.workspace = true
 mdns-sd.workspace = true
+netdev = "0.40"
 rand.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
