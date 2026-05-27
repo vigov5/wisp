@@ -9,7 +9,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use flume::RecvTimeoutError;
-use iroh::EndpointId;
+use iroh::{EndpointAddr, EndpointId, TransportAddr};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo, TxtProperties};
 use rand::seq::SliceRandom;
 use thiserror::Error;
@@ -176,18 +176,24 @@ fn parse_presence_pong(buf: &[u8], expected_nonce: u64) -> bool {
     u64::from_be_bytes(buf[8..16].try_into().unwrap()) == expected_nonce
 }
 
-/// Returns true if the peer echoed our nonce over UDP within `timeout`.
+/// Returns `Ok(())` if the peer echoed our nonce over UDP within `timeout`.
+///
+/// The reply's *source address* is intentionally not matched against
+/// `target`.  A multi-homed peer — most commonly a laptop with a VPN up —
+/// frequently replies from a *different* local IP than the one we dialed:
+/// the OS routing table, not the receiving socket, picks the egress
+/// interface, so a ping sent to `192.168.1.x` can come back with a source of
+/// the VPN's address.  Matching on the source IP rejected those valid pongs
+/// and made the pre-dial presence filter ([`filter_endpoint_addr_by_presence`])
+/// mark reachable LAN IPs as dead.  The 8-byte random `nonce` echoed in the
+/// pong is what authenticates the reply (an unrelated or spoofed datagram
+/// would have to guess 1-in-2^64), so the source-IP check added no real
+/// security — only false negatives.
 pub fn presence_ping(target: SocketAddr, timeout: Duration) -> std::result::Result<(), LanError> {
     let socket = UdpSocket::bind("0.0.0.0:0").map_err(|source| LanError::Io {
         context: "presence ping bind",
         source,
     })?;
-    socket
-        .set_read_timeout(Some(timeout))
-        .map_err(|source| LanError::Io {
-            context: "presence ping set_read_timeout",
-            source,
-        })?;
 
     let nonce: u64 = rand::random();
     let pkt = build_presence_packet(OP_PING, nonce);
@@ -198,18 +204,146 @@ pub fn presence_ping(target: SocketAddr, timeout: Duration) -> std::result::Resu
             source,
         })?;
 
-    let mut buf = [0u8; PRESENCE_PKT_LEN];
-    let (n, from) = socket.recv_from(&mut buf).map_err(|source| LanError::Io {
-        context: "presence ping recv_from",
-        source,
-    })?;
-    if from != target {
-        return Err(LanError::PresenceUnexpectedReply);
+    // Read until a pong carrying our nonce arrives or the budget expires.
+    // Because we no longer reject on source IP, an unrelated datagram could
+    // land in the socket first; keep reading (within the remaining time)
+    // rather than failing on the first non-match.  The buffer is oversized so
+    // a stray jumbo datagram doesn't trip WSAEMSGSIZE on Windows — anything
+    // whose length isn't exactly PRESENCE_PKT_LEN fails `parse_presence_pong`
+    // and we loop.
+    let deadline = Instant::now() + timeout;
+    let mut buf = [0u8; 256];
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(LanError::PresenceInvalidPong);
+        }
+        socket
+            .set_read_timeout(Some(remaining))
+            .map_err(|source| LanError::Io {
+                context: "presence ping set_read_timeout",
+                source,
+            })?;
+        let n = match socket.recv_from(&mut buf) {
+            Ok((n, _from)) => n,
+            Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
+                return Err(LanError::PresenceInvalidPong);
+            }
+            Err(source) => {
+                return Err(LanError::Io {
+                    context: "presence ping recv_from",
+                    source,
+                });
+            }
+        };
+        if parse_presence_pong(&buf[..n], nonce) {
+            return Ok(());
+        }
     }
-    if !parse_presence_pong(&buf[..n], nonce) {
-        return Err(LanError::PresenceInvalidPong);
+}
+
+/// Prune an [`EndpointAddr`]'s direct-IP candidates to those that answer a
+/// presence ping on [`WISP_LAN_PRESENCE_PORT`] within `timeout`.
+///
+/// Why: receivers advertise every local IPv4 (Wi-Fi, VPN, WSL/Hyper-V bridges)
+/// and the resulting addrs are baked into QR/recent-device tickets the sender
+/// later decodes.  Iroh's path racing doesn't promptly abandon a half-open
+/// QUIC handshake on a poisoned addr — a VPN IP that accepts the first packet
+/// can stall the dial at the QUIC layer before the wisp ALPN handler ever
+/// runs.  Pre-validating with the lightweight presence/pong protocol filters
+/// these out before iroh sees them.
+///
+/// Strategy: parallel UDP presence ping per direct IPv4 candidate; relay and
+/// IPv6 entries pass through unchanged (presence ping is v4-only and only
+/// proves LAN routability).
+///
+/// Safety net: if no IPv4 candidate responds the original list is preserved
+/// so iroh can still attempt its own racing + relay fallback — important for
+/// fully-remote peers where no direct addr is reachable from the dialing
+/// host's LAN segment.
+pub async fn filter_endpoint_addr_by_presence(
+    addr: EndpointAddr,
+    timeout: Duration,
+) -> EndpointAddr {
+    filter_endpoint_addr_by_presence_on_port(addr, WISP_LAN_PRESENCE_PORT, timeout).await
+}
+
+/// Test hook: same as [`filter_endpoint_addr_by_presence`] but with a caller-
+/// supplied presence port so tests can run a [`PresenceResponder`] on an
+/// ephemeral port without clashing with the well-known one.
+pub async fn filter_endpoint_addr_by_presence_on_port(
+    mut addr: EndpointAddr,
+    presence_port: u16,
+    timeout: Duration,
+) -> EndpointAddr {
+    let mut v4_candidates: Vec<Ipv4Addr> = addr
+        .addrs
+        .iter()
+        .filter_map(|t| match t {
+            TransportAddr::Ip(SocketAddr::V4(v4)) => Some(*v4.ip()),
+            _ => None,
+        })
+        .collect();
+    if v4_candidates.is_empty() {
+        return addr;
     }
-    Ok(())
+    v4_candidates.sort();
+    v4_candidates.dedup();
+
+    let handles: Vec<_> = v4_candidates
+        .iter()
+        .copied()
+        .map(|ip| {
+            tokio::task::spawn_blocking(move || {
+                let target = SocketAddr::new(IpAddr::V4(ip), presence_port);
+                (ip, presence_ping(target, timeout))
+            })
+        })
+        .collect();
+
+    let mut alive: std::collections::HashSet<Ipv4Addr> = std::collections::HashSet::new();
+    for h in handles {
+        match h.await {
+            Ok((ip, Ok(()))) => {
+                alive.insert(ip);
+            }
+            Ok((ip, Err(err))) => {
+                debug!(
+                    %ip,
+                    error = %err,
+                    "presence_filter.ping_failed",
+                );
+            }
+            Err(join_err) => {
+                debug!(error = %join_err, "presence_filter.join_failed");
+            }
+        }
+    }
+
+    if alive.is_empty() {
+        debug!(
+            id = %addr.id,
+            candidates = v4_candidates.len(),
+            "presence_filter.no_ipv4_responded_keeping_original",
+        );
+        return addr;
+    }
+
+    let before = addr.addrs.len();
+    addr.addrs.retain(|t| match t {
+        TransportAddr::Ip(SocketAddr::V4(v4)) => alive.contains(v4.ip()),
+        // IPv6 and Relay entries are kept — presence ping doesn't cover them.
+        _ => true,
+    });
+    debug!(
+        id = %addr.id,
+        before,
+        after = addr.addrs.len(),
+        alive_v4 = alive.len(),
+        "presence_filter.applied",
+    );
+
+    addr
 }
 
 /// Tries each IPv4 until one answers the presence ping; returns the responding address.
@@ -921,6 +1055,81 @@ mod tests {
     fn missing_device_type_defaults_to_laptop() {
         let txt = HashMap::<String, String>::new().into_txt_properties();
         assert_eq!(device_type_from_txt(&txt), DeviceType::Laptop);
+    }
+
+    #[tokio::test]
+    async fn filter_endpoint_addr_by_presence_keeps_responsive_drops_silent() {
+        use iroh::SecretKey;
+
+        // Bind a presence responder on an ephemeral local port.
+        let socket = match UdpSocket::bind("127.0.0.1:0") {
+            Ok(socket) => socket,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::PermissionDenied
+                    || error.raw_os_error() == Some(1) =>
+            {
+                return;
+            }
+            Err(error) => panic!("bind: {error}"),
+        };
+        let port = socket.local_addr().unwrap().port();
+        socket
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_t = Arc::clone(&stop);
+        let join = std::thread::spawn(move || run_presence_loop(socket, stop_t));
+
+        let node_id = SecretKey::from_bytes(&[7u8; 32]).public();
+        // 127.0.0.1 responds; 192.0.2.1 (TEST-NET-1, RFC 5737) does not.  Use
+        // the same `port` for both — the unreachable IP just times out.
+        let responsive: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+        let silent: SocketAddr = format!("192.0.2.1:{port}").parse().unwrap();
+        let addr = EndpointAddr::new(node_id).with_addrs(vec![
+            TransportAddr::Ip(responsive),
+            TransportAddr::Ip(silent),
+        ]);
+
+        let filtered =
+            filter_endpoint_addr_by_presence_on_port(addr, port, Duration::from_millis(400)).await;
+
+        stop.store(true, Ordering::SeqCst);
+        join.join().unwrap();
+
+        let kept: Vec<_> = filtered
+            .addrs
+            .iter()
+            .filter_map(|t| match t {
+                TransportAddr::Ip(s) => Some(*s),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kept, vec![responsive], "only the responsive addr survives");
+    }
+
+    #[tokio::test]
+    async fn filter_endpoint_addr_by_presence_preserves_when_all_silent() {
+        use iroh::SecretKey;
+
+        // No responder bound — every ping fails, safety net preserves originals.
+        let node_id = SecretKey::from_bytes(&[7u8; 32]).public();
+        let silent_a: SocketAddr = "192.0.2.1:47474".parse().unwrap();
+        let silent_b: SocketAddr = "192.0.2.2:47474".parse().unwrap();
+        let addr = EndpointAddr::new(node_id).with_addrs(vec![
+            TransportAddr::Ip(silent_a),
+            TransportAddr::Ip(silent_b),
+        ]);
+        let original_addrs: std::collections::BTreeSet<_> = addr.addrs.iter().cloned().collect();
+
+        // Use a free ephemeral port — nothing listens on it on 192.0.2.x anyway,
+        // we just need the helper to attempt pings and fall back.
+        let preserved =
+            filter_endpoint_addr_by_presence_on_port(addr, 47_474, Duration::from_millis(200))
+                .await;
+
+        let kept: std::collections::BTreeSet<_> = preserved.addrs.iter().cloned().collect();
+        assert_eq!(kept, original_addrs, "safety net preserves original addrs");
     }
 
     #[test]

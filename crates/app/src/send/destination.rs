@@ -1,10 +1,18 @@
+use std::time::Duration;
+
 use iroh::{EndpointAddr, EndpointId};
+use wisp_core::lan::filter_endpoint_addr_by_presence;
 use wisp_core::protocol::{DeviceType, TransferRole};
 use wisp_core::rendezvous::{RendezvousClient, resolve_server_url, validate_code};
 use wisp_core::transfer::TransferCancellation;
 use wisp_core::util::{decode_ticket, format_code_label};
 
 use crate::error::{AppError, AppResult};
+
+/// Per-IP timeout for the pre-dial presence filter.  Long enough for a
+/// real LAN round-trip + drop-detection on misbehaving paths, short enough
+/// that an unreachable VPN/WSL addr doesn't visibly delay the dial.
+const PRE_DIAL_PRESENCE_TIMEOUT: Duration = Duration::from_millis(300);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendDestination {
@@ -61,6 +69,9 @@ impl SendDestination {
                     decode_ticket(&resolved.ticket).map_err(|e| AppError::Internal {
                         message: e.to_string(),
                     })?;
+                let endpoint_addr =
+                    filter_endpoint_addr_by_presence(endpoint_addr, PRE_DIAL_PRESENCE_TIMEOUT)
+                        .await;
                 Ok(ResolvedDestination {
                     destination_label: format_code_label(code),
                     peer_endpoint_addr: endpoint_addr.clone(),
@@ -72,6 +83,9 @@ impl SendDestination {
                     decode_ticket(ticket.trim()).map_err(|e| AppError::Internal {
                         message: e.to_string(),
                     })?;
+                let endpoint_addr =
+                    filter_endpoint_addr_by_presence(endpoint_addr, PRE_DIAL_PRESENCE_TIMEOUT)
+                        .await;
                 Ok(ResolvedDestination {
                     destination_label: self.display_label(),
                     peer_endpoint_addr: endpoint_addr.clone(),
