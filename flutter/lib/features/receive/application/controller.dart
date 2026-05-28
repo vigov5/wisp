@@ -1,5 +1,6 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../../../src/rust/api/simple.dart' as rust_simple;
 import '../../settings/feature.dart';
 import 'service.dart';
 import 'state.dart';
@@ -25,6 +26,13 @@ ReceiverIdleViewState receiverIdleViewState(Ref ref) {
   final code = pairingCode.isAvailable ? pairingCode.formattedCode : '......';
   final deviceName = ref.watch(settingsControllerProvider).settings.deviceName;
 
+  // This device's own public key, for the copyable badge below the name.
+  // Empty (badge hides) if the bridge isn't initialized yet.
+  String endpointId = '';
+  try {
+    endpointId = rust_simple.currentEndpointId();
+  } catch (_) {}
+
   // Parse the expiry timestamp once so the widget can compute remaining TTL
   // without re-parsing on every animation tick.  Bad/missing values fall
   // through as `null` — the idle card just hides the countdown bar.
@@ -41,6 +49,7 @@ ReceiverIdleViewState receiverIdleViewState(Ref ref) {
     code: code,
     clipboardCode: pairingCode.clipboardCode,
     lifecycle: snapshot.lifecycle,
+    endpointId: endpointId,
     expiresAt: expiresAt,
     isStale: pairingCode.isStale,
   );

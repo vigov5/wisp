@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../theme/wisp_theme.dart';
+import '../../../transfers/application/pubkey_visual.dart';
 import '../../application/state.dart';
 
 class ReceiveIdleCard extends StatefulWidget {
@@ -32,6 +33,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
   bool _codeHovering = false;
   bool _copied = false;
   Timer? _copiedResetTimer;
+
   /// Drives a low-frequency tick so the TTL countdown bar redraws ~once a
   /// second without rebuilding the whole shell.  Only ticks while the
   /// pairing code is visible and has a parseable expiry.
@@ -125,7 +127,8 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
     final badgeColor = widget.state.badge.color;
     final ttl = _ttlRemaining();
     final showStaleHint =
-        widget.state.isStale && widget.state.lifecycle == ReceiverLifecycle.ready;
+        widget.state.isStale &&
+        widget.state.lifecycle == ReceiverLifecycle.ready;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
@@ -136,259 +139,270 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Flexible(
-                      child: Text(
-                        widget.state.deviceName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: wispSans(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
-                          color: kInk,
-                          letterSpacing: -0.25,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Row(
-                  children: [
-                    Container(
-                      width: 7,
-                      height: 7,
-                      decoration: BoxDecoration(
-                        color: badgeColor,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: badgeColor.withValues(alpha: 0.22),
-                            blurRadius: 6,
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            widget.state.deviceName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: wispSans(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                              color: kInk,
+                              letterSpacing: -0.25,
+                            ),
                           ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 7),
-                    Flexible(
-                      child: Text(
-                        widget.state.badge.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: wispSans(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w500,
-                          color: badgeColor,
                         ),
+                      ],
+                    ),
+                    if (widget.state.endpointId.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      CopyablePubkeyBadge(
+                        endpointId: widget.state.endpointId,
+                        size: PubkeyBadgeSize.small,
+                        iconSize: 15,
                       ),
+                    ],
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: badgeColor,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: badgeColor.withValues(alpha: 0.22),
+                                blurRadius: 6,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Flexible(
+                          child: Text(
+                            widget.state.badge.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: wispSans(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w500,
+                              color: badgeColor,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Column(
+              ),
+              const SizedBox(width: 12),
+              Row(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 160),
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
-                    transitionBuilder: (child, animation) =>
-                        FadeTransition(opacity: animation, child: child),
-                    child: Text(
-                      _copied ? 'Copied' : 'Receive code',
-                      key: ValueKey<String>(
-                        _copied ? 'copied-label' : 'receive-label',
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 160),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        transitionBuilder: (child, animation) =>
+                            FadeTransition(opacity: animation, child: child),
+                        child: Text(
+                          _copied ? 'Copied' : 'Receive code',
+                          key: ValueKey<String>(
+                            _copied ? 'copied-label' : 'receive-label',
+                          ),
+                          style: wispSans(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w500,
+                            color: _copied
+                                ? const Color(0xFF5E9B70)
+                                : kMuted.withValues(alpha: 0.62),
+                            letterSpacing: 0.18,
+                          ),
+                        ),
                       ),
-                      style: wispSans(
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w500,
-                        color: _copied
-                            ? const Color(0xFF5E9B70)
-                            : kMuted.withValues(alpha: 0.62),
-                        letterSpacing: 0.18,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Tooltip(
-                    message: 'Copy receive code',
-                    child: Semantics(
-                      button: true,
-                      label: 'Copy receive code',
-                      hint: 'Copies the receive code to clipboard',
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          key: const ValueKey<String>('idle-receive-code'),
-                          onTap: () => _copyCode(widget.state.clipboardCode),
-                          canRequestFocus: true,
-                          onHover: (value) {
-                            if (_codeHovering == value) {
-                              return;
-                            }
-                            setState(() => _codeHovering = value);
-                          },
-                          onFocusChange: (value) {
-                            if (_codeHovering == value) {
-                              return;
-                            }
-                            setState(() => _codeHovering = value);
-                          },
-                          borderRadius: BorderRadius.circular(12),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 160),
-                            curve: Curves.easeOutCubic,
-                            height: 38,
-                            padding: const EdgeInsets.symmetric(horizontal: 14),
-                            decoration: BoxDecoration(
-                              color: _codeHovering
-                                  ? Colors.white
-                                  : const Color(0xFFFDFDFD),
+                      const SizedBox(height: 6),
+                      Tooltip(
+                        message: 'Copy receive code',
+                        child: Semantics(
+                          button: true,
+                          label: 'Copy receive code',
+                          hint: 'Copies the receive code to clipboard',
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              key: const ValueKey<String>('idle-receive-code'),
+                              onTap: () =>
+                                  _copyCode(widget.state.clipboardCode),
+                              canRequestFocus: true,
+                              onHover: (value) {
+                                if (_codeHovering == value) {
+                                  return;
+                                }
+                                setState(() => _codeHovering = value);
+                              },
+                              onFocusChange: (value) {
+                                if (_codeHovering == value) {
+                                  return;
+                                }
+                                setState(() => _codeHovering = value);
+                              },
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: _codeHovering
-                                    ? const Color(0xFFCFCFCF)
-                                    : const Color(0xFFD7D7D7),
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(
-                                    alpha: _codeHovering ? 0.028 : 0.018,
-                                  ),
-                                  blurRadius: _codeHovering ? 10 : 6,
-                                  offset: const Offset(0, 2),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 160),
+                                curve: Curves.easeOutCubic,
+                                height: 38,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
                                 ),
-                              ],
-                            ),
-                            child: Center(
-                              child: Text(
-                                _formatCode(widget.state.code),
-                                style: wispMono(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
-                                  color: const Color(0xFF111111),
-                                  letterSpacing: 2.2,
+                                decoration: BoxDecoration(
+                                  color: _codeHovering
+                                      ? Colors.white
+                                      : const Color(0xFFFDFDFD),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: _codeHovering
+                                        ? const Color(0xFFCFCFCF)
+                                        : const Color(0xFFD7D7D7),
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(
+                                        alpha: _codeHovering ? 0.028 : 0.018,
+                                      ),
+                                      blurRadius: _codeHovering ? 10 : 6,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    _formatCode(widget.state.code),
+                                    style: wispMono(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF111111),
+                                      letterSpacing: 2.2,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
                         ),
                       ),
+                    ],
+                  ),
+                  const SizedBox(width: 8),
+                  // Refresh icon — only meaningful when there's an active code
+                  // to rotate.  Disabled (faded) while the service is starting
+                  // / unavailable so the affordance matches reality.
+                  IconButton(
+                    key: const ValueKey<String>('idle-refresh-code-button'),
+                    onPressed:
+                        (widget.onRefreshCode != null &&
+                            widget.state.lifecycle == ReceiverLifecycle.ready &&
+                            !_refreshing)
+                        ? _handleRefresh
+                        : null,
+                    tooltip: widget.state.isStale
+                        ? 'Code may have been used — tap to refresh'
+                        : 'Refresh code',
+                    style: IconButton.styleFrom(
+                      fixedSize: const Size(38, 38),
+                      minimumSize: const Size(38, 38),
+                      padding: EdgeInsets.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      backgroundColor: widget.state.isStale
+                          ? const Color(0xFFFFF6E5)
+                          : const Color(0xFFFCFCFC),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: widget.state.isStale
+                              ? const Color(0xFFE0B96A)
+                              : const Color(0xFFD7D7D7),
+                        ),
+                      ),
+                    ),
+                    icon: _refreshing
+                        ? SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: kMuted.withValues(alpha: 0.9),
+                            ),
+                          )
+                        : Icon(
+                            Icons.refresh_rounded,
+                            size: 18,
+                            color: widget.state.isStale
+                                ? const Color(0xFFC0912C)
+                                : kMuted.withValues(alpha: 0.9),
+                          ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    key: const ValueKey<String>('idle-qr-button'),
+                    onPressed: widget.onOpenQr ?? () {},
+                    tooltip: 'Pair via QR',
+                    style: IconButton.styleFrom(
+                      fixedSize: const Size(38, 38),
+                      minimumSize: const Size(38, 38),
+                      padding: EdgeInsets.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      backgroundColor: const Color(0xFFFCFCFC),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: const BorderSide(color: Color(0xFFD7D7D7)),
+                      ),
+                    ),
+                    icon: Icon(
+                      Icons.qr_code_rounded,
+                      size: 18,
+                      color: kMuted.withValues(alpha: 0.9),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    key: const ValueKey<String>('idle-settings-button'),
+                    onPressed: widget.onOpenSettings ?? () {},
+                    tooltip: 'Settings',
+                    style: IconButton.styleFrom(
+                      fixedSize: const Size(38, 38),
+                      minimumSize: const Size(38, 38),
+                      padding: EdgeInsets.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      backgroundColor: const Color(0xFFFCFCFC),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: const BorderSide(color: Color(0xFFD7D7D7)),
+                      ),
+                    ),
+                    icon: Icon(
+                      Icons.tune_rounded,
+                      size: 18,
+                      color: kMuted.withValues(alpha: 0.9),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(width: 8),
-              // Refresh icon — only meaningful when there's an active code
-              // to rotate.  Disabled (faded) while the service is starting
-              // / unavailable so the affordance matches reality.
-              IconButton(
-                key: const ValueKey<String>('idle-refresh-code-button'),
-                onPressed:
-                    (widget.onRefreshCode != null &&
-                        widget.state.lifecycle == ReceiverLifecycle.ready &&
-                        !_refreshing)
-                    ? _handleRefresh
-                    : null,
-                tooltip: widget.state.isStale
-                    ? 'Code may have been used — tap to refresh'
-                    : 'Refresh code',
-                style: IconButton.styleFrom(
-                  fixedSize: const Size(38, 38),
-                  minimumSize: const Size(38, 38),
-                  padding: EdgeInsets.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  backgroundColor: widget.state.isStale
-                      ? const Color(0xFFFFF6E5)
-                      : const Color(0xFFFCFCFC),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(
-                      color: widget.state.isStale
-                          ? const Color(0xFFE0B96A)
-                          : const Color(0xFFD7D7D7),
-                    ),
-                  ),
-                ),
-                icon: _refreshing
-                    ? SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: kMuted.withValues(alpha: 0.9),
-                        ),
-                      )
-                    : Icon(
-                        Icons.refresh_rounded,
-                        size: 18,
-                        color: widget.state.isStale
-                            ? const Color(0xFFC0912C)
-                            : kMuted.withValues(alpha: 0.9),
-                      ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                key: const ValueKey<String>('idle-qr-button'),
-                onPressed: widget.onOpenQr ?? () {},
-                tooltip: 'Pair via QR',
-                style: IconButton.styleFrom(
-                  fixedSize: const Size(38, 38),
-                  minimumSize: const Size(38, 38),
-                  padding: EdgeInsets.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  backgroundColor: const Color(0xFFFCFCFC),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: const BorderSide(color: Color(0xFFD7D7D7)),
-                  ),
-                ),
-                icon: Icon(
-                  Icons.qr_code_rounded,
-                  size: 18,
-                  color: kMuted.withValues(alpha: 0.9),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                key: const ValueKey<String>('idle-settings-button'),
-                onPressed: widget.onOpenSettings ?? () {},
-                tooltip: 'Settings',
-                style: IconButton.styleFrom(
-                  fixedSize: const Size(38, 38),
-                  minimumSize: const Size(38, 38),
-                  padding: EdgeInsets.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  backgroundColor: const Color(0xFFFCFCFC),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: const BorderSide(color: Color(0xFFD7D7D7)),
-                  ),
-                ),
-                icon: Icon(
-                  Icons.tune_rounded,
-                  size: 18,
-                  color: kMuted.withValues(alpha: 0.9),
-                ),
-              ),
             ],
           ),
-        ],
-      ),
           // Stale hint banner — only shown when the rendezvous server has
           // told us the code is no longer claimable.  Tapping refreshes;
           // we leave the existing code visible underneath so the user has

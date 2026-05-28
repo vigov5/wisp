@@ -121,11 +121,17 @@ class ReceiverIdleViewState {
     required this.code,
     required this.clipboardCode,
     required this.lifecycle,
+    this.endpointId = '',
     this.expiresAt,
     this.isStale = false,
   });
 
   final String deviceName;
+
+  /// This device's own iroh EndpointId / public key.  Surfaced below the
+  /// device name on the idle screen as a copyable badge.  Empty when the
+  /// FFI bridge hasn't initialized yet — the badge hides itself.
+  final String endpointId;
   final ReceiverBadgeState badge;
   final String status;
   final String code;

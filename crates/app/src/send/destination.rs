@@ -102,17 +102,20 @@ pub(crate) fn display_destination_label(value: &str) -> String {
         return "Recipient device".to_owned();
     }
 
-    let normalized = trimmed
+    // Collapse internal whitespace runs but otherwise preserve the name the
+    // user set — including '-' and '_'.  Previously we rewrote separators to
+    // spaces, which silently turned "Alex - Laptop" into "Alex Laptop".
+    let normalized = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    // Placeholder detection flattens separators only for the comparison; the
+    // value we return keeps the original punctuation.
+    let flattened = normalized
         .replace(['_', '-'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join(" ");
-    let lowercase = normalized.to_ascii_lowercase();
-    if lowercase.is_empty()
-        || lowercase == "unknown device"
-        || lowercase == "unknown-device"
-        || lowercase == "unknown"
-    {
+        .join(" ")
+        .to_ascii_lowercase();
+    if flattened.is_empty() || flattened == "unknown device" || flattened == "unknown" {
         return "Recipient device".to_owned();
     }
 
@@ -155,5 +158,17 @@ mod tests {
             "Recipient device"
         );
         assert_eq!(display_destination_label(""), "Recipient device");
+    }
+
+    #[test]
+    fn destination_label_preserves_user_punctuation() {
+        // A name the user explicitly set must not be rewritten.
+        assert_eq!(display_destination_label("XXXX - Laptop"), "XXXX - Laptop");
+        assert_eq!(display_destination_label("alex_macbook"), "alex_macbook");
+        // Only surrounding/duplicated whitespace is collapsed.
+        assert_eq!(
+            display_destination_label("  Alex   Laptop  "),
+            "Alex Laptop"
+        );
     }
 }

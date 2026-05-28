@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../features/receive/application/state.dart';
+import '../../../features/transfers/application/pubkey_visual.dart';
 import '../../../theme/wisp_theme.dart';
 
 class MobileIdentityCard extends StatefulWidget {
@@ -102,8 +103,10 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
   Widget build(BuildContext context) {
     final ttl = _ttlRemaining();
     final showStaleHint =
-        widget.state.isStale && widget.state.lifecycle == ReceiverLifecycle.ready;
-    final canRefresh = widget.onRefreshCode != null &&
+        widget.state.isStale &&
+        widget.state.lifecycle == ReceiverLifecycle.ready;
+    final canRefresh =
+        widget.onRefreshCode != null &&
         widget.state.lifecycle == ReceiverLifecycle.ready &&
         !_refreshing;
 
@@ -130,7 +133,16 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                     color: kInk,
                   ),
                 ),
-                const SizedBox(height: 4),
+                if (widget.state.endpointId.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  CopyablePubkeyBadge(
+                    endpointId: widget.state.endpointId,
+                    size: PubkeyBadgeSize.medium,
+                    iconSize: 18,
+                    haptic: true,
+                  ),
+                ],
+                const SizedBox(height: 8),
                 Row(
                   children: [
                     Container(

@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../theme/wisp_theme.dart';
 
@@ -117,6 +120,106 @@ class PubkeyBadge extends StatelessWidget {
 }
 
 enum PubkeyBadgeSize { tiny, small, medium, large }
+
+/// A [PubkeyBadge] paired with a copy button.  Copies the full [endpointId]
+/// (not the truncated form) to the clipboard and flashes a transient check
+/// icon as confirmation, so it works without a surrounding Scaffold/snackbar.
+///
+/// Used below the device name on the idle/waiting screen (desktop + mobile) so
+/// the user can read off and share their own public key.
+class CopyablePubkeyBadge extends StatefulWidget {
+  const CopyablePubkeyBadge({
+    super.key,
+    required this.endpointId,
+    this.size = PubkeyBadgeSize.small,
+    this.iconSize = 16,
+    this.haptic = false,
+  });
+
+  final String endpointId;
+  final PubkeyBadgeSize size;
+  final double iconSize;
+
+  /// Fire a light haptic on copy — desirable on mobile, off on desktop.
+  final bool haptic;
+
+  @override
+  State<CopyablePubkeyBadge> createState() => _CopyablePubkeyBadgeState();
+}
+
+class _CopyablePubkeyBadgeState extends State<CopyablePubkeyBadge> {
+  bool _copied = false;
+  Timer? _resetTimer;
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.endpointId));
+    if (widget.haptic) {
+      unawaited(HapticFeedback.selectionClick());
+    }
+    _resetTimer?.cancel();
+    if (!mounted) return;
+    setState(() => _copied = true);
+    _resetTimer = Timer(const Duration(milliseconds: 1400), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _resetTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.endpointId.isEmpty) return const SizedBox.shrink();
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: PubkeyBadge(
+            endpointId: widget.endpointId,
+            size: widget.size,
+            tooltip: widget.endpointId,
+          ),
+        ),
+        const SizedBox(width: 2),
+        Semantics(
+          button: true,
+          label: 'Copy public key',
+          child: Tooltip(
+            message: _copied ? 'Copied' : 'Copy public key',
+            // Transparent Material so InkResponse has the ancestor it needs
+            // for its splash regardless of where the badge is embedded.
+            child: Material(
+              color: Colors.transparent,
+              child: InkResponse(
+                key: const ValueKey<String>('copy-pubkey-button'),
+                onTap: _copy,
+                radius: widget.iconSize + 4,
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 160),
+                    child: Icon(
+                      _copied ? Icons.check_rounded : Icons.copy_rounded,
+                      key: ValueKey<bool>(_copied),
+                      size: widget.iconSize,
+                      color: _copied
+                          ? const Color(0xFF49B36C)
+                          : kMuted.withValues(alpha: 0.8),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class _BadgeSpec {
   const _BadgeSpec({

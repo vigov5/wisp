@@ -1011,17 +1011,20 @@ fn display_sender_label(value: &str) -> String {
     if trimmed.is_empty() {
         return "Sender".to_owned();
     }
-    let normalized = trimmed
+    // Collapse internal whitespace runs but otherwise preserve the name the
+    // sender set — including '-' and '_'.  Previously we rewrote separators to
+    // spaces, which silently turned "Alex - Laptop" into "Alex Laptop".
+    let normalized = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    // Placeholder detection flattens separators only for the comparison; the
+    // value we return keeps the original punctuation.
+    let flattened = normalized
         .replace(['_', '-'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join(" ");
-    let lowercase = normalized.to_ascii_lowercase();
-    if lowercase.is_empty()
-        || lowercase == "unknown device"
-        || lowercase == "unknown-device"
-        || lowercase == "unknown"
-    {
+        .join(" ")
+        .to_ascii_lowercase();
+    if flattened.is_empty() || flattened == "unknown device" || flattened == "unknown" {
         return "Sender".to_owned();
     }
     normalized
