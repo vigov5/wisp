@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 999477617;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1560443717;
 
 // Section: executor
 
@@ -656,6 +656,42 @@ fn wire__crate__api__diagnostics__run_connection_test_impl(
                     })?;
                     Ok(output_ok)
                 })())
+            }
+        },
+    )
+}
+fn wire__crate__api__receiver__save_text_file_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "save_text_file",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_suggested_name = <String>::sse_decode(&mut deserializer);
+            let api_contents = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::error::UserFacingErrorData>((move || {
+                    let output_ok =
+                        crate::api::receiver::save_text_file(api_suggested_name, api_contents)?;
+                    Ok(output_ok)
+                })(
+                ))
             }
         },
     )
@@ -1371,6 +1407,7 @@ impl SseDecode for crate::api::receiver::ReceiverTransferEvent {
         let mut var_totalSizeLabel = <String>::sse_decode(deserializer);
         let mut var_files =
             <Vec<crate::api::receiver::ReceiverTransferFile>>::sse_decode(deserializer);
+        let mut var_inlineText = <Option<String>>::sse_decode(deserializer);
         let mut var_connectionPath =
             <Option<crate::api::receiver::ReceiverConnectionPath>>::sse_decode(deserializer);
         let mut var_senderEndpointId = <Option<String>>::sse_decode(deserializer);
@@ -1391,6 +1428,7 @@ impl SseDecode for crate::api::receiver::ReceiverTransferEvent {
             snapshot: var_snapshot,
             total_size_label: var_totalSizeLabel,
             files: var_files,
+            inline_text: var_inlineText,
             connection_path: var_connectionPath,
             sender_endpoint_id: var_senderEndpointId,
             sender_ticket: var_senderTicket,
@@ -1540,6 +1578,7 @@ impl SseDecode for crate::api::sender::SendTransferRequest {
         let mut var_deviceType = <String>::sse_decode(deserializer);
         let mut var_ticket = <Option<String>>::sse_decode(deserializer);
         let mut var_lanDestinationLabel = <Option<String>>::sse_decode(deserializer);
+        let mut var_inlineText = <Option<String>>::sse_decode(deserializer);
         return crate::api::sender::SendTransferRequest {
             code: var_code,
             paths: var_paths,
@@ -1548,6 +1587,7 @@ impl SseDecode for crate::api::sender::SendTransferRequest {
             device_type: var_deviceType,
             ticket: var_ticket,
             lan_destination_label: var_lanDestinationLabel,
+            inline_text: var_inlineText,
         };
     }
 }
@@ -1763,21 +1803,22 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        19 => wire__crate__api__lan__scan_nearby_receivers_impl(port, ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__receiver__set_receiver_discoverable_impl(
+        19 => wire__crate__api__receiver__save_text_file_impl(port, ptr, rust_vec_len, data_len),
+        20 => wire__crate__api__lan__scan_nearby_receivers_impl(port, ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__receiver__set_receiver_discoverable_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        22 => wire__crate__api__receiver__start_receiver_transfer_listener_impl(
+        23 => wire__crate__api__receiver__start_receiver_transfer_listener_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        23 => wire__crate__api__sender__start_send_transfer_impl(port, ptr, rust_vec_len, data_len),
-        24 => wire__crate__api__receiver__watch_receiver_pairing_impl(
+        24 => wire__crate__api__sender__start_send_transfer_impl(port, ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__receiver__watch_receiver_pairing_impl(
             port,
             ptr,
             rust_vec_len,
@@ -1799,7 +1840,7 @@ fn pde_ffi_dispatcher_sync_impl(
         8 => wire__crate__api__lan__decode_ticket_info_impl(ptr, rust_vec_len, data_len),
         11 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
         14 => wire__crate__api__device__random_device_name_impl(ptr, rust_vec_len, data_len),
-        20 => wire__crate__api__simple__set_app_identity_impl(ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__simple__set_app_identity_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -2076,6 +2117,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::receiver::ReceiverTransferEve
             self.snapshot.into_into_dart().into_dart(),
             self.total_size_label.into_into_dart().into_dart(),
             self.files.into_into_dart().into_dart(),
+            self.inline_text.into_into_dart().into_dart(),
             self.connection_path.into_into_dart().into_dart(),
             self.sender_endpoint_id.into_into_dart().into_dart(),
             self.sender_ticket.into_into_dart().into_dart(),
@@ -2280,6 +2322,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::sender::SendTransferRequest {
             self.device_type.into_into_dart().into_dart(),
             self.ticket.into_into_dart().into_dart(),
             self.lan_destination_label.into_into_dart().into_dart(),
+            self.inline_text.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -2841,6 +2884,7 @@ impl SseEncode for crate::api::receiver::ReceiverTransferEvent {
         <Option<crate::api::transfer::TransferSnapshotData>>::sse_encode(self.snapshot, serializer);
         <String>::sse_encode(self.total_size_label, serializer);
         <Vec<crate::api::receiver::ReceiverTransferFile>>::sse_encode(self.files, serializer);
+        <Option<String>>::sse_encode(self.inline_text, serializer);
         <Option<crate::api::receiver::ReceiverConnectionPath>>::sse_encode(
             self.connection_path,
             serializer,
@@ -2963,6 +3007,7 @@ impl SseEncode for crate::api::sender::SendTransferRequest {
         <String>::sse_encode(self.device_type, serializer);
         <Option<String>>::sse_encode(self.ticket, serializer);
         <Option<String>>::sse_encode(self.lan_destination_label, serializer);
+        <Option<String>>::sse_encode(self.inline_text, serializer);
     }
 }
 

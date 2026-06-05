@@ -210,6 +210,151 @@ partial fix already: it preserves `preview.file_count`,
   assert the emitted `SendEvent` carries `plan`, `snapshot`,
   `bytes_sent` matching the last progress.
 
+---
+
+## Wisp-only: receiver never surfaces offer, sender stuck "Waiting" until cancelled → "Unknown sender"
+
+**Reported:** 2026-05-23 (user observation)
+**Audited:** 2026-05-23
+**Reproduces on:** QR-paired AND 6-character-code pairing flows (i.e. all
+SendDestination variants — not pairing-method-specific).
+
+### Status in Wisp fork: **Reproducible, root cause uncertain — instrumentation needed**
+
+User-visible flow (A receiver, B sender, both on same Wi-Fi):
+
+1. A opens "Pair via QR" or shows the 6-char code on home.
+2. B scans QR (or enters the code).
+3. B taps Send → transitions to `SendPhase::WaitingForDecision`.
+4. **A never shows the offer-confirm prompt.**
+5. B taps Cancel.
+6. A immediately transitions to `Failed` with `sender_name = ""`,
+   rendered as "Unknown sender".
+
+### Diagnosis from code reading
+
+The "Unknown sender" label is decisive — `sender_name = ""` is only
+produced by the two offer-receive failure paths in
+`crates/app/src/receiver/session.rs` (the `Ok(Err(error))` and
+`Err(error)` arms around lines 116 and 131).  Both fire when
+`offer_rx.await` resolves with an `Err`, which only happens when
+core's `run_session` returns `Err` **before** reaching `offer_tx.send(Ok(...))`
+in `crates/core/src/transfer/receiver.rs`.
+
+But for B to be in `WaitingForDecision`, B has already completed the
+sender side of `run_handshake_on_streams`:
+
+```text
+send_hello → read_peer_hello → send_offer → emit WaitingForDecision
+```
+
+`read_peer_hello` succeeding means A wrote its Hello on the bi-stream's
+send half, which means A's `do_handshake` got at least past the
+`accept_bi` + `read SenderMessage::Hello` + `write ReceiverMessage::Hello`
+steps (lines 584-611 of receiver.rs).  The remaining steps before
+`offer_tx.send(Ok(...))` are:
+
+1. `read_sender_message(Offer)` at line 612 — read Offer from B.
+2. `TransferPlan::from_manifest(...)?` (~line 226)
+3. `local_record_dir(...).map_err(TransferError::from)?` (~line 228)
+4. `build_expected_files(...).await` (~line 234, has explicit
+   `offer_tx.send(Err)` + Decline write on its own error path)
+5. `build_expected_transfer_files(...)?` (~line 255)
+
+Failures at 2 / 3 / 5 propagate synchronously via `?` and would show
+the "Unknown sender" event **immediately**, not after B cancels.  The
+user reports the failure only appears *after* the cancel, so A is
+**blocked on an `.await`** that the connection close unblocks.
+
+The most plausible single suspect is step 1 — A's
+`read_sender_message(Offer)` blocking until B's cancel drops the QUIC
+connection, at which point `conn.closed()` (line 630 of `do_handshake`)
+returns `Err(connection_closed)`.  This matches the observed delay
+exactly.
+
+The mystery is: B's `send_offer.await?` returned Ok, so the Offer
+bytes were handed to B's QUIC stack.  Why doesn't A see them on the
+same bi-stream?
+
+### Hypotheses to verify with instrumentation
+
+- **H1: Stream mix-up.**  iroh-blobs's own internal bi-streams (it
+  multiplexes onto the same `Connection` via its own ALPN through
+  `BlobDispatcher`) somehow get returned by A's `accept_bi` before
+  B's wisp control stream, and A reads Hello off the blobs stream by
+  accident.  Implausible — accept_bi is per-ALPN-handler in iroh's
+  Router, so blobs streams should never reach wisp_handler.  Worth
+  confirming with logs anyway.
+- **H2: Bi-stream is bidi-but-one-sided.**  In QUIC, opening a
+  bidi-stream sends the STREAM frame only when the peer first writes
+  *or* explicitly flushes.  If B's `send_offer` flushes the second
+  message before the first one has been ACKed by A, and the LAN path
+  migrates to relay mid-flight (or vice versa), the Offer frame may
+  sit in the sender's pacer queue while the connection state
+  stabilises.  Unlikely under iroh's keepalive but possible.
+- **H3: Stream-finish semantics.**  Sender's send half is left open
+  (no `finish()` until much later).  If A's read_frame implementation
+  buffers until a full frame OR stream finish, and B's framing leaves
+  the second message partially below the buffer threshold, A blocks.
+  Unlikely — `protocol_wire::read_frame` reads length-prefix first
+  then exactly that many bytes, no special EOF semantics.
+- **H4: Connection migration race.**  iroh's NAT-traversal often
+  starts the connection on relay then upgrades to a direct LAN path.
+  If the upgrade hands off in the middle of stream state, the receiver
+  side might lose a frame.  Iroh's quinn fork is supposed to handle
+  this correctly, but a bug here would match.
+
+### Recommended next step: instrumentation
+
+Before guessing further, add `tracing::info!` at each critical step in
+`crates/core/src/transfer/receiver.rs::do_handshake` and
+`run_session` so a single repro produces logs that pinpoint the stuck
+step:
+
+- After `accept_bi` success: log `remote = %connection.remote_id()`
+- After read Hello: log `sender_endpoint_id`, `session_id`
+- Before write receiver Hello / after write
+- Before read Offer / after read (so we see "before" without "after"
+  exactly diagnoses H1-H4)
+- After do_handshake returns Ok: log `phase = "post-handshake"`
+- Before `offer_tx.send(Ok)`: log `phase = "offer-tx-send"`
+
+Mirror on the sender side in `do_handshake` /
+`run_handshake_on_streams`:
+
+- After `open_bi`
+- After each of `send_hello` / `read_peer_hello` / `send_offer`
+- After `await_decision` resolution path (or cancel)
+
+Once we have a single repro with these logs we can localise to either
+H1 (wrong stream) or H2/H3/H4 (iroh-level state).
+
+### Workarounds the user might consider in the meantime
+
+1. **Restart the app** between attempts — if the runtime's
+   `OfferState` somehow got stuck in `Pending` after a previous
+   half-failed handshake, only the offending session's `OfferFinished`
+   resets it to `Idle`, and that command may not have fired.  A
+   restart guarantees a clean Idle state.
+2. **Try LAN-only via fresh Wi-Fi handshake** — if the issue is path
+   migration (H4), bouncing both devices off and back onto Wi-Fi may
+   force iroh to settle on a single LAN path before the handshake.
+
+### Follow-up
+
+- [ ] Add the receiver-side + sender-side handshake tracing described
+      above.
+- [ ] Catch a repro with the new logs and identify the exact stuck
+      step.
+- [ ] Depending on which step, fix at iroh-blobs / wisp protocol /
+      app actor layer.
+
+---
+
+## drift#29 — Failed transfer events drop the file plan and progress context
+
+(see entry above — moved to keep chronological order)
+
 ### Follow-up
 
 - [x] Implemented receiver fix in `crates/app/src/receiver/session.rs`:

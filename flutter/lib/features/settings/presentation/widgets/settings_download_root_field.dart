@@ -40,7 +40,9 @@ class SettingsDownloadRootField extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 14),
             foregroundColor: kInk,
             side: const BorderSide(color: kBorder),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
           child: Text(
             'Choose',

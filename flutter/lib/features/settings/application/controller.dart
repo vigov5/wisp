@@ -21,6 +21,7 @@ class SettingsController extends Notifier<SettingsState> {
     required String downloadRoot,
     required String serverUrl,
     required bool discoverableByDefault,
+    required bool skipClipboardConfirm,
   }) async {
     final repository = ref.read(settingsRepositoryProvider);
     final receiverSource = ref.read(receiverServiceSourceProvider);
@@ -31,6 +32,7 @@ class SettingsController extends Notifier<SettingsState> {
       downloadRoot: downloadRoot.trim(),
       discoverableByDefault: discoverableByDefault,
       discoveryServerUrl: _normalizeServerUrl(serverUrl),
+      skipClipboardConfirm: skipClipboardConfirm,
     );
 
     debugPrint(

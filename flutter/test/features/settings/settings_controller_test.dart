@@ -57,6 +57,7 @@ void main() {
           downloadRoot: '/Users/maya/Downloads',
           serverUrl: 'https://example.com',
           discoverableByDefault: false,
+          skipClipboardConfirm: false,
         );
 
     final state = container.read(settingsControllerProvider);
@@ -69,6 +70,40 @@ void main() {
     expect(prefs.getString('settings.download_root'), '/Users/maya/Downloads');
     expect(prefs.getBool('settings.discoverable'), isFalse);
     expect(prefs.getString('settings.server_url'), 'https://example.com');
+  });
+
+  test('saveSettings persists skipClipboardConfirm', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final repo = SettingsRepository(
+      prefs: prefs,
+      randomDeviceName: () => 'Rusty Ridge',
+      defaultDownloadRoot: '/tmp/Wisp',
+    );
+    final initialSettings = await repo.loadOrCreate();
+    final container = ProviderContainer(
+      overrides: [
+        settingsRepositoryProvider.overrideWithValue(repo),
+        initialAppSettingsProvider.overrideWithValue(initialSettings),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    // Keep device identity unchanged so only the toggle is exercised.
+    await container
+        .read(settingsControllerProvider.notifier)
+        .saveSettings(
+          deviceName: initialSettings.deviceName,
+          downloadRoot: initialSettings.downloadRoot,
+          serverUrl: initialSettings.discoveryServerUrl ?? '',
+          discoverableByDefault: initialSettings.discoverableByDefault,
+          skipClipboardConfirm: true,
+        );
+
+    expect(
+      container.read(settingsControllerProvider).settings.skipClipboardConfirm,
+      isTrue,
+    );
+    expect(prefs.getBool('settings.skip_clipboard_confirm'), isTrue);
   });
 
   test('saveSettings refreshes the live receiver identity', () async {
@@ -96,6 +131,7 @@ void main() {
           downloadRoot: '/Users/maya/Downloads',
           serverUrl: 'https://example.com',
           discoverableByDefault: false,
+          skipClipboardConfirm: false,
         );
 
     expect(receiverSource.lastUpdatedDeviceName, 'Maya MacBook');
@@ -127,12 +163,14 @@ void main() {
       downloadRoot: '/tmp/first',
       serverUrl: '',
       discoverableByDefault: true,
+      skipClipboardConfirm: false,
     );
     final secondSave = controller.saveSettings(
       deviceName: 'Second Device',
       downloadRoot: '/tmp/second',
       serverUrl: 'https://two.example',
       discoverableByDefault: false,
+      skipClipboardConfirm: false,
     );
 
     expect(repo.saveCallCount, 2);
@@ -182,6 +220,7 @@ void main() {
             downloadRoot: '/Users/maya/Downloads',
             serverUrl: 'https://example.com',
             discoverableByDefault: false,
+            skipClipboardConfirm: false,
           );
 
       final state = container.read(settingsControllerProvider);

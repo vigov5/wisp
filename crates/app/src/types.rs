@@ -122,6 +122,9 @@ pub struct ReceiverOfferEvent {
     pub sender_ticket: Option<String>,
     pub total_size_label: String,
     pub files: Vec<ReceiverOfferFile>,
+    /// Inline text payload for a text-only offer (no files).  `None` for
+    /// ordinary file transfers.
+    pub inline_text: Option<String>,
     pub error: Option<UserFacingError>,
 }
 

@@ -26,6 +26,7 @@ class SendTransferRequestData {
     this.serverUrl,
     this.ticket,
     this.lanDestinationLabel,
+    this.inlineText,
   });
 
   final String code;
@@ -35,6 +36,7 @@ class SendTransferRequestData {
   final String? serverUrl;
   final String? ticket;
   final String? lanDestinationLabel;
+  final String? inlineText;
 }
 
 enum SendTransferUpdatePhase {
@@ -175,6 +177,7 @@ class SendTransferUpdate {
   final rust_transfer.TransferSnapshotData? snapshot;
   final String? remoteDeviceType;
   final String? remoteEndpointId;
+
   /// Re-serialized peer ticket — flows from Rust once `claim_peer` resolves
   /// so the controller can persist it via saved-devices `lastTicket`.
   final String? remoteTicket;
@@ -238,6 +241,7 @@ class LocalSendTransferSource implements SendTransferSource {
         deviceType: request.deviceType,
         ticket: request.ticket,
         lanDestinationLabel: request.lanDestinationLabel,
+        inlineText: request.inlineText,
       ),
     ).map(_mapEvent);
   }

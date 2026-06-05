@@ -94,9 +94,9 @@ class _SettingsStorageSectionState
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Couldn\'t clear cache: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Couldn\'t clear cache: $e')));
       }
     } finally {
       if (mounted) {
@@ -104,9 +104,9 @@ class _SettingsStorageSectionState
           _clearing = false;
           _cacheSizeBytes = 0;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Receiver cache cleared')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Receiver cache cleared')));
       }
     }
   }
@@ -197,7 +197,8 @@ String _formatBytes(int bytes) {
     value /= 1024;
     idx++;
   }
-  final fixed =
-      value < 10 ? value.toStringAsFixed(1) : value.toStringAsFixed(0);
+  final fixed = value < 10
+      ? value.toStringAsFixed(1)
+      : value.toStringAsFixed(0);
   return '$fixed ${units[idx]}';
 }

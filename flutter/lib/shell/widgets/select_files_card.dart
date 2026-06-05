@@ -3,8 +3,17 @@ import '../../../theme/wisp_theme.dart';
 
 class SelectFilesCard extends StatelessWidget {
   final VoidCallback? onTap;
+  final IconData icon;
+  final String title;
+  final String subtitle;
 
-  const SelectFilesCard({super.key, required this.onTap});
+  const SelectFilesCard({
+    super.key,
+    required this.onTap,
+    this.icon = Icons.add_rounded,
+    this.title = 'Select files',
+    this.subtitle = 'Tap to choose files to send.',
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -26,7 +35,7 @@ class SelectFilesCard extends StatelessWidget {
                 color: kBg,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: const Icon(Icons.add_rounded, color: kInk, size: 24),
+              child: Icon(icon, color: kInk, size: 24),
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -34,7 +43,7 @@ class SelectFilesCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Select files',
+                    title,
                     style: wispSans(
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
@@ -43,7 +52,7 @@ class SelectFilesCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    'Tap to choose files to send.',
+                    subtitle,
                     style: wispSans(fontSize: 14, color: kMuted, height: 1.3),
                   ),
                 ],

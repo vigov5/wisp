@@ -10,10 +10,14 @@ class SendDropZone extends StatefulWidget {
     super.key,
     required this.onChooseFiles,
     required this.onDropPaths,
+    required this.onShareText,
+    required this.onShareClipboard,
   });
 
   final Future<void> Function() onChooseFiles;
   final ValueChanged<List<String>> onDropPaths;
+  final Future<void> Function() onShareText;
+  final Future<void> Function() onShareClipboard;
 
   @override
   State<SendDropZone> createState() => _SendDropZoneState();
@@ -51,6 +55,8 @@ class _SendDropZoneState extends State<SendDropZone> {
             child: SendDropZoneSurface(
               isInteractive: isInteractive,
               onChooseFiles: widget.onChooseFiles,
+              onShareText: widget.onShareText,
+              onShareClipboard: widget.onShareClipboard,
             ),
           ),
         ),

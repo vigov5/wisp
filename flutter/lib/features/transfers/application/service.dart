@@ -28,6 +28,11 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
   DateTime? _transferStartTime;
   DateTime? _lastKeepaliveAt;
 
+  /// How the in-flight inline-text offer was accepted (Copy/Save), or `null`
+  /// for a file transfer. Set in [acceptOffer] and consumed when the `completed`
+  /// event lands, to skip the progress screen and route the finish state.
+  TransferTextDelivery? _textDelivery;
+
   @override
   TransferSessionState build() {
     final source = ref.watch(transfersServiceSourceProvider);
@@ -50,7 +55,9 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
           if (_incomingOffer == null) {
             _incomingOffer = _mapIncomingOffer(event);
           } else if (freshPath != _incomingOffer!.connectionPath) {
-            _incomingOffer = _incomingOffer!.copyWith(connectionPath: freshPath);
+            _incomingOffer = _incomingOffer!.copyWith(
+              connectionPath: freshPath,
+            );
           }
           if (_transferStartTime == null) {
             _transferStartTime = DateTime.now();
@@ -79,6 +86,29 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
                     lastTicket: event.senderTicket,
                   ),
             );
+          }
+          final textDelivery = _textDelivery;
+          _textDelivery = null;
+          if (textDelivery == TransferTextDelivery.copy) {
+            // The snippet is already on the clipboard and the toast confirmed
+            // it — dismiss straight back to idle, no finish screen.
+            state = const TransferSessionState.idle();
+            _incomingOffer = null;
+            _transferStartTime = null;
+            return;
+          }
+          if (textDelivery == TransferTextDelivery.save) {
+            // Nothing actually streamed, so skip the 1s smoothing delay and
+            // show the finish screen at once. Prefer the original offer, which
+            // still carries `inlineText` so the result card renders the text
+            // variant.
+            state = TransferSessionState.completed(
+              offer: _incomingOffer ?? offer,
+              result: result,
+            );
+            _incomingOffer = null;
+            _transferStartTime = null;
+            return;
           }
           unawaited(
             Future.delayed(const Duration(milliseconds: 1000)).then((_) {
@@ -140,10 +170,15 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
     return const TransferSessionState.idle();
   }
 
-  Future<void> acceptOffer() async {
+  Future<void> acceptOffer({TransferTextDelivery? textDelivery}) async {
     final source = ref.read(transfersServiceSourceProvider);
     final offer = state.offer ?? _incomingOffer ?? _offerFromFakeSource(source);
-    if (offer != null) {
+    _textDelivery = textDelivery;
+    // Inline text already arrived in the offer — there's nothing to transfer,
+    // so we skip the progress screen and let the `completed` event route the
+    // finish state (idle for Copy, result card for Save). File transfers still
+    // show the optimistic `receiving` state while bytes stream in.
+    if (offer != null && textDelivery == null) {
       state = TransferSessionState.receiving(
         offer: offer,
         progress: TransferTransferProgress(
@@ -157,6 +192,7 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
     try {
       await source.respondToOffer(accept: true);
     } catch (_) {
+      _textDelivery = null;
       if (offer != null) {
         _incomingOffer = offer;
         state = TransferSessionState.offerPending(offer: offer);
@@ -219,6 +255,7 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
       bytesReceived: event.bytesReceived,
       connectionPath: ConnectionPathInfo.fromReceiver(event.connectionPath),
       senderEndpointId: event.senderEndpointId,
+      inlineText: event.inlineText,
     );
   }
 

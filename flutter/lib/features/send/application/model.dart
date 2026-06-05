@@ -17,6 +17,7 @@ class SendRequestData {
     this.ticket,
     this.lanDestinationLabel,
     this.serverUrl,
+    this.inlineText,
   }) : assert(
          destinationMode != SendDestinationMode.code || code != null,
          'Code requests must include a code.',
@@ -52,6 +53,10 @@ class SendRequestData {
   final String? ticket;
   final String? lanDestinationLabel;
   final String? serverUrl;
+
+  /// Text-only send: when set, `paths` is empty and the text is shared inline
+  /// (≤ 16 KB) or as a synthetic `.txt` for larger payloads.
+  final String? inlineText;
 }
 
 @immutable

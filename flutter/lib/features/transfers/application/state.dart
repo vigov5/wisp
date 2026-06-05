@@ -13,6 +13,13 @@ enum TransferSessionPhase {
   failed,
 }
 
+/// How the receiver handled an inline-text offer. The text already arrived in
+/// the offer, so there's nothing to transfer: [copy] lands it on the clipboard
+/// and dismisses straight back to idle (the toast is the confirmation), while
+/// [save] writes a .txt and shows the finish screen so the user can open the
+/// folder. `null` everywhere else means an ordinary file transfer.
+enum TransferTextDelivery { copy, save }
+
 @immutable
 class TransferTransferProgress {
   const TransferTransferProgress({
@@ -78,6 +85,7 @@ class TransferIncomingOffer {
     required this.bytesReceived,
     this.connectionPath,
     this.senderEndpointId,
+    this.inlineText,
   });
 
   final TransferIdentity sender;
@@ -89,8 +97,13 @@ class TransferIncomingOffer {
   final ConnectionPathInfo? connectionPath;
   final String? senderEndpointId;
 
+  /// Plain text for a text-only offer — rendered with Copy / Save-as-.txt
+  /// actions instead of a file manifest. `null` for ordinary file offers.
+  final String? inlineText;
+
   String get displaySenderName => sender.displayName;
   bool get willResume => bytesReceived > BigInt.zero;
+  bool get isTextOffer => inlineText != null;
 
   TransferIncomingOffer copyWith({
     ConnectionPathInfo? connectionPath,
@@ -105,6 +118,7 @@ class TransferIncomingOffer {
       bytesReceived: bytesReceived,
       connectionPath: connectionPath ?? this.connectionPath,
       senderEndpointId: senderEndpointId ?? this.senderEndpointId,
+      inlineText: inlineText,
     );
   }
 }

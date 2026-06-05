@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../application/state.dart';
 import '../../../../theme/wisp_theme.dart';
+import '../../../../src/rust/api/receiver.dart' as rust_receiver;
 import 'package:app/features/send/presentation/widgets/recipient_avatar.dart';
 import 'sending_connection_strip.dart';
 import 'transfer_flow_layout.dart';
@@ -14,16 +16,30 @@ class OfferCard extends StatelessWidget {
     required this.offer,
     required this.animate,
     required this.onAccept,
+    required this.onAcceptText,
     required this.onDecline,
   });
 
   final TransferIncomingOffer offer;
   final bool animate;
   final VoidCallback onAccept;
+
+  /// Accept an inline-text offer, tagging how the user consumed it (Copy vs
+  /// Save) so the session can skip the progress screen and route the finish
+  /// state correctly.
+  final void Function(TransferTextDelivery mode) onAcceptText;
   final VoidCallback onDecline;
 
   @override
   Widget build(BuildContext context) {
+    if (offer.inlineText != null) {
+      return _TextOfferCard(
+        offer: offer,
+        animate: animate,
+        onAcceptText: onAcceptText,
+        onDecline: onDecline,
+      );
+    }
     final senderName = displaySender(offer.sender.displayName);
     final itemCount = offer.manifest.itemCount;
     final totalSize = formatBytes(offer.manifest.totalSizeBytes);
@@ -105,6 +121,198 @@ class OfferCard extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Incoming text offer: the snippet already arrived inline, so we render it
+/// with Copy and Save-as-.txt actions. Both also accept the transfer (so the
+/// sender sees "delivered"); Decline rejects it.
+class _TextOfferCard extends StatefulWidget {
+  const _TextOfferCard({
+    required this.offer,
+    required this.animate,
+    required this.onAcceptText,
+    required this.onDecline,
+  });
+
+  final TransferIncomingOffer offer;
+  final bool animate;
+  final void Function(TransferTextDelivery mode) onAcceptText;
+  final VoidCallback onDecline;
+
+  @override
+  State<_TextOfferCard> createState() => _TextOfferCardState();
+}
+
+class _TextOfferCardState extends State<_TextOfferCard> {
+  bool _busy = false;
+
+  String get _text => widget.offer.inlineText ?? '';
+
+  Future<void> _copy() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    await Clipboard.setData(ClipboardData(text: _text));
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Text copied')));
+    }
+    widget.onAcceptText(TransferTextDelivery.copy);
+  }
+
+  /// e.g. "Shared Clipboard 2026-04-23 100708.txt" — a stable, sortable name
+  /// stamped with the moment the text was saved, so repeated shares don't all
+  /// collapse onto one generic "shared-text.txt".
+  String _suggestedFileName() {
+    final now = DateTime.now();
+    String two(int n) => n.toString().padLeft(2, '0');
+    final date = '${now.year}-${two(now.month)}-${two(now.day)}';
+    final time = '${two(now.hour)}${two(now.minute)}${two(now.second)}';
+    return 'Shared Clipboard $date $time.txt';
+  }
+
+  Future<void> _save() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final path = await rust_receiver.saveTextFile(
+        suggestedName: _suggestedFileName(),
+        contents: _text,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Saved to $path')));
+      }
+      widget.onAcceptText(TransferTextDelivery.save);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _busy = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Couldn\'t save: $error')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final senderName = displaySender(widget.offer.sender.displayName);
+
+    return SizedBox.expand(
+      child: TransferFlowLayout(
+        statusLabel: 'Incoming text',
+        statusColor: kAccentCyanStrong,
+        subtitle: buildSubtitleText('$senderName sent you text'),
+        explainer: Text(
+          'Copy it or save it as a .txt file. '
+          'Accept only if you trust the sender.',
+          textAlign: TextAlign.center,
+          style: wispSans(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: kInk.withValues(alpha: 0.7),
+            height: 1.4,
+          ),
+        ),
+        illustration: RecipientAvatar(
+          deviceName: senderName,
+          deviceType: deviceTypeLabel(widget.offer.sender.deviceType),
+          animate: widget.animate,
+          mode: SendingStripMode.waitingOnRecipient,
+          countdownDuration: const Duration(seconds: 120),
+        ),
+        // Text body with the primary actions (Copy / Save) docked directly
+        // beneath it — they act on the snippet right above, so keeping them
+        // adjacent reads more naturally than burying them in the footer bar.
+        // Decline stays in the footer (its usual spot) as the safe way out.
+        manifest: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: kSurface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: kBorder),
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 180),
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: SelectableText(
+                    _text,
+                    style: wispMono(fontSize: 13.5, color: kInk),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _busy ? null : _copy,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: kAccentCyanStrong,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(0, 52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      elevation: 0,
+                    ),
+                    icon: const Icon(Icons.content_copy_rounded, size: 18),
+                    label: Text(
+                      'Copy',
+                      style: wispSans(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _busy ? null : _save,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: kAccentCyanStrong,
+                      minimumSize: const Size(0, 52),
+                      side: const BorderSide(color: kAccentCyanStrong),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    icon: const Icon(Icons.save_alt_rounded, size: 18),
+                    label: Text(
+                      'Save .txt',
+                      style: wispSans(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        footer: TextButton(
+          onPressed: _busy ? null : widget.onDecline,
+          style: TextButton.styleFrom(
+            foregroundColor: const Color(0xFFB34A4A),
+            minimumSize: const Size(double.infinity, 48),
+          ),
+          child: const Text(
+            'Decline',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
         ),
       ),
     );

@@ -96,6 +96,9 @@ pub struct ReceiverTransferEvent {
     pub snapshot: Option<TransferSnapshotData>,
     pub total_size_label: String,
     pub files: Vec<ReceiverTransferFile>,
+    /// Inline text for a text-only offer (no files).  The UI renders it with
+    /// Copy / Save-as-.txt actions instead of a file list.
+    pub inline_text: Option<String>,
     pub connection_path: Option<ReceiverConnectionPath>,
     pub sender_endpoint_id: Option<String>,
     pub sender_ticket: Option<String>,
@@ -620,6 +623,7 @@ fn map_event(event: AppReceiverOfferEvent) -> ReceiverTransferEvent {
         snapshot: event.snapshot.map(map_snapshot),
         total_size_label: event.total_size_label,
         files: event.files.into_iter().map(map_file_row).collect(),
+        inline_text: event.inline_text,
         connection_path: event.connection_path.map(map_connection_path),
         sender_endpoint_id: event.sender_endpoint_id,
         sender_ticket: event.sender_ticket,
@@ -683,5 +687,87 @@ fn map_file_row(row: AppReceiverOfferFile) -> ReceiverTransferFile {
     ReceiverTransferFile {
         path: row.path,
         size: row.size,
+    }
+}
+
+/// Write received inline text to a `.txt` in the receiver's download folder
+/// (the same root file transfers land in) and return the saved path.  Powers
+/// the offer card's "Save as .txt" action — the text never went through the
+/// blob pipeline, so the receiver writes it locally on demand.
+pub fn save_text_file(
+    suggested_name: String,
+    contents: String,
+) -> Result<String, crate::api::error::UserFacingErrorData> {
+    let download_root = {
+        let guard = RECEIVER_STATE.lock().map_err(|_| {
+            internal_user_facing_error(
+                "Couldn't save text — receiver state unavailable",
+                "The receiver bridge mutex was poisoned by a panic. Restart Wisp to recover.",
+            )
+        })?;
+        guard
+            .as_ref()
+            .map(|state| state.config.download_root.clone())
+    };
+    let download_root = download_root.ok_or_else(|| {
+        internal_user_facing_error(
+            "Couldn't save text — receiver not running",
+            "Open the Receive tab so the download folder is known, then try saving again.",
+        )
+    })?;
+
+    RUNTIME.block_on(async move {
+        let _ = tokio::fs::create_dir_all(&download_root).await;
+        let file_name = sanitize_text_file_name(&suggested_name);
+        let target = unique_text_path(&download_root, &file_name).await;
+        tokio::fs::write(&target, contents.as_bytes())
+            .await
+            .map_err(|e| internal_user_facing_error("Couldn't save text file", e.to_string()))?;
+        Ok(target.to_string_lossy().into_owned())
+    })
+}
+
+/// Reduce a user/suggested name to a safe single-segment `*.txt` file name.
+fn sanitize_text_file_name(suggested: &str) -> String {
+    let stem: String = suggested
+        .trim()
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let stem = stem.trim_matches(['.', ' ']).to_owned();
+    let stem = if stem.is_empty() {
+        "shared-text".to_owned()
+    } else {
+        stem
+    };
+    if stem.to_ascii_lowercase().ends_with(".txt") {
+        stem
+    } else {
+        format!("{stem}.txt")
+    }
+}
+
+/// Append " (n)" before the extension until the path is free, so saving twice
+/// doesn't clobber an earlier file.
+async fn unique_text_path(dir: &std::path::Path, file_name: &str) -> PathBuf {
+    let candidate = dir.join(file_name);
+    if tokio::fs::metadata(&candidate).await.is_err() {
+        return candidate;
+    }
+    let (stem, ext) = match file_name.rsplit_once('.') {
+        Some((stem, ext)) => (stem.to_owned(), format!(".{ext}")),
+        None => (file_name.to_owned(), String::new()),
+    };
+    let mut n = 1;
+    loop {
+        let candidate = dir.join(format!("{stem} ({n}){ext}"));
+        if tokio::fs::metadata(&candidate).await.is_err() {
+            return candidate;
+        }
+        n += 1;
     }
 }

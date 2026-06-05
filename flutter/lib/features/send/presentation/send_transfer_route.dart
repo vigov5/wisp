@@ -265,8 +265,7 @@ Widget _buildFooter({
             onPressed: onExit,
             style: TextButton.styleFrom(
               foregroundColor: const Color(0xFFB34A4A),
-              backgroundColor:
-                  const Color(0xFFB34A4A).withValues(alpha: 0.08),
+              backgroundColor: const Color(0xFFB34A4A).withValues(alpha: 0.08),
               minimumSize: const Size(0, 48),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),

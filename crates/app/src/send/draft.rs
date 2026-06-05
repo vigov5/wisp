@@ -16,6 +16,9 @@ use super::session::SendSession;
 pub struct SendDraft {
     config: SendConfig,
     paths: Vec<PathBuf>,
+    /// When set, this is a text-only send: `paths` is empty and the text
+    /// travels inline (≤ 16 KB) or as a synthetic `.txt` (larger).
+    inline_text: Option<String>,
 }
 
 impl SendDraft {
@@ -23,9 +26,20 @@ impl SendDraft {
         let mut draft = Self {
             config,
             paths: Vec::new(),
+            inline_text: None,
         };
         draft.replace_paths(paths);
         draft
+    }
+
+    /// Build a text-only draft.  The text is sent inline when small enough,
+    /// otherwise it falls back to a `.txt` file (handled in the core sender).
+    pub fn new_text(config: SendConfig, text: String) -> Self {
+        Self {
+            config,
+            paths: Vec::new(),
+            inline_text: Some(text),
+        }
     }
 
     pub fn config(&self) -> &SendConfig {
@@ -34,6 +48,10 @@ impl SendDraft {
 
     pub fn paths(&self) -> &[PathBuf] {
         &self.paths
+    }
+
+    pub fn inline_text(&self) -> Option<&str> {
+        self.inline_text.as_deref()
     }
 
     pub fn replace_paths(&mut self, paths: Vec<PathBuf>) {
@@ -85,10 +103,26 @@ impl SendDraft {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.paths.is_empty()
+        self.paths.is_empty() && self.inline_text.is_none()
     }
 
     pub fn inspect(&self) -> AppResult<SelectionPreview> {
+        if let Some(text) = &self.inline_text {
+            // Text-only draft: synthesize a single-item preview so the UI and
+            // the connecting/progress events show "1 item · <size>".
+            let total_size = text.len() as u64;
+            return Ok(SelectionPreview {
+                items: vec![SelectionItem {
+                    name: "Text snippet".to_owned(),
+                    path: "Text snippet".to_owned(),
+                    is_directory: false,
+                    file_count: 1,
+                    total_size,
+                }],
+                file_count: 1,
+                total_size,
+            });
+        }
         let preview = inspect_selected_paths(&self.paths).map_err(|e| AppError::Internal {
             message: e.to_string(),
         })?;

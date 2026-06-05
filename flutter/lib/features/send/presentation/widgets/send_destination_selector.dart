@@ -678,11 +678,7 @@ class _NearbyDeviceTile extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                icon,
-                size: 20,
-                color: isSelected ? kAccentCyan : kMuted,
-              ),
+              Icon(icon, size: 20, color: isSelected ? kAccentCyan : kMuted),
               const SizedBox(height: 8),
               Text(
                 receiver.label,
@@ -836,11 +832,7 @@ class _QrPairedTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            const Icon(
-              Icons.qr_code_rounded,
-              size: 18,
-              color: kAccentCyan,
-            ),
+            const Icon(Icons.qr_code_rounded, size: 18, color: kAccentCyan),
             const SizedBox(width: 4),
             IconButton(
               icon: const Icon(Icons.close_rounded, size: 16),

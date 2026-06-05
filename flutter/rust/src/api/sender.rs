@@ -42,6 +42,9 @@ pub struct SendTransferRequest {
     pub device_type: String,
     pub ticket: Option<String>,
     pub lan_destination_label: Option<String>,
+    /// Text-only send.  When set, `paths` is ignored and the text is shared
+    /// inline (≤ 16 KB) or as a synthetic `.txt` for larger payloads.
+    pub inline_text: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -78,13 +81,17 @@ pub fn start_send_transfer(
 ) -> Result<(), crate::api::error::UserFacingErrorData> {
     let fallback_destination = fallback_destination_label(&request);
 
-    let draft = SendDraft::new(
-        SendConfig {
-            device_name: request.device_name,
-            device_type: request.device_type,
-        },
-        request.paths.into_iter().map(PathBuf::from).collect(),
-    );
+    let config = SendConfig {
+        device_name: request.device_name,
+        device_type: request.device_type,
+    };
+    let draft = match request.inline_text {
+        Some(text) => SendDraft::new_text(config, text),
+        None => SendDraft::new(
+            config,
+            request.paths.into_iter().map(PathBuf::from).collect(),
+        ),
+    };
 
     let destination = match request
         .ticket

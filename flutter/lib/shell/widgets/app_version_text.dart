@@ -29,11 +29,7 @@ class _AppVersionTextState extends State<AppVersionText> {
     if (v == null) return const SizedBox.shrink();
     return Text(
       v,
-      style: wispSans(
-        fontSize: 11,
-        fontWeight: FontWeight.w400,
-        color: kMuted,
-      ),
+      style: wispSans(fontSize: 11, fontWeight: FontWeight.w400, color: kMuted),
     );
   }
 }

@@ -114,6 +114,7 @@ impl Sender {
         recv: &mut R,
         manifest: super::message::TransferManifest,
         collection_hash: iroh_blobs::Hash,
+        inline_text: Option<String>,
     ) -> Result<SenderControlOutcome>
     where
         R: AsyncRead + Unpin,
@@ -121,7 +122,8 @@ impl Sender {
     {
         self.send_hello(send).await?;
         self.read_peer_hello(recv).await?;
-        self.send_offer(send, manifest, collection_hash).await?;
+        self.send_offer(send, manifest, collection_hash, inline_text)
+            .await?;
         self.await_decision(recv).await
     }
 
@@ -168,6 +170,7 @@ impl Sender {
         send: &mut W,
         manifest: super::message::TransferManifest,
         collection_hash: iroh_blobs::Hash,
+        inline_text: Option<String>,
     ) -> Result<()>
     where
         W: AsyncWrite + Unpin,
@@ -179,6 +182,7 @@ impl Sender {
                 session_id: self.session_id.clone(),
                 manifest,
                 collection_hash,
+                inline_text,
             }),
         )
         .await?;
@@ -339,6 +343,7 @@ mod tests {
                 &mut local_read,
                 TransferManifest { items: vec![] },
                 [0u8; 32].into(),
+                None,
             )
             .await;
 
@@ -404,11 +409,82 @@ mod tests {
                 &mut local_read,
                 TransferManifest { items: vec![] },
                 [0u8; 32].into(),
+                None,
             )
             .await?;
 
         receiver_task.await.unwrap();
         assert!(matches!(outcome, SenderControlOutcome::Declined(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_control_sends_inline_text_offer()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (local, remote) = duplex(1024);
+        let (mut local_read, mut local_write) = tokio::io::split(local);
+        let (mut remote_read, mut remote_write) = tokio::io::split(remote);
+
+        let mut handler = Sender::new(
+            "session-1".to_owned(),
+            Identity {
+                role: TransferRole::Sender,
+                endpoint_id: SecretKey::from_bytes(&[1; 32]).public(),
+                device_name: "sender".to_owned(),
+                device_type: DeviceType::Laptop,
+            },
+        );
+
+        let receiver_task = tokio::spawn(async move {
+            let hello = read_sender_message(&mut remote_read).await.unwrap();
+            assert!(matches!(hello, SenderMessage::Hello(_)));
+
+            write_receiver_message(
+                &mut remote_write,
+                &ReceiverMessage::Hello(crate::protocol::message::Hello {
+                    version: PROTOCOL_VERSION,
+                    session_id: "session-1".to_owned(),
+                    identity: Identity {
+                        role: TransferRole::Receiver,
+                        endpoint_id: SecretKey::from_bytes(&[2; 32]).public(),
+                        device_name: "receiver".to_owned(),
+                        device_type: DeviceType::Phone,
+                    },
+                }),
+            )
+            .await
+            .unwrap();
+
+            match read_sender_message(&mut remote_read).await.unwrap() {
+                SenderMessage::Offer(offer) => {
+                    assert_eq!(offer.inline_text.as_deref(), Some("hello text"));
+                    assert!(offer.manifest.items.is_empty());
+                }
+                other => panic!("expected offer, got {:?}", other.kind()),
+            }
+
+            write_receiver_message(
+                &mut remote_write,
+                &ReceiverMessage::Accept(Accept {
+                    session_id: "session-1".to_owned(),
+                }),
+            )
+            .await
+            .unwrap();
+        });
+
+        let outcome = handler
+            .run_control(
+                &mut local_write,
+                &mut local_read,
+                TransferManifest { items: vec![] },
+                [0u8; 32].into(),
+                Some("hello text".to_owned()),
+            )
+            .await?;
+
+        receiver_task.await.unwrap();
+        assert!(matches!(outcome, SenderControlOutcome::Accepted(_)));
         Ok(())
     }
 }

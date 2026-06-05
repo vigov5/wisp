@@ -184,10 +184,7 @@ class _SendingConnectionStripState extends State<SendingConnectionStrip>
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: badge,
-        ),
+        Padding(padding: const EdgeInsets.only(bottom: 8), child: badge),
         row,
       ],
     );

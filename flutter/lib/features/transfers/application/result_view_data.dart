@@ -59,6 +59,19 @@ TransferResultViewData buildTransferResultViewData(TransferSessionState state) {
   final manifestItems = offer.manifest.items;
 
   return switch (state.phase) {
+    // Inline text never went through the blob pipeline, so the file-centric
+    // stats (count, size, speed, manifest tree) would all read as noise. Show
+    // a minimal "Text saved" card; the "Open folder" button still points at
+    // the download root the .txt landed in.
+    TransferSessionPhase.completed when offer.isTextOffer =>
+      TransferResultViewData(
+        outcome: TransferResultOutcome.success,
+        title: 'Text saved',
+        message: 'Saved as a .txt file.',
+        deviceName: deviceName,
+        deviceType: deviceType,
+        metrics: [ResultMetric(label: 'From', value: deviceName)],
+      ),
     TransferSessionPhase.completed => TransferResultViewData(
       outcome: TransferResultOutcome.success,
       title: 'Files saved',

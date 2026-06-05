@@ -60,6 +60,7 @@ class SendTransferState {
   final rust_transfer.TransferSnapshotData? snapshot;
   final String? remoteDeviceType;
   final String? remoteEndpointId;
+
   /// Re-serialized ticket of the resolved peer.  Populated for both
   /// code-based and nearby sends once the destination resolves, so
   /// `_completeTransfer` can persist it to saved devices as `lastTicket`.

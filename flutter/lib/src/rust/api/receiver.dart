@@ -8,7 +8,7 @@ import 'error.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'transfer.dart';
 
-// These functions are ignored because they are not marked as `pub`: `current_service_endpoint`, `current_service`, `ensure_receiver_service`, `existing_service_for_config`, `map_connection_path`, `map_event`, `map_file_row`, `map_pairing_state`, `map_phase`, `map_plan_file`, `map_plan`, `map_qr_pairing_info`, `map_registration`, `map_snapshot`, `pairing_registration`, `replace_pairing_task`, `replace_updates_task`, `scan_nearby_with_receiver`, `set_discoverable`
+// These functions are ignored because they are not marked as `pub`: `current_service_endpoint`, `current_service`, `ensure_receiver_service`, `existing_service_for_config`, `map_connection_path`, `map_event`, `map_file_row`, `map_pairing_state`, `map_phase`, `map_plan_file`, `map_plan`, `map_qr_pairing_info`, `map_registration`, `map_snapshot`, `pairing_registration`, `replace_pairing_task`, `replace_updates_task`, `sanitize_text_file_name`, `scan_nearby_with_receiver`, `set_discoverable`, `unique_text_path`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `BridgeReceiverConfig`, `BridgeReceiverState`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
@@ -72,6 +72,18 @@ Future<void> respondToReceiverOffer({required bool accept}) =>
 
 Future<void> cancelReceiverTransfer() =>
     RustLib.instance.api.crateApiReceiverCancelReceiverTransfer();
+
+/// Write received inline text to a `.txt` in the receiver's download folder
+/// (the same root file transfers land in) and return the saved path.  Powers
+/// the offer card's "Save as .txt" action — the text never went through the
+/// blob pipeline, so the receiver writes it locally on demand.
+Future<String> saveTextFile({
+  required String suggestedName,
+  required String contents,
+}) => RustLib.instance.api.crateApiReceiverSaveTextFile(
+  suggestedName: suggestedName,
+  contents: contents,
+);
 
 class QrPairingInfoData {
   final String ticket;
@@ -172,6 +184,10 @@ class ReceiverTransferEvent {
   final TransferSnapshotData? snapshot;
   final String totalSizeLabel;
   final List<ReceiverTransferFile> files;
+
+  /// Inline text for a text-only offer (no files).  The UI renders it with
+  /// Copy / Save-as-.txt actions instead of a file list.
+  final String? inlineText;
   final ReceiverConnectionPath? connectionPath;
   final String? senderEndpointId;
   final String? senderTicket;
@@ -191,6 +207,7 @@ class ReceiverTransferEvent {
     this.snapshot,
     required this.totalSizeLabel,
     required this.files,
+    this.inlineText,
     this.connectionPath,
     this.senderEndpointId,
     this.senderTicket,
@@ -212,6 +229,7 @@ class ReceiverTransferEvent {
       snapshot.hashCode ^
       totalSizeLabel.hashCode ^
       files.hashCode ^
+      inlineText.hashCode ^
       connectionPath.hashCode ^
       senderEndpointId.hashCode ^
       senderTicket.hashCode ^
@@ -235,6 +253,7 @@ class ReceiverTransferEvent {
           snapshot == other.snapshot &&
           totalSizeLabel == other.totalSizeLabel &&
           files == other.files &&
+          inlineText == other.inlineText &&
           connectionPath == other.connectionPath &&
           senderEndpointId == other.senderEndpointId &&
           senderTicket == other.senderTicket &&

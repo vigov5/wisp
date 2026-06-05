@@ -9,10 +9,14 @@ class SendDropZoneSurface extends StatelessWidget {
     super.key,
     required this.isInteractive,
     required this.onChooseFiles,
+    required this.onShareText,
+    required this.onShareClipboard,
   });
 
   final bool isInteractive;
   final Future<void> Function() onChooseFiles;
+  final Future<void> Function() onShareText;
+  final Future<void> Function() onShareClipboard;
 
   @override
   Widget build(BuildContext context) {
@@ -77,32 +81,71 @@ class SendDropZoneSurface extends StatelessWidget {
               ),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 22),
-            Center(
-              child: OutlinedButton(
-                onPressed: () {
-                  unawaited(onChooseFiles());
-                },
-                style: OutlinedButton.styleFrom(
-                  backgroundColor: Colors.white.withValues(alpha: 0.35),
-                  foregroundColor: const Color(0xFF444444),
-                  minimumSize: const Size(0, 32),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 13,
-                    vertical: 7,
-                  ),
-                  side: const BorderSide(color: Color(0xFFE7E7E7), width: 0.9),
-                  textStyle: wispSans(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                child: const Text('Select files'),
+            const SizedBox(height: 6),
+            Text(
+              'or share text and clipboard',
+              style: wispSans(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: kMuted.withValues(alpha: 0.85),
               ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 22),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                _DropZoneAction(
+                  icon: Icons.insert_drive_file_outlined,
+                  label: 'Select files',
+                  onPressed: onChooseFiles,
+                ),
+                _DropZoneAction(
+                  icon: Icons.notes_rounded,
+                  label: 'Share text',
+                  onPressed: onShareText,
+                ),
+                _DropZoneAction(
+                  icon: Icons.content_paste_rounded,
+                  label: 'Share clipboard',
+                  onPressed: onShareClipboard,
+                ),
+              ],
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _DropZoneAction extends StatelessWidget {
+  const _DropZoneAction({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final Future<void> Function() onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: () => unawaited(onPressed()),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: Colors.white.withValues(alpha: 0.35),
+        foregroundColor: const Color(0xFF444444),
+        minimumSize: const Size(0, 32),
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+        side: const BorderSide(color: Color(0xFFE7E7E7), width: 0.9),
+        textStyle: wispSans(fontSize: 12.5, fontWeight: FontWeight.w600),
+      ),
+      icon: Icon(icon, size: 15),
+      label: Text(label),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +13,7 @@ import '../application/model.dart';
 import '../application/item_size.dart';
 import '../application/send_selection_picker.dart';
 import '../application/state.dart';
+import 'send_text_editor_page.dart';
 import 'widgets/send_destination_selector.dart';
 import 'widgets/send_draft_file_list.dart';
 
@@ -134,8 +136,37 @@ class SendDraftPreview extends ConsumerWidget {
 
   bool _canStartSend(WidgetRef ref, SendState state) {
     return state is SendStateDrafting &&
-        state.items.isNotEmpty &&
+        (state.items.isNotEmpty || state.isTextDraft) &&
         ref.read(sendControllerProvider.notifier).canStartSend();
+  }
+
+  String? _inlineTextFor(SendState state) {
+    return switch (state) {
+      SendStateDrafting(:final inlineText) => inlineText,
+      SendStateTransferring(:final request) => request.inlineText,
+      SendStateResult(:final request) => request.inlineText,
+      SendStateIdle() => null,
+    };
+  }
+
+  Future<void> _editText(
+    BuildContext context,
+    WidgetRef ref,
+    String current,
+  ) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SendTextEditorPage(
+          title: 'Edit text',
+          initialText: current,
+          continueLabel: 'Save',
+          onSubmit: (editorContext, text) {
+            ref.read(sendControllerProvider.notifier).updateInlineText(text);
+            Navigator.of(editorContext).pop();
+          },
+        ),
+      ),
+    );
   }
 
   @override
@@ -156,6 +187,8 @@ class SendDraftPreview extends ConsumerWidget {
     final previewHeight = _previewHeightFor(context, files);
     final controller = ref.read(sendControllerProvider.notifier);
     final canEditDraft = state is SendStateDrafting;
+    final inlineText = _inlineTextFor(state);
+    final isText = inlineText != null;
     final canStartSend = _canStartSend(ref, state);
     final actionLabel = switch (state) {
       SendStateResult() => 'Done',
@@ -194,7 +227,7 @@ class SendDraftPreview extends ConsumerWidget {
                     Row(
                       children: [
                         Text(
-                          'Selected files',
+                          isText ? 'Text' : 'Selected files',
                           style: wispSans(
                             fontSize: 17,
                             fontWeight: FontWeight.w700,
@@ -213,7 +246,9 @@ class SendDraftPreview extends ConsumerWidget {
                             border: Border.all(color: kBorder),
                           ),
                           child: Text(
-                            summary,
+                            isText
+                                ? '${utf8.encode(inlineText).length} bytes'
+                                : summary,
                             style: wispSans(
                               fontSize: 11.5,
                               fontWeight: FontWeight.w600,
@@ -225,57 +260,72 @@ class SendDraftPreview extends ConsumerWidget {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: kSurface,
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(color: kBorder),
-                      ),
-                      child: SizedBox(
-                        height: previewHeight,
-                        child: SendDraftFileList(
-                          files: files,
-                          maxHeight: previewHeight,
-                          onRemove: (SendPickedFile file) =>
-                              _removeFile(ref, file),
+                    if (isText)
+                      _TextDraftPreview(text: inlineText)
+                    else
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: kSurface,
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(color: kBorder),
+                        ),
+                        child: SizedBox(
+                          height: previewHeight,
+                          child: SendDraftFileList(
+                            files: files,
+                            maxHeight: previewHeight,
+                            onRemove: (SendPickedFile file) =>
+                                _removeFile(ref, file),
+                          ),
                         ),
                       ),
-                    ),
                     const SizedBox(height: 10),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        alignment: WrapAlignment.end,
-                        children: [
-                          TextButton.icon(
-                            onPressed: canEditDraft
-                                ? () => _appendSelection(
-                                    ref,
-                                    (picker) => picker.pickFiles(),
-                                  )
-                                : null,
-                            icon: const Icon(Icons.add_rounded, size: 16),
-                            label: const Text('Add files'),
-                          ),
-                          TextButton.icon(
-                            onPressed: canEditDraft
-                                ? () => _appendSelection(
-                                    ref,
-                                    (picker) => picker.pickFolder(),
-                                  )
-                                : null,
-                            icon: const Icon(
-                              Icons.create_new_folder_outlined,
-                              size: 16,
+                    if (isText)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: canEditDraft
+                              ? () => _editText(context, ref, inlineText)
+                              : null,
+                          icon: const Icon(Icons.edit_outlined, size: 16),
+                          label: const Text('Edit'),
+                        ),
+                      )
+                    else
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          alignment: WrapAlignment.end,
+                          children: [
+                            TextButton.icon(
+                              onPressed: canEditDraft
+                                  ? () => _appendSelection(
+                                      ref,
+                                      (picker) => picker.pickFiles(),
+                                    )
+                                  : null,
+                              icon: const Icon(Icons.add_rounded, size: 16),
+                              label: const Text('Add files'),
                             ),
-                            label: const Text('Add folders'),
-                          ),
-                        ],
+                            TextButton.icon(
+                              onPressed: canEditDraft
+                                  ? () => _appendSelection(
+                                      ref,
+                                      (picker) => picker.pickFolder(),
+                                    )
+                                  : null,
+                              icon: const Icon(
+                                Icons.create_new_folder_outlined,
+                                size: 16,
+                              ),
+                              label: const Text('Add folders'),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
                     const SizedBox(height: 18),
                     SendDestinationSelector(controller: controller),
                     if (state is SendStateResult) ...[
@@ -437,6 +487,37 @@ class _SendResultCard extends StatelessWidget {
             style: wispSans(fontSize: 13.5, color: kMuted, height: 1.4),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Read-only preview of the text snippet on the draft screen — monospace,
+/// scrollable, capped so a long snippet doesn't push the destination
+/// selector off-screen.
+class _TextDraftPreview extends StatelessWidget {
+  const _TextDraftPreview({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: kSurface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: kBorder),
+      ),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.28,
+        ),
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: Text(text, style: wispMono(fontSize: 13.5, color: kInk)),
+        ),
       ),
     );
   }

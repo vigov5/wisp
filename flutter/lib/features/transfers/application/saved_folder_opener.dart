@@ -22,8 +22,7 @@ bool canOpenSavedFolder({TargetPlatform? platform}) {
     TargetPlatform.windows ||
     TargetPlatform.linux ||
     TargetPlatform.android => true,
-    TargetPlatform.iOS ||
-    TargetPlatform.fuchsia => false,
+    TargetPlatform.iOS || TargetPlatform.fuchsia => false,
   };
 }
 
@@ -34,8 +33,7 @@ String savedFolderOpenLabel({TargetPlatform? platform}) {
     TargetPlatform.windows => 'Show in Explorer',
     TargetPlatform.linux => 'Show in Files',
     TargetPlatform.android => 'Show in Files',
-    TargetPlatform.iOS ||
-    TargetPlatform.fuchsia => 'Open folder',
+    TargetPlatform.iOS || TargetPlatform.fuchsia => 'Open folder',
   };
 }
 

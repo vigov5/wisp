@@ -10,7 +10,7 @@ use tracing::{info, instrument};
 
 use crate::{
     blobs::send::{BlobService, BlobServingStrategy, PreparedStore},
-    protocol::message::{DeviceType, MessageKind},
+    protocol::message::{DeviceType, INLINE_TEXT_MAX_BYTES, MessageKind},
     protocol::wire as protocol_wire,
     protocol::{ALPN, ProtocolError},
     protocol::{message as protocol_message, send as protocol_sender},
@@ -25,11 +25,31 @@ use super::types::{
 
 type Result<T> = TransferResult<T>;
 
+/// Timeout for the machine-to-machine handshake — open the bi-stream, exchange
+/// hellos, and put the offer on the wire.  No human is in this loop, so it
+/// stays tight.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long the sender waits for the receiver's accept/decline once the offer
+/// is delivered.  This is a human-in-the-loop decision, so it must outlast the
+/// receiver's own 120s decision window (see
+/// `crates/core/src/transfer/receiver.rs`) — that way the receiver-side timer
+/// is the one that fires first.  QUIC keepalive holds the path up while we
+/// wait.  Folding this into [`HANDSHAKE_TIMEOUT`] was the "shared clipboard
+/// auto-closes after a few seconds" bug: a slow tap dropped the connection and
+/// the receiver reported "connection closed before receiver decision".
+const DECISION_WAIT: Duration = Duration::from_secs(130);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendRequest {
     pub peer_endpoint_addr: EndpointAddr,
     pub peer_endpoint_id: EndpointId,
     pub files: Vec<std::path::PathBuf>,
+    /// Optional plain-text payload for a text-only send.  When set, `files`
+    /// is ignored: text at or below [`INLINE_TEXT_MAX_BYTES`] rides inline on
+    /// the control stream (no blobs); larger text falls back to a synthetic
+    /// `message.txt` sent through the normal blob pipeline.
+    pub inline_text: Option<String>,
 }
 
 #[derive(Debug)]
@@ -209,16 +229,65 @@ impl SenderSession {
     #[instrument(skip_all, fields(session_id = %self.session_id, peer = %self.request.peer_endpoint_id))]
     async fn run(self, mut cancel_rx: watch::Receiver<bool>) -> Result<TransferOutcome> {
         let scratch = ScratchDir::new("wisp-send", &self.session_id).await?;
-        let prepared = PreparedStore::prepare(&scratch.path, self.request.files.clone()).await?;
-        let prepared_plan = build_prepared_plan(&self.session_id, &prepared)?;
-        let manifest = prepared.manifest();
-        let collection_hash = prepared.collection_hash();
+
+        // Decide how the payload travels.  Short text rides inline on the
+        // control stream (no blobs); larger text falls back to a synthetic
+        // `message.txt`; everything else is the regular file path.
+        let (manifest, collection_hash, prepared_plan, offer_inline_text, prepared) =
+            match self.request.inline_text.clone() {
+                Some(text) if text.len() <= INLINE_TEXT_MAX_BYTES => {
+                    let prepared_plan = synthetic_text_plan(&self.session_id, text.len() as u64);
+                    (
+                        protocol_message::TransferManifest { items: Vec::new() },
+                        iroh_blobs::Hash::from([0u8; 32]),
+                        prepared_plan,
+                        Some(text),
+                        None,
+                    )
+                }
+                Some(text) => {
+                    // Over the inline cap: spill to a scratch `message.txt` and
+                    // hand it to the normal blob pipeline as a single file.
+                    let text_path = scratch.path.join("message.txt");
+                    tokio::fs::write(&text_path, text.as_bytes())
+                        .await
+                        .map_err(|source| {
+                            TransferError::other("writing oversized inline text to scratch", source)
+                        })?;
+                    let prepared = PreparedStore::prepare(&scratch.path, vec![text_path]).await?;
+                    let prepared_plan = build_prepared_plan(&self.session_id, &prepared)?;
+                    let manifest = prepared.manifest();
+                    let collection_hash = prepared.collection_hash();
+                    (
+                        manifest,
+                        collection_hash,
+                        prepared_plan,
+                        None,
+                        Some(prepared),
+                    )
+                }
+                None => {
+                    let prepared =
+                        PreparedStore::prepare(&scratch.path, self.request.files.clone()).await?;
+                    let prepared_plan = build_prepared_plan(&self.session_id, &prepared)?;
+                    let manifest = prepared.manifest();
+                    let collection_hash = prepared.collection_hash();
+                    (
+                        manifest,
+                        collection_hash,
+                        prepared_plan,
+                        None,
+                        Some(prepared),
+                    )
+                }
+            };
 
         info!(
             session_id = %self.session_id,
             collection_hash = %collection_hash,
             file_count = manifest.count(),
             total_size = manifest.total_size(),
+            inline_text = offer_inline_text.is_some(),
             "prepared manifest"
         );
 
@@ -239,6 +308,7 @@ impl SenderSession {
             &self.identity,
             manifest,
             collection_hash,
+            offer_inline_text.clone(),
             &connection,
             &mut cancel_rx,
             &self.events,
@@ -272,7 +342,22 @@ impl SenderSession {
             }
         }
 
+        // --- Inline text: no blobs.  The text already reached the receiver in
+        // the offer, so wrap up the control exchange and finish. ---
+        if let Some(text) = offer_inline_text {
+            return self
+                .run_inline_completion(
+                    text,
+                    &mut control_send,
+                    &mut control_recv,
+                    prepared_plan,
+                    &mut cancel_rx,
+                )
+                .await;
+        }
+
         // --- Data Transfer ---
+        let prepared = prepared.expect("file send path always prepares a blob store");
         let blob_service = BlobService::new(self.endpoint.clone());
         let registration = blob_service
             .register_with_strategy(prepared, &self.blob_strategy)
@@ -326,6 +411,118 @@ impl SenderSession {
         let _ = registration.shutdown().await;
         Ok(outcome)
     }
+
+    /// Finish a text-only (inline) send.  By this point the receiver has the
+    /// text (it travelled in the offer) and has Accepted.  No blobs flow:
+    /// we just confirm the receiver's result and ack, reusing the same
+    /// `TransferResult` / `TransferAck` control messages the file path uses.
+    async fn run_inline_completion(
+        &self,
+        text: String,
+        control_send: &mut iroh::endpoint::SendStream,
+        control_recv: &mut iroh::endpoint::RecvStream,
+        prepared_plan: TransferPlan,
+        cancel_rx: &mut watch::Receiver<bool>,
+    ) -> Result<TransferOutcome> {
+        self.events.emit(SenderEvent::TransferStarted {
+            session_id: self.session_id.clone(),
+            plan: prepared_plan,
+        });
+
+        let message = tokio::select! {
+            res = protocol_wire::read_receiver_message(control_recv) => res?,
+            _ = wait_for_cancel(cancel_rx) => {
+                let _ = protocol_wire::write_sender_message(
+                    control_send,
+                    &protocol_message::SenderMessage::Cancel(protocol_message::Cancel {
+                        session_id: self.session_id.clone(),
+                        by: protocol_message::TransferRole::Sender,
+                        phase: protocol_message::CancelPhase::Transferring,
+                        reason: "cancelled by user".to_owned(),
+                    }),
+                ).await;
+                return Ok(TransferOutcome::local_cancel(
+                    protocol_message::TransferRole::Sender,
+                    protocol_message::CancelPhase::Transferring,
+                ));
+            }
+            _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                return Err(TransferError::timeout("waiting for inline text result"));
+            }
+        };
+
+        match message {
+            protocol_message::ReceiverMessage::TransferResult(result) => match result.status {
+                protocol_message::TransferStatus::Ok => {}
+                protocol_message::TransferStatus::Error { code, message } => {
+                    return Err(TransferError::other(
+                        "inline text error from receiver",
+                        std::io::Error::other(format!("{code:?}: {message}")),
+                    ));
+                }
+            },
+            protocol_message::ReceiverMessage::Cancel(cancel) => {
+                return Ok(TransferOutcome::from_remote_cancel(
+                    cancel,
+                    &self.session_id,
+                )?);
+            }
+            other => {
+                return Err(ProtocolError::unexpected_message_kind(
+                    "receiver inline result",
+                    MessageKind::TransferResult,
+                    other.kind(),
+                )
+                .into());
+            }
+        }
+
+        self.events.emit(SenderEvent::TransferCompleted {
+            session_id: self.session_id.clone(),
+            snapshot: synthetic_text_snapshot(&self.session_id, text.len() as u64),
+        });
+
+        let _ = protocol_wire::write_sender_message(
+            control_send,
+            &protocol_message::SenderMessage::TransferAck(protocol_message::TransferAck {
+                session_id: self.session_id.clone(),
+            }),
+        )
+        .await;
+        finish_control_stream(control_send).await;
+        Ok(TransferOutcome::Completed)
+    }
+}
+
+/// Build a one-item plan describing an inline-text send so the sender UI can
+/// render "1 item · <size>" without a real prepared collection.
+fn synthetic_text_plan(session_id: &str, byte_len: u64) -> TransferPlan {
+    TransferPlan {
+        session_id: session_id.to_owned(),
+        total_files: 1,
+        total_bytes: byte_len,
+        files: vec![super::types::TransferPlanFile {
+            id: 0,
+            path: "Text snippet".to_owned(),
+            size: byte_len,
+        }],
+    }
+}
+
+/// Terminal snapshot for an inline-text send (everything done, no byte stream).
+fn synthetic_text_snapshot(session_id: &str, byte_len: u64) -> TransferSnapshot {
+    TransferSnapshot {
+        session_id: session_id.to_owned(),
+        phase: TransferPhase::Completed,
+        total_files: 1,
+        completed_files: 1,
+        total_bytes: byte_len,
+        bytes_transferred: byte_len,
+        active_file_id: None,
+        active_file_bytes: None,
+        bytes_per_sec: None,
+        eta_seconds: None,
+    }
 }
 
 async fn finish_control_stream(send: &mut iroh::endpoint::SendStream) {
@@ -347,23 +544,28 @@ async fn do_handshake(
     identity: &protocol_message::Identity,
     manifest: protocol_message::TransferManifest,
     collection_hash: iroh_blobs::Hash,
+    inline_text: Option<String>,
     connection: &Connection,
     cancel_rx: &mut watch::Receiver<bool>,
     events: &SenderEventSink,
     prepared_plan: TransferPlan,
 ) -> Result<HandshakeResult> {
-    tokio::select! {
+    // Phase 1 — the machine handshake.  Open the stream, exchange hellos, and
+    // put the offer on the wire under a tight timeout; the receiver isn't
+    // waiting on a human yet.
+    let (send, mut recv, mut handler) = tokio::select! {
         res = async {
             let (mut send, mut recv) = connection
                 .open_bi()
                 .await
                 .map_err(|source| TransferError::other("opening bi-stream", source))?;
 
-            let outcome = run_handshake_on_streams(
+            let handler = run_offer_phase(
                 session_id,
                 identity,
                 manifest,
                 collection_hash,
+                inline_text,
                 &mut send,
                 &mut recv,
                 events,
@@ -371,23 +573,86 @@ async fn do_handshake(
             )
             .await?;
 
-            Ok(HandshakeResult::Ok(send, recv, outcome))
-        } => res,
+            Ok::<_, TransferError>((send, recv, handler))
+        } => res?,
         _ = wait_for_cancel(cancel_rx) => {
-            Ok(HandshakeResult::Cancelled(TransferOutcome::local_cancel(
+            return Ok(HandshakeResult::Cancelled(TransferOutcome::local_cancel(
                 protocol_message::TransferRole::Sender,
                 protocol_message::CancelPhase::WaitingForDecision,
-            )))
+            )));
         }
-        _ = tokio::time::sleep(Duration::from_secs(30)) => Err(TransferError::timeout("handshake")),
+        _ = tokio::time::sleep(HANDSHAKE_TIMEOUT) => return Err(TransferError::timeout("handshake")),
+    };
+
+    // Phase 2 — wait for the receiver's accept/decline.  A human is in this
+    // loop now, so the wait gets its own generous window ([`DECISION_WAIT`])
+    // that outlasts the receiver's 120s decision timeout.  Keeping it on the
+    // short handshake timeout was what auto-closed the share before the user
+    // could tap.  The connection stays alive via QUIC keepalive; cancel and a
+    // dropped connection still short-circuit the wait.
+    tokio::select! {
+        res = handler.await_decision(&mut recv) => {
+            let outcome = res?;
+            Ok(HandshakeResult::Ok(send, recv, outcome))
+        }
+        _ = wait_for_cancel(cancel_rx) => Ok(HandshakeResult::Cancelled(
+            TransferOutcome::local_cancel(
+                protocol_message::TransferRole::Sender,
+                protocol_message::CancelPhase::WaitingForDecision,
+            ),
+        )),
+        _ = connection.closed() => Err(TransferError::connection_closed("before receiver decision")),
+        _ = tokio::time::sleep(DECISION_WAIT) => {
+            Err(TransferError::timeout("waiting for receiver decision"))
+        }
     }
 }
 
+/// Run the handshake up to (and including) the offer, returning the protocol
+/// `Sender` so the caller can await the receiver's decision separately —
+/// crucially, off the short handshake timeout.  Emits `WaitingForDecision`
+/// once the offer is on the wire.
+async fn run_offer_phase<R, W>(
+    session_id: &str,
+    identity: &protocol_message::Identity,
+    manifest: protocol_message::TransferManifest,
+    collection_hash: iroh_blobs::Hash,
+    inline_text: Option<String>,
+    send: &mut W,
+    recv: &mut R,
+    events: &SenderEventSink,
+    prepared_plan: TransferPlan,
+) -> Result<protocol_sender::Sender>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut handler = protocol_sender::Sender::new(session_id.to_owned(), identity.clone());
+    handler.send_hello(send).await?;
+    let peer_hello = handler.read_peer_hello(recv).await?;
+    handler
+        .send_offer(send, manifest, collection_hash, inline_text)
+        .await?;
+    events.emit(SenderEvent::WaitingForDecision {
+        session_id: session_id.to_owned(),
+        receiver_device_name: peer_hello.identity.device_name,
+        receiver_device_type: peer_hello.identity.device_type,
+        receiver_endpoint_id: peer_hello.identity.endpoint_id,
+        prepared_plan,
+    });
+    Ok(handler)
+}
+
+/// Offer phase + decision wait on a single pair of streams.  Used by the
+/// in-memory handshake tests, where the receiver accepts immediately so the
+/// two phases need no separate timeouts.
+#[cfg(test)]
 async fn run_handshake_on_streams<R, W>(
     session_id: &str,
     identity: &protocol_message::Identity,
     manifest: protocol_message::TransferManifest,
     collection_hash: iroh_blobs::Hash,
+    inline_text: Option<String>,
     send: &mut W,
     recv: &mut R,
     events: &SenderEventSink,
@@ -397,17 +662,18 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut handler = protocol_sender::Sender::new(session_id.to_owned(), identity.clone());
-    handler.send_hello(send).await?;
-    let peer_hello = handler.read_peer_hello(recv).await?;
-    handler.send_offer(send, manifest, collection_hash).await?;
-    events.emit(SenderEvent::WaitingForDecision {
-        session_id: session_id.to_owned(),
-        receiver_device_name: peer_hello.identity.device_name,
-        receiver_device_type: peer_hello.identity.device_type,
-        receiver_endpoint_id: peer_hello.identity.endpoint_id,
+    let mut handler = run_offer_phase(
+        session_id,
+        identity,
+        manifest,
+        collection_hash,
+        inline_text,
+        send,
+        recv,
+        events,
         prepared_plan,
-    });
+    )
+    .await?;
     Ok(handler.await_decision(recv).await?)
 }
 
@@ -650,6 +916,7 @@ mod tests {
             &sender_identity(),
             test_manifest,
             [3u8; 32].into(),
+            None,
             &mut sender_write,
             &mut sender_read,
             &events.sink,

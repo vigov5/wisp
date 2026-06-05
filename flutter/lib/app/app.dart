@@ -30,6 +30,7 @@ class _WispAppState extends ConsumerState<WispApp> {
   late final ReceiverServiceSource _receiverService;
   late final KeepaliveLifecycleObserver _keepaliveObserver;
   StreamSubscription<List<String>>? _shareIntentSub;
+  StreamSubscription<String>? _shareTextSub;
   bool _discoverableEnabled = false;
 
   @override
@@ -63,23 +64,45 @@ class _WispAppState extends ConsumerState<WispApp> {
         _openSendDraftWith(paths);
       }),
     );
+    unawaited(
+      AndroidShareIntent.getInitialSharedText().then((text) {
+        if (!mounted || text == null) return;
+        _openSendTextDraftWith(text);
+      }),
+    );
     _shareIntentSub = AndroidShareIntent.onSharedFiles.listen((paths) {
       if (!mounted) return;
       _openSendDraftWith(paths);
+    });
+    _shareTextSub = AndroidShareIntent.onSharedText.listen((text) {
+      if (!mounted) return;
+      _openSendTextDraftWith(text);
     });
   }
 
   void _openSendDraftWith(List<String> paths) {
     if (paths.isEmpty) return;
-    final files = paths.map((path) {
-      final file = File(path);
-      return SendPickedFile(
-        path: path,
-        name: SendPickedFile.fromPath(path).name,
-        sizeBytes: file.existsSync() ? BigInt.from(file.lengthSync()) : null,
-      );
-    }).toList(growable: false);
+    final files = paths
+        .map((path) {
+          final file = File(path);
+          return SendPickedFile(
+            path: path,
+            name: SendPickedFile.fromPath(path).name,
+            sizeBytes: file.existsSync()
+                ? BigInt.from(file.lengthSync())
+                : null,
+          );
+        })
+        .toList(growable: false);
     _router.go(AppRoutePaths.sendDraft, extra: files);
+  }
+
+  // Routes a shared text/plain payload into the Share-text flow: seed a text
+  // draft, then open the draft/destination screen (no files attached).
+  void _openSendTextDraftWith(String text) {
+    if (text.trim().isEmpty) return;
+    ref.read(sendControllerProvider.notifier).beginTextDraft(text);
+    _router.go(AppRoutePaths.sendDraft, extra: const <SendPickedFile>[]);
   }
 
   bool _hasActiveTransfer() {
@@ -109,6 +132,7 @@ class _WispAppState extends ConsumerState<WispApp> {
   @override
   void dispose() {
     unawaited(_shareIntentSub?.cancel());
+    unawaited(_shareTextSub?.cancel());
     WidgetsBinding.instance.removeObserver(_keepaliveObserver);
     unawaited(_receiverService.setDiscoverable(enabled: false));
     super.dispose();
@@ -120,27 +144,28 @@ class _WispAppState extends ConsumerState<WispApp> {
     // (Settings, Saved devices, QR pairing/scan, deep dialogs, etc.), pop
     // anything stacked on top of the GoRouter and push the receive-transfer
     // route so the user sees the confirm prompt immediately.
-    ref.listen<transfer_state.TransferSessionState>(transfersViewStateProvider, (
-      prev,
-      next,
-    ) {
-      final wasIdle =
-          prev == null || prev.phase == transfer_state.TransferSessionPhase.idle;
-      final nowActive =
-          next.phase != transfer_state.TransferSessionPhase.idle;
-      if (!wasIdle || !nowActive) return;
+    ref.listen<transfer_state.TransferSessionState>(
+      transfersViewStateProvider,
+      (prev, next) {
+        final wasIdle =
+            prev == null ||
+            prev.phase == transfer_state.TransferSessionPhase.idle;
+        final nowActive =
+            next.phase != transfer_state.TransferSessionPhase.idle;
+        if (!wasIdle || !nowActive) return;
 
-      final currentPath = _router.routeInformationProvider.value.uri.path;
-      if (currentPath == AppRoutePaths.receiveTransfer) return;
+        final currentPath = _router.routeInformationProvider.value.uri.path;
+        if (currentPath == AppRoutePaths.receiveTransfer) return;
 
-      // Dismiss any modal routes pushed via Navigator (QrPairingPage,
-      // QrScanPage, etc.) so the receive-transfer route lands on top.
-      final navContext = _router.routerDelegate.navigatorKey.currentContext;
-      if (navContext != null) {
-        Navigator.of(navContext).popUntil((route) => route.isFirst);
-      }
-      _router.push(AppRoutePaths.receiveTransfer);
-    });
+        // Dismiss any modal routes pushed via Navigator (QrPairingPage,
+        // QrScanPage, etc.) so the receive-transfer route lands on top.
+        final navContext = _router.routerDelegate.navigatorKey.currentContext;
+        if (navContext != null) {
+          Navigator.of(navContext).popUntil((route) => route.isFirst);
+        }
+        _router.push(AppRoutePaths.receiveTransfer);
+      },
+    );
 
     return MaterialApp.router(
       title: 'Wisp',

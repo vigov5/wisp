@@ -7,6 +7,7 @@ class AppSettings {
     required this.downloadRoot,
     required this.discoverableByDefault,
     required this.discoveryServerUrl,
+    this.skipClipboardConfirm = false,
   });
 
   final String deviceName;
@@ -14,12 +15,17 @@ class AppSettings {
   final bool discoverableByDefault;
   final String? discoveryServerUrl;
 
+  /// When true, "Share clipboard" skips the confirm/edit screen and jumps
+  /// straight to device selection. Default false (always confirm first).
+  final bool skipClipboardConfirm;
+
   AppSettings copyWith({
     String? deviceName,
     String? downloadRoot,
     bool? discoverableByDefault,
     String? discoveryServerUrl,
     bool clearDiscoveryServerUrl = false,
+    bool? skipClipboardConfirm,
   }) {
     return AppSettings(
       deviceName: deviceName ?? this.deviceName,
@@ -29,6 +35,7 @@ class AppSettings {
       discoveryServerUrl: clearDiscoveryServerUrl
           ? null
           : (discoveryServerUrl ?? this.discoveryServerUrl),
+      skipClipboardConfirm: skipClipboardConfirm ?? this.skipClipboardConfirm,
     );
   }
 
@@ -40,7 +47,8 @@ class AppSettings {
           deviceName == other.deviceName &&
           downloadRoot == other.downloadRoot &&
           discoverableByDefault == other.discoverableByDefault &&
-          discoveryServerUrl == other.discoveryServerUrl;
+          discoveryServerUrl == other.discoveryServerUrl &&
+          skipClipboardConfirm == other.skipClipboardConfirm;
 
   @override
   int get hashCode => Object.hash(
@@ -48,6 +56,7 @@ class AppSettings {
     downloadRoot,
     discoverableByDefault,
     discoveryServerUrl,
+    skipClipboardConfirm,
   );
 }
 

@@ -198,6 +198,7 @@ mod tests {
                 }],
             },
             collection_hash: [0u8; 32].into(),
+            inline_text: None,
         });
 
         write_sender_message(&mut a, &message).await?;
@@ -246,7 +247,7 @@ mod tests {
 
         let json = serde_json::to_string(&envelope).unwrap();
 
-        assert!(json.contains("\"version\":3"));
+        assert!(json.contains("\"version\":4"));
         assert!(json.contains("\"role\":\"sender\""));
         assert!(json.contains("\"kind\":\"hello\""));
     }

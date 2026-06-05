@@ -16,6 +16,9 @@ class AndroidShareIntent {
   static final StreamController<List<String>> _controller =
       StreamController<List<String>>.broadcast();
 
+  static final StreamController<String> _textController =
+      StreamController<String>.broadcast();
+
   static bool _wired = false;
 
   /// Stream of newly-shared file-path lists arriving while the app is
@@ -24,6 +27,14 @@ class AndroidShareIntent {
   static Stream<List<String>> get onSharedFiles {
     _ensureWired();
     return _controller.stream;
+  }
+
+  /// Stream of newly-shared plain text arriving while the app is already
+  /// running (warm-start ACTION_SEND text/plain).  Cold-start text is
+  /// delivered via [getInitialSharedText] instead.
+  static Stream<String> get onSharedText {
+    _ensureWired();
+    return _textController.stream;
   }
 
   /// Returns the list of files attached to the Android intent that
@@ -39,6 +50,15 @@ class AndroidShareIntent {
     return result?.cast<String>() ?? const [];
   }
 
+  /// Returns the plain text attached to the Android intent that launched the
+  /// app (ACTION_SEND text/plain), or null when launched normally.  The
+  /// native side hands the cold-start stash over only once.
+  static Future<String?> getInitialSharedText() async {
+    if (!Platform.isAndroid) return null;
+    _ensureWired();
+    return _channel.invokeMethod<String>('getInitialSharedText');
+  }
+
   static void _ensureWired() {
     if (_wired) return;
     _wired = true;
@@ -48,6 +68,11 @@ class AndroidShareIntent {
         final list = (call.arguments as List?)?.cast<String>() ?? const [];
         if (list.isNotEmpty) {
           _controller.add(list);
+        }
+      } else if (call.method == 'onSharedText') {
+        final text = call.arguments as String?;
+        if (text != null && text.isNotEmpty) {
+          _textController.add(text);
         }
       }
     });

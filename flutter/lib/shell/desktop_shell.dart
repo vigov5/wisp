@@ -18,8 +18,9 @@ import '../features/send/presentation/send_selection_source_sheet.dart';
 import '../features/send/send_drop_zone.dart';
 import '../theme/wisp_theme.dart';
 import 'widgets/firewall_warning_banner.dart';
+import 'widgets/shell_picking_actions.dart';
 
-class DesktopShell extends ConsumerWidget {
+class DesktopShell extends ConsumerWidget with ShellPickingActions {
   const DesktopShell({super.key});
 
   Future<void> _openSelectedFiles(
@@ -107,32 +108,31 @@ class DesktopShell extends ConsumerWidget {
               if (receiverError != null) ...[
                 ReceiverErrorBanner(
                   error: receiverError,
-                  onDismiss: () => ref
-                      .read(receiverServiceProvider.notifier)
-                      .clearError(),
+                  onDismiss: () =>
+                      ref.read(receiverServiceProvider.notifier).clearError(),
                 ),
                 const SizedBox(height: 12),
               ],
               ReceiveIdleCard(
-              state: receiverState,
-              onOpenSettings: () {
-                context.goSettings();
-              },
-              onOpenQr: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => const QrPairingPage(),
-                  ),
-                );
-              },
-              onRefreshCode: () {
-                unawaited(
-                  ref
-                      .read(receiverServiceProvider.notifier)
-                      .ensureRegistered(),
-                );
-              },
-            ),
+                state: receiverState,
+                onOpenSettings: () {
+                  context.goSettings();
+                },
+                onOpenQr: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const QrPairingPage(),
+                    ),
+                  );
+                },
+                onRefreshCode: () {
+                  unawaited(
+                    ref
+                        .read(receiverServiceProvider.notifier)
+                        .ensureRegistered(),
+                  );
+                },
+              ),
               const SizedBox(height: 12),
               Expanded(
                 child: SendDropZone(
@@ -143,6 +143,8 @@ class DesktopShell extends ConsumerWidget {
                       onChooseFolder: () => _pickFolder(context, ref),
                     );
                   },
+                  onShareText: () => shareText(context, ref),
+                  onShareClipboard: () => shareClipboard(context, ref),
                   onDropPaths: (paths) {
                     if (paths.isEmpty) {
                       return;

@@ -134,6 +134,10 @@ class SendTransferRequest {
   final String? ticket;
   final String? lanDestinationLabel;
 
+  /// Text-only send.  When set, `paths` is ignored and the text is shared
+  /// inline (≤ 16 KB) or as a synthetic `.txt` for larger payloads.
+  final String? inlineText;
+
   const SendTransferRequest({
     required this.code,
     required this.paths,
@@ -142,6 +146,7 @@ class SendTransferRequest {
     required this.deviceType,
     this.ticket,
     this.lanDestinationLabel,
+    this.inlineText,
   });
 
   @override
@@ -152,7 +157,8 @@ class SendTransferRequest {
       deviceName.hashCode ^
       deviceType.hashCode ^
       ticket.hashCode ^
-      lanDestinationLabel.hashCode;
+      lanDestinationLabel.hashCode ^
+      inlineText.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -165,5 +171,6 @@ class SendTransferRequest {
           deviceName == other.deviceName &&
           deviceType == other.deviceType &&
           ticket == other.ticket &&
-          lanDestinationLabel == other.lanDestinationLabel;
+          lanDestinationLabel == other.lanDestinationLabel &&
+          inlineText == other.inlineText;
 }

@@ -172,6 +172,43 @@ void main() {
     },
   );
 
+  test('send controller builds a text request with empty paths', () {
+    final container = ProviderContainer(
+      overrides: [
+        initialAppSettingsProvider.overrideWithValue(testAppSettings),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final controller = container.read(sendControllerProvider.notifier);
+    controller.beginTextDraft('hello world');
+    controller.updateDestinationCode('ABC123');
+
+    final drafting = container.read(sendControllerProvider);
+    expect(drafting, isA<SendStateDrafting>());
+    expect((drafting as SendStateDrafting).isTextDraft, isTrue);
+    expect(drafting.items, isEmpty);
+
+    final request = controller.buildSendRequest();
+    expect(request, isNotNull);
+    expect(controller.canStartSend(), isTrue);
+    expect(request?.destinationMode, SendDestinationMode.code);
+    expect(request?.paths, isEmpty);
+    expect(request?.inlineText, 'hello world');
+  });
+
+  test('send controller updateInlineText replaces a text draft', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final controller = container.read(sendControllerProvider.notifier);
+    controller.beginTextDraft('first');
+    controller.updateInlineText('second');
+
+    final drafting = container.read(sendControllerProvider);
+    expect((drafting as SendStateDrafting).inlineText, 'second');
+  });
+
   test('send controller buildSendRequest returns null for an invalid code', () {
     final container = ProviderContainer(
       overrides: [
@@ -215,7 +252,8 @@ void main() {
       controller.selectNearbyReceiver(
         const NearbyReceiver(
           fullname: 'samarth-laptop',
-          label: 'Laptop', deviceType: 'laptop',
+          label: 'Laptop',
+          deviceType: 'laptop',
           code: 'ABC123',
           ticket: 'ticket-1',
         ),
@@ -431,60 +469,62 @@ void main() {
     expect(state.transfer.remoteDeviceType, 'laptop');
   });
 
-  test('send controller propagates remoteTicket from update into transfer state',
-      () {
-    // Regression: code-based sends used to leave `lastTicket` null in saved
-    // devices because the rendezvous-claimed ticket lived only in Rust.  The
-    // controller must accept a `remoteTicket` on the update and stash it on
-    // the transfer state so `_completeTransfer` can persist it.
-    final fakeSource = FakeSendTransferSource();
-    final container = ProviderContainer(
-      overrides: [
-        initialAppSettingsProvider.overrideWithValue(testAppSettings),
-        sendTransferSourceProvider.overrideWithValue(fakeSource),
-      ],
-    );
-    addTearDown(container.dispose);
-    addTearDown(fakeSource.close);
+  test(
+    'send controller propagates remoteTicket from update into transfer state',
+    () {
+      // Regression: code-based sends used to leave `lastTicket` null in saved
+      // devices because the rendezvous-claimed ticket lived only in Rust.  The
+      // controller must accept a `remoteTicket` on the update and stash it on
+      // the transfer state so `_completeTransfer` can persist it.
+      final fakeSource = FakeSendTransferSource();
+      final container = ProviderContainer(
+        overrides: [
+          initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          sendTransferSourceProvider.overrideWithValue(fakeSource),
+        ],
+      );
+      addTearDown(container.dispose);
+      addTearDown(fakeSource.close);
 
-    final controller = container.read(sendControllerProvider.notifier);
-    controller.beginDraft([
-      SendPickedFile(
-        path: '/tmp/report.pdf',
-        name: 'report.pdf',
-        sizeBytes: BigInt.from(1024),
-      ),
-    ]);
-    controller.updateDestinationCode('ABC123');
-    controller.startTransfer(controller.buildSendRequest()!);
+      final controller = container.read(sendControllerProvider.notifier);
+      controller.beginDraft([
+        SendPickedFile(
+          path: '/tmp/report.pdf',
+          name: 'report.pdf',
+          sizeBytes: BigInt.from(1024),
+        ),
+      ]);
+      controller.updateDestinationCode('ABC123');
+      controller.startTransfer(controller.buildSendRequest()!);
 
-    // Code-based send: request itself has no ticket.
-    expect(
-      (container.read(sendControllerProvider) as SendStateTransferring)
-          .request
-          .ticket,
-      isNull,
-    );
+      // Code-based send: request itself has no ticket.
+      expect(
+        (container.read(sendControllerProvider) as SendStateTransferring)
+            .request
+            .ticket,
+        isNull,
+      );
 
-    fakeSource.emit(
-      SendTransferUpdate(
-        phase: SendTransferUpdatePhase.waitingForDecision,
-        destinationLabel: 'Laptop',
-        statusMessage: 'Waiting for confirmation.',
-        itemCount: BigInt.one,
-        totalSize: BigInt.from(1024),
-        bytesSent: BigInt.zero,
-        totalBytes: BigInt.from(1024),
-        remoteEndpointId: 'PEER_ID_ABC',
-        remoteTicket: 'resolved-ticket-blob',
-      ),
-    );
+      fakeSource.emit(
+        SendTransferUpdate(
+          phase: SendTransferUpdatePhase.waitingForDecision,
+          destinationLabel: 'Laptop',
+          statusMessage: 'Waiting for confirmation.',
+          itemCount: BigInt.one,
+          totalSize: BigInt.from(1024),
+          bytesSent: BigInt.zero,
+          totalBytes: BigInt.from(1024),
+          remoteEndpointId: 'PEER_ID_ABC',
+          remoteTicket: 'resolved-ticket-blob',
+        ),
+      );
 
-    final state =
-        container.read(sendControllerProvider) as SendStateTransferring;
-    expect(state.transfer.remoteEndpointId, 'PEER_ID_ABC');
-    expect(state.transfer.remoteTicket, 'resolved-ticket-blob');
-  });
+      final state =
+          container.read(sendControllerProvider) as SendStateTransferring;
+      expect(state.transfer.remoteEndpointId, 'PEER_ID_ABC');
+      expect(state.transfer.remoteTicket, 'resolved-ticket-blob');
+    },
+  );
 
   test(
     'send controller maps terminal transfer updates into result state',
@@ -768,12 +808,46 @@ void main() {
     },
   );
 
+  test('restoreDraftFromResult is a no-op when not in Result state', () {
+    // Hardening: the controller protects against the "Retry" callback
+    // being invoked from a screen where state has already changed
+    // (e.g. user navigated away and came back, fresh app launch, etc).
+    final fakeSource = FakeSendTransferSource();
+    final container = ProviderContainer(
+      overrides: [
+        initialAppSettingsProvider.overrideWithValue(testAppSettings),
+        sendTransferSourceProvider.overrideWithValue(fakeSource),
+      ],
+    );
+    addTearDown(container.dispose);
+    addTearDown(fakeSource.close);
+
+    final controller = container.read(sendControllerProvider.notifier);
+    expect(container.read(sendControllerProvider), isA<SendStateIdle>());
+
+    controller.restoreDraftFromResult();
+    expect(
+      container.read(sendControllerProvider),
+      isA<SendStateIdle>(),
+      reason: 'idle state must survive a stray restore call',
+    );
+
+    controller.beginDraft([SendPickedFile(path: '/tmp/a.pdf', name: 'a.pdf')]);
+    controller.restoreDraftFromResult();
+    expect(
+      container.read(sendControllerProvider),
+      isA<SendStateDrafting>(),
+      reason: 'drafting state must survive a stray restore call',
+    );
+  });
+
   test(
-    'restoreDraftFromResult is a no-op when not in Result state',
-    () {
-      // Hardening: the controller protects against the "Retry" callback
-      // being invoked from a screen where state has already changed
-      // (e.g. user navigated away and came back, fresh app launch, etc).
+    'restoreDraftFromResult preserves inline text so Retry can resend it',
+    () async {
+      // Regression for the "Retry loses the clipboard content" bug: a
+      // text-only send has no `items`, so the restored draft has to carry
+      // `inlineText` back from the failed result — otherwise Retry lands on an
+      // empty, unsendable draft.
       final fakeSource = FakeSendTransferSource();
       final container = ProviderContainer(
         overrides: [
@@ -785,24 +859,34 @@ void main() {
       addTearDown(fakeSource.close);
 
       final controller = container.read(sendControllerProvider.notifier);
-      expect(container.read(sendControllerProvider), isA<SendStateIdle>());
+      controller.beginTextDraft('clipboard payload');
+      controller.updateDestinationCode('ABC123');
+      controller.startTransfer(controller.buildSendRequest()!);
 
-      controller.restoreDraftFromResult();
-      expect(
-        container.read(sendControllerProvider),
-        isA<SendStateIdle>(),
-        reason: 'idle state must survive a stray restore call',
+      fakeSource.emit(
+        SendTransferUpdate.failed(
+          destinationLabel: 'Laptop',
+          statusMessage: 'Failed',
+          itemCount: BigInt.one,
+          totalSize: BigInt.from(17),
+          bytesSent: BigInt.zero,
+          totalBytes: BigInt.from(17),
+          error: const SendTransferErrorData(
+            kind: SendTransferErrorKind.connectionLost,
+            title: 'Connection lost',
+            message: 'network blip',
+            retryable: true,
+          ),
+        ),
       );
 
-      controller.beginDraft([
-        SendPickedFile(path: '/tmp/a.pdf', name: 'a.pdf'),
-      ]);
       controller.restoreDraftFromResult();
-      expect(
-        container.read(sendControllerProvider),
-        isA<SendStateDrafting>(),
-        reason: 'drafting state must survive a stray restore call',
-      );
+
+      final restored =
+          container.read(sendControllerProvider) as SendStateDrafting;
+      expect(restored.inlineText, 'clipboard payload');
+      expect(restored.isTextDraft, isTrue);
+      expect(restored.items, isEmpty);
     },
   );
 }

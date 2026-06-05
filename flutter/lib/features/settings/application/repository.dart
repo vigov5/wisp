@@ -7,6 +7,7 @@ const String _deviceNameKey = 'settings.device_name';
 const String _downloadRootKey = 'settings.download_root';
 const String _discoverableKey = 'settings.discoverable';
 const String _serverUrlKey = 'settings.server_url';
+const String _skipClipboardConfirmKey = 'settings.skip_clipboard_confirm';
 
 class SettingsRepository {
   SettingsRepository({
@@ -30,6 +31,7 @@ class SettingsRepository {
       downloadRoot: defaultDownloadRoot,
       discoverableByDefault: true,
       discoveryServerUrl: defaultRendezvousUrl,
+      skipClipboardConfirm: false,
     );
     await save(seeded);
     return seeded;
@@ -45,6 +47,10 @@ class SettingsRepository {
     } else {
       await prefs.setString(_serverUrlKey, settings.discoveryServerUrl!.trim());
     }
+    await prefs.setBool(
+      _skipClipboardConfirmKey,
+      settings.skipClipboardConfirm,
+    );
   }
 
   AppSettings? _readExisting() {
@@ -59,6 +65,7 @@ class SettingsRepository {
       discoverableByDefault: prefs.getBool(_discoverableKey) ?? true,
       discoveryServerUrl:
           _normalizeUrl(prefs.getString(_serverUrlKey)) ?? defaultRendezvousUrl,
+      skipClipboardConfirm: prefs.getBool(_skipClipboardConfirmKey) ?? false,
     );
   }
 }

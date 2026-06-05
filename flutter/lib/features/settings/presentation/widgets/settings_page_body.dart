@@ -38,6 +38,8 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
   late String _initialServerUrl;
   late bool _initialDiscoverable;
   bool _discoverable = true;
+  late bool _initialSkipClipboardConfirm;
+  bool _skipClipboardConfirm = false;
   bool _saving = false;
   String _endpointId = '';
 
@@ -51,6 +53,8 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
     _initialServerUrl = settings.discoveryServerUrl ?? '';
     _initialDiscoverable = settings.discoverableByDefault;
     _discoverable = _initialDiscoverable;
+    _initialSkipClipboardConfirm = settings.skipClipboardConfirm;
+    _skipClipboardConfirm = _initialSkipClipboardConfirm;
     _deviceNameController = TextEditingController(text: _initialDeviceName);
     _downloadRootController = TextEditingController(
       text: _downloadRootDisplayText(_initialDownloadRoot),
@@ -79,7 +83,8 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
     return _deviceNameController.text.trim() != _initialDeviceName.trim() ||
         _downloadRootValue.trim() != _initialDownloadRoot.trim() ||
         _serverUrlController.text.trim() != _initialServerUrl.trim() ||
-        _discoverable != _initialDiscoverable;
+        _discoverable != _initialDiscoverable ||
+        _skipClipboardConfirm != _initialSkipClipboardConfirm;
   }
 
   void _onFieldChanged() {
@@ -139,6 +144,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
           downloadRoot: _downloadRootValue,
           serverUrl: _serverUrlController.text,
           discoverableByDefault: _discoverable,
+          skipClipboardConfirm: _skipClipboardConfirm,
         );
 
     if (!mounted) {
@@ -154,6 +160,8 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
         _downloadRootValue = state.settings.downloadRoot;
         _initialServerUrl = state.settings.discoveryServerUrl ?? '';
         _initialDiscoverable = state.settings.discoverableByDefault;
+        _initialSkipClipboardConfirm = state.settings.skipClipboardConfirm;
+        _skipClipboardConfirm = _initialSkipClipboardConfirm;
         _deviceNameController.text = _initialDeviceName;
         _downloadRootController.text = _downloadRootDisplayText(
           _initialDownloadRoot,
@@ -340,6 +348,17 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                           value: _discoverable,
                           onChanged: (value) {
                             setState(() => _discoverable = value);
+                          },
+                        ),
+                        const SizedBox(height: 18),
+                        SettingsToggleField(
+                          title: 'Skip clipboard confirmation',
+                          subtitle:
+                              'When on, "Share clipboard" sends right away. '
+                              'When off, you confirm the text first.',
+                          value: _skipClipboardConfirm,
+                          onChanged: (value) {
+                            setState(() => _skipClipboardConfirm = value);
                           },
                         ),
                         const SizedBox(height: 18),

@@ -258,6 +258,7 @@ impl ReceiverSession {
             sender_ticket: None,
             total_size_label: human_size(offer.total_size),
             files,
+            inline_text: offer.inline_text.clone(),
             error: None,
         };
         tracing::info!(
@@ -487,6 +488,7 @@ impl ReceiverSession {
                     sender_ticket: None,
                     total_size_label: human_size(offer.total_size),
                     files: Vec::new(),
+                    inline_text: None,
                     error: None,
                 },
                 CoreTransferOutcome::Cancelled(cancellation) => ReceiverOfferEvent {
@@ -508,6 +510,7 @@ impl ReceiverSession {
                     sender_ticket: sender_ticket.clone(),
                     total_size_label: human_size(offer.total_size),
                     files: Vec::new(),
+                    inline_text: None,
                     error: Some(UserFacingError::new(
                         UserFacingErrorKind::Cancelled,
                         "Transfer cancelled",
@@ -685,6 +688,7 @@ fn completed_offer_event(
         sender_ticket,
         total_size_label: human_size(total_size),
         files: Vec::new(),
+        inline_text: None,
         error: None,
     }
 }
@@ -729,6 +733,7 @@ fn build_offer_event(
         sender_ticket: None,
         total_size_label: human_size(total_bytes),
         files,
+        inline_text: None,
         error,
     }
 }
@@ -780,6 +785,7 @@ fn failed_offer_event(
         sender_ticket,
         total_size_label: human_size(total_size_bytes),
         files,
+        inline_text: None,
         error: Some(error),
     }
 }

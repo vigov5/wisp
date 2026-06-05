@@ -125,9 +125,11 @@ class _RecipientAvatarState extends State<RecipientAvatar>
     if (duration == null || duration <= Duration.zero) {
       return;
     }
-    _countdownController =
-        AnimationController(vsync: this, duration: duration, value: 1.0)
-          ..reverse();
+    _countdownController = AnimationController(
+      vsync: this,
+      duration: duration,
+      value: 1.0,
+    )..reverse();
   }
 
   @override

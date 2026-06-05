@@ -7,7 +7,19 @@ use serde_json::Value;
 
 use crate::transfer::types::{TransferFileId, TransferPhase, TransferPlan};
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
+
+/// Maximum UTF-8 byte length of text carried inline on the control stream via
+/// [`Offer::inline_text`].  Text at or below this rides the offer frame itself
+/// (no iroh-blobs, effectively instant); anything larger falls back to a
+/// synthetic `.txt` file sent through the normal blob pipeline.
+pub const INLINE_TEXT_MAX_BYTES: usize = 16 * 1024;
+
+/// Hard ceiling the receiver enforces on a peer-supplied [`Offer::inline_text`]
+/// before allocating / rendering it.  Generously above [`INLINE_TEXT_MAX_BYTES`]
+/// so a well-behaved sender never trips it, but bounds a malicious/buggy peer
+/// from shipping an unbounded control frame.
+pub const INLINE_TEXT_HARD_MAX_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -113,6 +125,14 @@ pub struct Offer {
     pub session_id: String,
     pub manifest: TransferManifest,
     pub collection_hash: Hash,
+    /// Optional plain-text payload riding inline on the control stream.
+    /// `Some(_)` marks a text-only transfer with no blobs — the manifest is
+    /// empty and `collection_hash` is a placeholder.  Capped at
+    /// [`INLINE_TEXT_MAX_BYTES`] by the sender; the receiver guards against
+    /// [`INLINE_TEXT_HARD_MAX_BYTES`].  Older peers (protocol < 4) never set
+    /// this; `serde(default)` keeps the field forward-compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -287,6 +307,36 @@ mod tests {
     }
 
     #[test]
+    fn offer_omits_inline_text_when_none() {
+        // `skip_serializing_if` keeps the wire compact, and the absence of the
+        // field on a v3-style frame must deserialize to `None` (forward compat).
+        let offer = Offer {
+            session_id: "s".to_owned(),
+            manifest: TransferManifest { items: vec![] },
+            collection_hash: [0u8; 32].into(),
+            inline_text: None,
+        };
+        let json = serde_json::to_string(&offer).unwrap();
+        assert!(!json.contains("inline_text"));
+        let back: Offer = serde_json::from_str(&json).unwrap();
+        assert!(back.inline_text.is_none());
+    }
+
+    #[test]
+    fn offer_round_trips_inline_text() {
+        let offer = Offer {
+            session_id: "s".to_owned(),
+            manifest: TransferManifest { items: vec![] },
+            collection_hash: [0u8; 32].into(),
+            inline_text: Some("héllo · wörld".to_owned()),
+        };
+        let json = serde_json::to_string(&offer).unwrap();
+        assert!(json.contains("inline_text"));
+        let back: Offer = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.inline_text.as_deref(), Some("héllo · wörld"));
+    }
+
+    #[test]
     fn message_enums_cover_current_transfer() {
         let manifest = TransferManifest {
             items: vec![ManifestItem::File {
@@ -328,6 +378,7 @@ mod tests {
                 session_id: "session-1".to_owned(),
                 manifest: manifest.clone(),
                 collection_hash: [0u8; 32].into(),
+                inline_text: None,
             }),
             SenderMessage::BlobTicket(BlobTicketMessage {
                 session_id: "session-1".to_owned(),

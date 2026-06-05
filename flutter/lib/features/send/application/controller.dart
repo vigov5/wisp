@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -39,6 +40,28 @@ class SendController extends _$SendController {
       items: files.map(SendDraftItem.fromPickedFile).toList(growable: false),
     );
     _hydrateDirectorySizes();
+  }
+
+  /// Start a text-only draft (no files). The text is shared inline (≤ 16 KB)
+  /// or as a synthetic `.txt` for larger payloads — decided in the Rust core.
+  void beginTextDraft(String text) {
+    unawaited(_cancelActiveTransfer());
+    state = SendStateDrafting(items: const [], inlineText: text);
+  }
+
+  /// Replace the text of the current text draft (used by the "Edit" affordance
+  /// on the draft preview), preserving any chosen destination.
+  void updateInlineText(String text) {
+    final currentState = state;
+    if (currentState is! SendStateDrafting) {
+      beginTextDraft(text);
+      return;
+    }
+    state = SendStateDrafting(
+      items: const [],
+      destination: currentState.destination,
+      inlineText: text,
+    );
   }
 
   void appendDraftItems(List<SendPickedFile> files) {
@@ -133,31 +156,43 @@ class SendController extends _$SendController {
     state = SendStateDrafting(
       items: current.items,
       destination: current.destination,
+      // Carry the text payload back into the draft — a text-only send has no
+      // `items`, so dropping `inlineText` here would leave Retry with an empty
+      // draft and silently lose the clipboard content the user meant to resend.
+      inlineText: current.request.inlineText,
       resolvedDirectorySizes: current.resolvedDirectorySizes,
     );
   }
 
   SendRequestData? buildSendRequest() {
     final currentState = state;
-    final (items, destination) = switch (currentState) {
-      SendStateDrafting(:final items, :final destination) => (
+    final (items, destination, inlineText) = switch (currentState) {
+      SendStateDrafting(:final items, :final destination, :final inlineText) =>
+        (items, destination, inlineText),
+      SendStateTransferring(:final items, :final destination, :final request) =>
+        (items, destination, request.inlineText),
+      SendStateResult(:final items, :final destination, :final request) => (
         items,
         destination,
+        request.inlineText,
       ),
-      SendStateTransferring(:final items, :final destination) => (
-        items,
-        destination,
-      ),
-      SendStateResult(:final items, :final destination) => (items, destination),
-      SendStateIdle() => (null, null),
+      SendStateIdle() => (null, null, null),
     };
 
-    if (items == null || items.isEmpty || destination == null) {
+    if (destination == null) {
+      return null;
+    }
+    // A draft is sendable when it carries either files or inline text.
+    final hasFiles = items != null && items.isNotEmpty;
+    final hasText = inlineText != null;
+    if (!hasFiles && !hasText) {
       return null;
     }
 
     final settings = ref.read(settingsControllerProvider).settings;
-    final paths = items.map((item) => item.path).toList(growable: false);
+    final paths =
+        items?.map((item) => item.path).toList(growable: false) ??
+        const <String>[];
 
     switch (destination.mode) {
       case SendDestinationMode.none:
@@ -174,6 +209,7 @@ class SendController extends _$SendController {
           deviceType: _localDeviceTypeLabel(),
           code: code,
           serverUrl: settings.discoveryServerUrl,
+          inlineText: inlineText,
         );
       case SendDestinationMode.nearby:
         return SendRequestData(
@@ -184,6 +220,7 @@ class SendController extends _$SendController {
           ticket: destination.ticket,
           lanDestinationLabel: destination.lanDestinationLabel,
           serverUrl: settings.discoveryServerUrl,
+          inlineText: inlineText,
         );
     }
   }
@@ -207,9 +244,7 @@ class SendController extends _$SendController {
     _transferStartTime = DateTime.now();
     _startKeepalive(
       destinationLabel:
-          validatedRequest.lanDestinationLabel ??
-          validatedRequest.code ??
-          '',
+          validatedRequest.lanDestinationLabel ?? validatedRequest.code ?? '',
     );
     state = SendStateTransferring(
       items: currentState.items,
@@ -233,6 +268,7 @@ class SendController extends _$SendController {
             serverUrl: validatedRequest.serverUrl,
             ticket: validatedRequest.ticket,
             lanDestinationLabel: validatedRequest.lanDestinationLabel,
+            inlineText: validatedRequest.inlineText,
           ),
         )
         .listen(
@@ -249,6 +285,10 @@ class SendController extends _$SendController {
       state = SendStateDrafting(
         items: currentState.items,
         destination: currentState.destination,
+        // Same reasoning as restoreDraftFromResult: a text-only send has no
+        // `items`, so the inline text has to ride back into the draft or
+        // cancelling would strand the user on an empty, unsendable draft.
+        inlineText: currentState.request.inlineText,
         resolvedDirectorySizes: currentState.resolvedDirectorySizes,
       );
     }
@@ -393,8 +433,7 @@ class SendController extends _$SendController {
           update.remoteDeviceType ?? currentState.transfer.remoteDeviceType,
       remoteEndpointId:
           update.remoteEndpointId ?? currentState.transfer.remoteEndpointId,
-      remoteTicket:
-          update.remoteTicket ?? currentState.transfer.remoteTicket,
+      remoteTicket: update.remoteTicket ?? currentState.transfer.remoteTicket,
       connectionPath:
           update.connectionPath ?? currentState.transfer.connectionPath,
       error: update.error ?? currentState.transfer.error,
@@ -596,8 +635,7 @@ class SendController extends _$SendController {
         // Recent tile has cached connection info next session; fall back
         // to the request ticket for nearby/QR sends that already carry
         // one end-to-end.
-        final lastTicket =
-            transfer.remoteTicket ?? currentState.request.ticket;
+        final lastTicket = transfer.remoteTicket ?? currentState.request.ticket;
         unawaited(
           ref
               .read(savedDevicesProvider.notifier)
@@ -638,11 +676,17 @@ class SendController extends _$SendController {
     List<SendDraftItem> items,
     Map<String, BigInt> resolvedDirectorySizes,
   ) {
-    final totalSize = totalDraftItemSize(items, resolvedDirectorySizes);
+    final inlineText = request.inlineText;
+    final (itemCount, totalSize) = inlineText != null
+        ? (BigInt.one, BigInt.from(utf8.encode(inlineText).length))
+        : (
+            BigInt.from(items.length),
+            totalDraftItemSize(items, resolvedDirectorySizes),
+          );
     return SendTransferState.connecting(
       destinationLabel:
           request.lanDestinationLabel ?? request.code ?? 'Recipient device',
-      itemCount: BigInt.from(items.length),
+      itemCount: itemCount,
       totalSize: totalSize,
     );
   }

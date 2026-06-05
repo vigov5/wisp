@@ -54,11 +54,15 @@ class MainActivity : FlutterActivity() {
     // multi-hundred-megabyte share never blocks the main thread (or the
     // launch screen).
     private var initialSharedFilesJob: Deferred<List<String>>? = null
+    // Cold-start stash for an ACTION_SEND text/plain share (EXTRA_TEXT, no
+    // EXTRA_STREAM).  Handed to Flutter once via getInitialSharedText.
+    private var initialSharedText: String? = null
     private var shareChannel: MethodChannel? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         initialSharedFilesJob = extractSharedFilesAsync(intent)
+        initialSharedText = extractSharedText(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -66,6 +70,20 @@ class MainActivity : FlutterActivity() {
         // Persist the new intent so any later getIntent() lookups see it
         // (otherwise we'd keep re-reading the original launch intent).
         setIntent(intent)
+
+        // Text shares carry EXTRA_TEXT and no EXTRA_STREAM — route them to the
+        // Share-text flow instead of the (empty) file pipeline.
+        val sharedText = extractSharedText(intent)
+        if (sharedText != null) {
+            val channel = shareChannel
+            if (channel != null) {
+                channel.invokeMethod("onSharedText", sharedText)
+            } else {
+                initialSharedText = sharedText
+            }
+            return
+        }
+
         val deferred = extractSharedFilesAsync(intent) ?: return
         lifecycleScope.launch {
             val files = try {
@@ -98,6 +116,23 @@ class MainActivity : FlutterActivity() {
         return lifecycleScope.async(Dispatchers.IO) {
             extractSharedFilesFromIntent(intent) ?: emptyList()
         }
+    }
+
+    // Returns the plain text of an ACTION_SEND text/plain share, or null when
+    // the intent isn't a text share.  A file share (EXTRA_STREAM present) is
+    // left to the file pipeline even if it also carries a text caption.
+    private fun extractSharedText(intent: Intent?): String? {
+        if (intent == null) return null
+        if (intent.action != Intent.ACTION_SEND) return null
+        val hasStream = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java) != null
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) != null
+        }
+        if (hasStream) return null
+        val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+        return text?.takeIf { it.isNotEmpty() }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -180,6 +215,11 @@ class MainActivity : FlutterActivity() {
                                 result.success(emptyList<String>())
                             }
                         }
+                    }
+                    "getInitialSharedText" -> {
+                        val text = initialSharedText
+                        initialSharedText = null
+                        result.success(text)
                     }
                     else -> result.notImplemented()
                 }

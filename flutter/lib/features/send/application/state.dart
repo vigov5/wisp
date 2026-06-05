@@ -42,22 +42,31 @@ class SendStateDrafting extends SendState {
     required this.items,
     this.destination = const SendDestinationState.none(),
     this.resolvedDirectorySizes = const {},
+    this.inlineText,
   });
 
   final List<SendDraftItem> items;
   final SendDestinationState destination;
   final Map<String, BigInt> resolvedDirectorySizes;
 
+  /// When non-null, this is a text-only draft (`items` is empty) — the text
+  /// is shared instead of files. See [SendController.beginTextDraft].
+  final String? inlineText;
+
+  bool get isTextDraft => inlineText != null;
+
   SendStateDrafting copyWith({
     List<SendDraftItem>? items,
     SendDestinationState? destination,
     Map<String, BigInt>? resolvedDirectorySizes,
+    String? inlineText,
   }) {
     return SendStateDrafting(
       items: items ?? this.items,
       destination: destination ?? this.destination,
       resolvedDirectorySizes:
           resolvedDirectorySizes ?? this.resolvedDirectorySizes,
+      inlineText: inlineText ?? this.inlineText,
     );
   }
 }

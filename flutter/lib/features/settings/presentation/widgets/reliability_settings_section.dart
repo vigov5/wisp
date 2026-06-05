@@ -129,9 +129,7 @@ class _StatusRow extends StatelessWidget {
       );
     }
     final color = ignoring ? const Color(0xFF49B36C) : const Color(0xFFC78F2A);
-    final icon = ignoring
-        ? Icons.check_circle_rounded
-        : Icons.warning_rounded;
+    final icon = ignoring ? Icons.check_circle_rounded : Icons.warning_rounded;
     final message = ignoring
         ? 'Battery optimisation disabled — transfers should survive long sessions.'
         : 'Battery optimisation enabled — long transfers may be killed by the system.';

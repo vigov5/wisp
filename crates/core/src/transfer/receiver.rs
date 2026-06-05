@@ -22,6 +22,7 @@ use crate::{
     blobs::receive::{BlobDownloadSession, BlobDownloadUpdate, BlobReceiver},
     fs_plan::ConflictPolicy,
     protocol::message as protocol_message,
+    protocol::message::INLINE_TEXT_HARD_MAX_BYTES,
     protocol::message::MessageKind,
     protocol::wire as protocol_wire,
     protocol::{ALPN, ProtocolError},
@@ -72,6 +73,9 @@ pub struct ReceiverOffer {
     pub items: Vec<ReceiverOfferItem>,
     pub file_count: u64,
     pub total_size: u64,
+    /// Plain text carried inline in the offer for a text-only transfer (no
+    /// blobs).  `None` for ordinary file transfers.
+    pub inline_text: Option<String>,
 }
 
 #[derive(Debug)]
@@ -283,6 +287,7 @@ async fn run_session(
             .collect(),
         file_count: manifest.file_count,
         total_size: manifest.total_size,
+        inline_text: offer.inline_text.clone(),
     };
 
     emit_receiver_event(
@@ -297,6 +302,90 @@ async fn run_session(
         },
     );
     let _ = offer_tx.send(Ok(receiver_offer.clone()));
+
+    // --- Inline text: no blobs, no record dir, no progress stream ---
+    if let Some(text) = offer.inline_text.clone() {
+        // Guard against a malicious/buggy peer shipping an unbounded frame.
+        if text.len() > INLINE_TEXT_HARD_MAX_BYTES {
+            let reason = format!(
+                "inline text exceeds {INLINE_TEXT_HARD_MAX_BYTES} byte limit"
+            );
+            let _ = send_receiver_decline(&mut control_send, &session_id, reason.clone()).await;
+            finish_control_stream(&mut control_send).await;
+            return Err(TransferError::other(
+                "inline text too large",
+                std::io::Error::other(reason),
+            ));
+        }
+
+        let decision = tokio::select! {
+            res = decision_rx => res.map_err(|_| TransferError::channel_closed("waiting for receiver decision"))?,
+            _ = wait_for_cancel(&mut cancel_rx) => return abort_session(&mut control_send, &session_id, protocol_message::CancelPhase::WaitingForDecision).await,
+            _ = connection.closed() => return Err(TransferError::connection_closed("before receiver decision")),
+            _ = tokio::time::sleep(Duration::from_secs(120)) => return Err(TransferError::timeout("waiting for receiver decision")),
+        };
+
+        if decision == ReceiverDecision::Decline {
+            let _ = send_receiver_decline(
+                &mut control_send,
+                &session_id,
+                "declined by user".to_owned(),
+            )
+            .await;
+            finish_control_stream(&mut control_send).await;
+            return Ok(TransferOutcome::Declined {
+                reason: "receiver declined".to_owned(),
+            });
+        }
+
+        // Confirm receipt: Accept, then a successful TransferResult — the
+        // sender reads both, acks, and we're done.  Reuses the same control
+        // messages as the file path.
+        protocol_wire::write_receiver_message(
+            &mut control_send,
+            &protocol_message::ReceiverMessage::Accept(protocol_message::Accept {
+                session_id: session_id.clone(),
+            }),
+        )
+        .await?;
+        let _ = send_transfer_result(
+            &mut control_send,
+            &session_id,
+            protocol_message::TransferStatus::Ok,
+        )
+        .await;
+
+        let byte_len = text.len() as u64;
+        let snapshot = TransferSnapshot {
+            session_id: session_id.clone(),
+            phase: TransferPhase::Completed,
+            total_files: 1,
+            completed_files: 1,
+            total_bytes: byte_len,
+            bytes_transferred: byte_len,
+            active_file_id: None,
+            active_file_bytes: None,
+            bytes_per_sec: None,
+            eta_seconds: None,
+        };
+
+        await_final_sender_ack(&mut control_recv, &session_id).await;
+        finish_control_stream(&mut control_send).await;
+        emit_receiver_event(
+            &event_tx,
+            ReceiverEvent::TransferCompleted {
+                session_id: session_id.clone(),
+                snapshot,
+            },
+        );
+        emit_receiver_event(
+            &event_tx,
+            ReceiverEvent::Completed {
+                session_id: session_id.clone(),
+            },
+        );
+        return Ok(TransferOutcome::Completed);
+    }
 
     // --- Phase 3: User Decision ---
     let decision = tokio::select! {

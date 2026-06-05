@@ -68,9 +68,7 @@ class ConnectionPathInfo {
     );
   }
 
-  static ConnectionPathInfo? fromSender(
-    rust_sender.SendConnectionPath? path,
-  ) {
+  static ConnectionPathInfo? fromSender(rust_sender.SendConnectionPath? path) {
     if (path == null) {
       return null;
     }

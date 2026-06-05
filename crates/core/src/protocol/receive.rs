@@ -366,6 +366,7 @@ mod tests {
                         }],
                     },
                     collection_hash: [0u8; 32].into(),
+                    inline_text: None,
                 }),
             )
             .await
