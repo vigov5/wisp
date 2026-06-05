@@ -31,6 +31,6 @@ void main() {
     await tester.pumpWidget(_app());
     await tester.pumpAndSettle();
 
-    expect(find.text('Select files'), findsOneWidget);
+    expect(find.text('Share file'), findsOneWidget);
   });
 }

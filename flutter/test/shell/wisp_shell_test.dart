@@ -46,7 +46,7 @@ void main() {
     expect(find.text('Ready'), findsOneWidget);
     expect(find.text('Receive code'), findsOneWidget);
     expect(find.text('Drop files to send'), findsOneWidget);
-    expect(find.text('Select files'), findsOneWidget);
+    expect(find.text('Share file'), findsOneWidget);
   });
 
   testWidgets('incoming offers navigate to the receive transfer route', (
@@ -217,7 +217,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Select files'));
+    await tester.tap(find.text('Share file'));
     await pumpFinite(tester);
     await tester.tap(find.text('Files'));
     await pumpFinite(tester);
@@ -257,7 +257,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Select files'));
+    await tester.tap(find.text('Share file'));
     await pumpFinite(tester);
     await tester.tap(find.text('Folder'));
     await pumpFinite(tester);

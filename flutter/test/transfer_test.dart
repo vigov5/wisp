@@ -29,7 +29,7 @@ void main() {
 
     final isMobile = Platform.isAndroid || Platform.isIOS;
     if (isMobile) {
-      expect(find.text('Select files'), findsOneWidget);
+      expect(find.text('Share file'), findsOneWidget);
     } else {
       expect(find.text('Drop files to send'), findsOneWidget);
     }
