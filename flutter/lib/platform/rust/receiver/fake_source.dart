@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../../features/receive/application/state.dart';
+import '../../../features/transfers/application/state.dart';
 import '../../../src/rust/api/transfer.dart' as rust_transfer;
 import '../../../src/rust/api/receiver.dart' as rust_receiver;
 import 'source.dart';
@@ -258,6 +259,20 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
   Future<void> respondToOffer({required bool accept}) async {
     lastRespondToOfferAccept = accept;
     respondToOfferCalls += 1;
+  }
+
+  String? lastSavedTextName;
+
+  @override
+  Future<SavedTextLocation> saveInlineText({
+    required String suggestedName,
+    required String contents,
+  }) async {
+    lastSavedTextName = suggestedName;
+    return SavedTextLocation(
+      fileName: suggestedName,
+      folderLabel: 'Download/Wisp',
+    );
   }
 
   @override

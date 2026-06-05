@@ -37,9 +37,9 @@ class TransfersFeature extends ConsumerWidget {
             animate: animateReview,
             onAccept: () =>
                 ref.read(transfersServiceProvider.notifier).acceptOffer(),
-            onAcceptText: (mode) => ref
+            onAcceptText: (mode, saved) => ref
                 .read(transfersServiceProvider.notifier)
-                .acceptOffer(textDelivery: mode),
+                .acceptOffer(textDelivery: mode, savedText: saved),
             onDecline: () =>
                 ref.read(transfersServiceProvider.notifier).declineOffer(),
           ),

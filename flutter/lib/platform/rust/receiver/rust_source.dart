@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../features/receive/application/pairing_cache.dart';
 import '../../../features/receive/application/state.dart';
+import '../../../features/transfers/application/state.dart';
 import '../../../src/rust/api/lan.dart' as rust_lan;
 import '../../../src/rust/api/receiver.dart' as rust_receiver;
 import '../../android_media_store.dart';
@@ -202,6 +203,44 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
   @override
   Future<void> respondToOffer({required bool accept}) {
     return rust_receiver.respondToReceiverOffer(accept: accept);
+  }
+
+  @override
+  Future<SavedTextLocation> saveInlineText({
+    required String suggestedName,
+    required String contents,
+  }) async {
+    // Rust writes the .txt to its download root: the user's real folder on
+    // desktop, the temp receive cache on Android. The returned path's basename
+    // is the actual name on disk (post sanitize + de-dup), so use it verbatim.
+    final written = await rust_receiver.saveTextFile(
+      suggestedName: suggestedName,
+      contents: contents,
+    );
+    final fileName = written.split(RegExp(r'[\\/]')).last;
+    // Desktop/iOS: the download root is already the user-visible folder.
+    if (!Platform.isAndroid || androidReceiveCacheDir == null) {
+      final sepIdx = written.lastIndexOf(RegExp(r'[\\/]'));
+      final folder = sepIdx > 0 ? written.substring(0, sepIdx) : written;
+      return SavedTextLocation(fileName: fileName, folderLabel: folder);
+    }
+    // Android: the .txt only reached the temp cache. Export it to the chosen
+    // SAF folder / Downloads via MediaStore — the same path completed file
+    // transfers take — so it actually lands somewhere the user can find.
+    final safUri = androidSaveUri;
+    final saved = safUri != null
+        ? await AndroidMediaStore.saveToSafUri(written, fileName, safUri)
+        : await AndroidMediaStore.saveToDownloads(written, fileName);
+    if (saved != null) {
+      // Drop the temp copy so the cache doesn't accumulate stray .txt files.
+      try {
+        await File(written).delete();
+      } catch (_) {}
+    }
+    return SavedTextLocation(
+      fileName: fileName,
+      folderLabel: AndroidMediaStore.readableDestinationLabel(safUri),
+    );
   }
 
   @override

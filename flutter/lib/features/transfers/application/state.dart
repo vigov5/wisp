@@ -20,6 +20,27 @@ enum TransferSessionPhase {
 /// folder. `null` everywhere else means an ordinary file transfer.
 enum TransferTextDelivery { copy, save }
 
+/// Where a received text snippet was written, in human-readable form — surfaced
+/// in the save toast and on the finish screen so the user knows the exact name
+/// and folder. [folderLabel] is a friendly path (e.g. `Download/Wisp` or a
+/// desktop absolute path), never a raw `content://` SAF URI.
+@immutable
+class SavedTextLocation {
+  const SavedTextLocation({required this.fileName, required this.folderLabel});
+
+  final String fileName;
+  final String folderLabel;
+
+  /// `<folder>/<file>` for display, joined with the folder's own separator.
+  String get fullPath {
+    final sep = folderLabel.contains('\\') ? '\\' : '/';
+    final trimmed = folderLabel.endsWith(sep)
+        ? folderLabel.substring(0, folderLabel.length - 1)
+        : folderLabel;
+    return '$trimmed$sep$fileName';
+  }
+}
+
 @immutable
 class TransferTransferProgress {
   const TransferTransferProgress({
@@ -131,6 +152,7 @@ class TransferSessionState {
     required this.progress,
     required this.result,
     required this.errorMessage,
+    this.savedText,
   });
 
   const TransferSessionState.idle()
@@ -166,12 +188,14 @@ class TransferSessionState {
   const TransferSessionState.completed({
     required TransferIncomingOffer offer,
     required TransferTransferResult result,
+    SavedTextLocation? savedText,
   }) : this._(
          phase: TransferSessionPhase.completed,
          offer: offer,
          progress: null,
          result: result,
          errorMessage: null,
+         savedText: savedText,
        );
 
   const TransferSessionState.cancelled({
@@ -201,6 +225,9 @@ class TransferSessionState {
   final TransferTransferProgress? progress;
   final TransferTransferResult? result;
   final String? errorMessage;
+
+  /// Set only on the completed state of a "Save .txt" inline-text receive.
+  final SavedTextLocation? savedText;
 
   bool get hasOffer => offer != null;
   bool get hasIncomingOffer => hasOffer;

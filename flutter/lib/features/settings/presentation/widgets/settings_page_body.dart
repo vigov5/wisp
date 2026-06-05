@@ -192,24 +192,10 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
   /// `Download/Wisp/` anyway.
   String _downloadRootDisplayText(String root) {
     if (Platform.isAndroid) {
-      if (AndroidMediaStore.isSafUri(root)) {
-        final uri = Uri.tryParse(root);
-        if (uri != null) {
-          final lastSegment = Uri.decodeComponent(
-            uri.pathSegments.lastOrNull ?? '',
-          );
-          // Document IDs look like "primary:Download/Wisp" — show path part.
-          final colonIdx = lastSegment.indexOf(':');
-          if (colonIdx >= 0 && colonIdx < lastSegment.length - 1) {
-            return lastSegment.substring(colonIdx + 1);
-          }
-          if (lastSegment.isNotEmpty) return lastSegment;
-        }
-        return 'Selected folder';
-      }
-      // No SAF folder chosen — the actual destination is the public
-      // Download/Wisp folder via MediaStore.
-      return 'Download/Wisp';
+      // Both the SAF-folder and MediaStore-default cases resolve to a friendly
+      // label (the actual destination is always Download/Wisp or the chosen
+      // SAF folder, never the app-private path the settings store internally).
+      return AndroidMediaStore.readableDestinationLabel(root);
     }
     return formatSettingsDownloadRootForDisplay(root);
   }

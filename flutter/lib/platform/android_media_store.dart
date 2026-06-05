@@ -54,6 +54,28 @@ class AndroidMediaStore {
   /// [pickSaveFolder], i.e. it starts with `content://`.
   static bool isSafUri(String value) => value.startsWith('content://');
 
+  /// A human-readable label for where received files land on Android, given the
+  /// stored save root ([safUriOrRoot] — a `content://` SAF tree URI, or null /
+  /// anything else for the MediaStore default). SAF tree URIs are decoded to
+  /// their path portion (e.g. `Download/Wisp`); the default is `Download/Wisp`.
+  /// Avoids surfacing raw `content://` URIs, which read as noise to users.
+  static String readableDestinationLabel(String? safUriOrRoot) {
+    if (safUriOrRoot != null && isSafUri(safUriOrRoot)) {
+      final uri = Uri.tryParse(safUriOrRoot);
+      final lastSegment = uri == null
+          ? ''
+          : Uri.decodeComponent(uri.pathSegments.lastOrNull ?? '');
+      // Document IDs look like "primary:Download/Wisp" — show the path part.
+      final colonIdx = lastSegment.indexOf(':');
+      if (colonIdx >= 0 && colonIdx < lastSegment.length - 1) {
+        return lastSegment.substring(colonIdx + 1);
+      }
+      if (lastSegment.isNotEmpty) return lastSegment;
+      return 'Selected folder';
+    }
+    return 'Download/Wisp';
+  }
+
   /// Copies [srcAbsPath] into the user-chosen SAF folder at [treeUri],
   /// preserving [relativeFilePath] sub-directories under that folder root.
   ///

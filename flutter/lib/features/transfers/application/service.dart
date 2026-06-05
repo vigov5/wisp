@@ -33,6 +33,10 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
   /// event lands, to skip the progress screen and route the finish state.
   TransferTextDelivery? _textDelivery;
 
+  /// Saved file name + folder for a "Save .txt" delivery, surfaced on the finish
+  /// screen. Set alongside [_textDelivery]; `null` for Copy and file transfers.
+  SavedTextLocation? _savedText;
+
   @override
   TransferSessionState build() {
     final source = ref.watch(transfersServiceSourceProvider);
@@ -88,7 +92,9 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
             );
           }
           final textDelivery = _textDelivery;
+          final savedText = _savedText;
           _textDelivery = null;
+          _savedText = null;
           if (textDelivery == TransferTextDelivery.copy) {
             // The snippet is already on the clipboard and the toast confirmed
             // it — dismiss straight back to idle, no finish screen.
@@ -101,10 +107,11 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
             // Nothing actually streamed, so skip the 1s smoothing delay and
             // show the finish screen at once. Prefer the original offer, which
             // still carries `inlineText` so the result card renders the text
-            // variant.
+            // variant, and pass the saved name/folder for the message.
             state = TransferSessionState.completed(
               offer: _incomingOffer ?? offer,
               result: result,
+              savedText: savedText,
             );
             _incomingOffer = null;
             _transferStartTime = null;
@@ -170,10 +177,14 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
     return const TransferSessionState.idle();
   }
 
-  Future<void> acceptOffer({TransferTextDelivery? textDelivery}) async {
+  Future<void> acceptOffer({
+    TransferTextDelivery? textDelivery,
+    SavedTextLocation? savedText,
+  }) async {
     final source = ref.read(transfersServiceSourceProvider);
     final offer = state.offer ?? _incomingOffer ?? _offerFromFakeSource(source);
     _textDelivery = textDelivery;
+    _savedText = savedText;
     // Inline text already arrived in the offer — there's nothing to transfer,
     // so we skip the progress screen and let the `completed` event route the
     // finish state (idle for Copy, result card for Save). File transfers still
@@ -193,6 +204,7 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
       await source.respondToOffer(accept: true);
     } catch (_) {
       _textDelivery = null;
+      _savedText = null;
       if (offer != null) {
         _incomingOffer = offer;
         state = TransferSessionState.offerPending(offer: offer);

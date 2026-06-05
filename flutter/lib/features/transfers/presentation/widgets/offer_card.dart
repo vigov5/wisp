@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../application/service.dart';
 import '../../application/state.dart';
 import '../../../../theme/wisp_theme.dart';
-import '../../../../src/rust/api/receiver.dart' as rust_receiver;
 import 'package:app/features/send/presentation/widgets/recipient_avatar.dart';
 import 'sending_connection_strip.dart';
 import 'transfer_flow_layout.dart';
@@ -26,8 +27,10 @@ class OfferCard extends StatelessWidget {
 
   /// Accept an inline-text offer, tagging how the user consumed it (Copy vs
   /// Save) so the session can skip the progress screen and route the finish
-  /// state correctly.
-  final void Function(TransferTextDelivery mode) onAcceptText;
+  /// state correctly. [saved] carries the file name + folder for the Save case
+  /// (null for Copy) so the finish screen can name the exact location.
+  final void Function(TransferTextDelivery mode, SavedTextLocation? saved)
+  onAcceptText;
   final VoidCallback onDecline;
 
   @override
@@ -130,7 +133,7 @@ class OfferCard extends StatelessWidget {
 /// Incoming text offer: the snippet already arrived inline, so we render it
 /// with Copy and Save-as-.txt actions. Both also accept the transfer (so the
 /// sender sees "delivered"); Decline rejects it.
-class _TextOfferCard extends StatefulWidget {
+class _TextOfferCard extends ConsumerStatefulWidget {
   const _TextOfferCard({
     required this.offer,
     required this.animate,
@@ -140,14 +143,15 @@ class _TextOfferCard extends StatefulWidget {
 
   final TransferIncomingOffer offer;
   final bool animate;
-  final void Function(TransferTextDelivery mode) onAcceptText;
+  final void Function(TransferTextDelivery mode, SavedTextLocation? saved)
+  onAcceptText;
   final VoidCallback onDecline;
 
   @override
-  State<_TextOfferCard> createState() => _TextOfferCardState();
+  ConsumerState<_TextOfferCard> createState() => _TextOfferCardState();
 }
 
-class _TextOfferCardState extends State<_TextOfferCard> {
+class _TextOfferCardState extends ConsumerState<_TextOfferCard> {
   bool _busy = false;
 
   String get _text => widget.offer.inlineText ?? '';
@@ -161,34 +165,37 @@ class _TextOfferCardState extends State<_TextOfferCard> {
         context,
       ).showSnackBar(const SnackBar(content: Text('Text copied')));
     }
-    widget.onAcceptText(TransferTextDelivery.copy);
+    widget.onAcceptText(TransferTextDelivery.copy, null);
   }
 
-  /// e.g. "Shared Clipboard 2026-04-23 100708.txt" — a stable, sortable name
+  /// e.g. "Shared Text 2026-04-23 100708.txt" — a stable, sortable name
   /// stamped with the moment the text was saved, so repeated shares don't all
-  /// collapse onto one generic "shared-text.txt".
+  /// collapse onto one generic "shared-text.txt". The protocol doesn't carry
+  /// whether the snippet came from the clipboard or was typed, so the receiver
+  /// can't tell them apart — hence one generic "Shared Text" label.
   String _suggestedFileName() {
     final now = DateTime.now();
     String two(int n) => n.toString().padLeft(2, '0');
     final date = '${now.year}-${two(now.month)}-${two(now.day)}';
     final time = '${two(now.hour)}${two(now.minute)}${two(now.second)}';
-    return 'Shared Clipboard $date $time.txt';
+    return 'Shared Text $date $time.txt';
   }
 
   Future<void> _save() async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final path = await rust_receiver.saveTextFile(
-        suggestedName: _suggestedFileName(),
-        contents: _text,
-      );
+      final saved = await ref
+          .read(transfersServiceSourceProvider)
+          .saveInlineText(suggestedName: _suggestedFileName(), contents: _text);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Saved to $path')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Saved ${saved.fileName} to ${saved.folderLabel}'),
+          ),
+        );
       }
-      widget.onAcceptText(TransferTextDelivery.save);
+      widget.onAcceptText(TransferTextDelivery.save, saved);
     } catch (error) {
       if (mounted) {
         setState(() => _busy = false);
