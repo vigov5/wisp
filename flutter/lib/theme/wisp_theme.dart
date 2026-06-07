@@ -1,5 +1,16 @@
 import 'package:flutter/material.dart';
 
+// Bundled UI typeface (assets/fonts/NotoSans-Variable.ttf). Noto Sans renders
+// Vietnamese diacritics and broad Unicode correctly and identically on every
+// platform, replacing the per-OS system default that mispositioned Vietnamese
+// marks on Android.
+const String kFontFamily = 'Noto Sans';
+
+// Bundled monospace face (assets/fonts/NotoSansMono-Variable.ttf) for codes,
+// device IDs, and the send-text editor. Replaces 'Courier New', which is
+// absent on Android and fell back to a per-OS mono that mangled Vietnamese.
+const String kMonoFontFamily = 'Noto Sans Mono';
+
 const Color kBg = Color(0xFFF3F4F4);
 const Color kSurface = Color(0xFFFFFFFF);
 const Color kFill = Color(0xFFEEF0F0);
@@ -34,6 +45,7 @@ TextStyle wispSans({
   double? letterSpacing,
 }) {
   return TextStyle(
+    fontFamily: kFontFamily,
     fontSize: fontSize,
     fontWeight: fontWeight,
     color: color,
@@ -49,8 +61,8 @@ TextStyle wispMono({
   double? letterSpacing,
 }) {
   return TextStyle(
-    fontFamily: 'Courier New',
-    fontFamilyFallback: const ['Courier', 'Liberation Mono', 'monospace'],
+    fontFamily: kMonoFontFamily,
+    fontFamilyFallback: const ['Courier New', 'monospace'],
     fontSize: fontSize,
     fontWeight: fontWeight,
     color: color,
@@ -124,6 +136,7 @@ ThemeData buildWispTheme() {
 
   return ThemeData(
     useMaterial3: true,
+    fontFamily: kFontFamily,
     colorScheme: colorScheme,
     scaffoldBackgroundColor: kBg,
     textTheme: textTheme,

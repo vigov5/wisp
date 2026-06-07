@@ -85,6 +85,25 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  fonts:
+    # Noto Sans — unifies typography across platforms and renders Vietnamese
+    # (and broad Unicode) correctly. Variable font: the wght axis covers every
+    # weight the UI uses (400/500/600/700). Licensed under SIL OFL 1.1; the
+    # license text lives at assets/fonts/OFL.txt and is registered with
+    # LicenseRegistry in main.dart so it shows up in the app's licenses page.
+    - family: Noto Sans
+      fonts:
+        - asset: assets/fonts/NotoSans-Variable.ttf
+    # Monospace counterpart for codes / device IDs / the send-text editor.
+    # Replaces 'Courier New' (absent on Android → broken Vietnamese + per-OS
+    # fallback). Same OFL 1.1 license, registered in main.dart.
+    - family: Noto Sans Mono
+      fonts:
+        - asset: assets/fonts/NotoSansMono-Variable.ttf
+
+  assets:
+    - assets/fonts/OFL.txt
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

@@ -1,7 +1,10 @@
 import 'dart:io';
 
 import 'package:app/app/app_bootstrap.dart';
+import 'package:flutter/foundation.dart'
+    show LicenseEntryWithLineBreaks, LicenseRegistry;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -14,6 +17,19 @@ import 'src/rust/frb_generated.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Register the SIL OFL 1.1 text for the bundled Noto fonts so it appears in
+  // the standard Flutter licenses page (showLicensePage / AboutDialog). Both
+  // Noto Sans and Noto Sans Mono are covered by the same OFL from the Noto
+  // Project, so one entry lists both families.
+  LicenseRegistry.addLicense(() async* {
+    final license = await rootBundle.loadString('assets/fonts/OFL.txt');
+    yield LicenseEntryWithLineBreaks(const [
+      'Noto Sans',
+      'Noto Sans Mono',
+    ], license);
+  });
+
   if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
     await windowManager.ensureInitialized();
     await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
