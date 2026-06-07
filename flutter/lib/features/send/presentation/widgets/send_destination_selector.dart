@@ -307,7 +307,7 @@ class _SendDestinationSelectorState
           )
         else
           SizedBox(
-            height: 124,
+            height: 120,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
@@ -662,7 +662,7 @@ class _NearbyDeviceTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
-          width: 106,
+          width: 116,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
             color: isSelected ? const Color(0xFFF4F8FA) : kSurface,
@@ -678,7 +678,7 @@ class _NearbyDeviceTile extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 20, color: isSelected ? kAccentCyan : kMuted),
+              Icon(icon, size: 22, color: isSelected ? kAccentCyan : kMuted),
               const SizedBox(height: 8),
               Text(
                 receiver.label,
@@ -694,32 +694,36 @@ class _NearbyDeviceTile extends StatelessWidget {
               ),
               if (receiver.endpointId.isNotEmpty) ...[
                 const SizedBox(height: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 1,
-                  ),
-                  decoration: BoxDecoration(
-                    color: colorFromPubkey(
-                      receiver.endpointId,
-                    ).withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(5),
-                    border: Border.all(
+                Tooltip(
+                  message:
+                      'Identity badge (from public key) — same color = same device.',
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
                       color: colorFromPubkey(
                         receiver.endpointId,
-                      ).withValues(alpha: 0.45),
-                      width: 0.6,
+                      ).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: colorFromPubkey(
+                          receiver.endpointId,
+                        ).withValues(alpha: 0.45),
+                        width: 0.8,
+                      ),
                     ),
-                  ),
-                  child: Text(
-                    shortPubkey(receiver.endpointId),
-                    style: wispSans(
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w700,
-                      color: HSLColor.fromColor(
-                        colorFromPubkey(receiver.endpointId),
-                      ).withLightness(0.32).toColor(),
-                      letterSpacing: 0.3,
+                    child: Text(
+                      shortPubkey(receiver.endpointId),
+                      style: wispSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: HSLColor.fromColor(
+                          colorFromPubkey(receiver.endpointId),
+                        ).withLightness(0.32).toColor(),
+                        letterSpacing: 0.4,
+                      ),
                     ),
                   ),
                 ),

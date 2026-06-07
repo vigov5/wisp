@@ -80,8 +80,28 @@ class OfferCard extends StatelessWidget {
           mode: TransferManifestPanelMode.previewTree,
           items: offer.manifest.items,
         ),
+        // Secondary action (Decline) on the left, primary action (Save) on
+        // the right — matches the app-wide button convention.
         footer: Row(
           children: [
+            Expanded(
+              flex: 1,
+              child: TextButton(
+                onPressed: onDecline,
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFB34A4A),
+                  minimumSize: const Size(0, 52),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: const Text(
+                  'Decline',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
             Expanded(
               flex: 3,
               child: FilledButton(
@@ -102,24 +122,6 @@ class OfferCard extends StatelessWidget {
                   // always looks like "Downloads" on Android.
                   'Save',
                   style: wispSans(fontWeight: FontWeight.w700, fontSize: 15),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              flex: 1,
-              child: TextButton(
-                onPressed: onDecline,
-                style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFFB34A4A),
-                  minimumSize: const Size(0, 52),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-                child: const Text(
-                  'Decline',
-                  style: TextStyle(fontWeight: FontWeight.w600),
                 ),
               ),
             ),
@@ -260,8 +262,32 @@ class _TextOfferCardState extends ConsumerState<_TextOfferCard> {
               ),
             ),
             const SizedBox(height: 12),
+            // Secondary action (Save .txt) on the left, primary action (Copy)
+            // on the right — matches the app-wide button convention.
             Row(
               children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _busy ? null : _save,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: kAccentCyanStrong,
+                      minimumSize: const Size(0, 52),
+                      side: const BorderSide(color: kAccentCyanStrong),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    icon: const Icon(Icons.save_alt_rounded, size: 18),
+                    label: Text(
+                      'Save .txt',
+                      style: wispSans(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton.icon(
                     onPressed: _busy ? null : _copy,
@@ -277,28 +303,6 @@ class _TextOfferCardState extends ConsumerState<_TextOfferCard> {
                     icon: const Icon(Icons.content_copy_rounded, size: 18),
                     label: Text(
                       'Copy',
-                      style: wispSans(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _busy ? null : _save,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: kAccentCyanStrong,
-                      minimumSize: const Size(0, 52),
-                      side: const BorderSide(color: kAccentCyanStrong),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    icon: const Icon(Icons.save_alt_rounded, size: 18),
-                    label: Text(
-                      'Save .txt',
                       style: wispSans(
                         fontWeight: FontWeight.w700,
                         fontSize: 15,
