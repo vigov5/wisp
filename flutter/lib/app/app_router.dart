@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/about/presentation/about_page.dart';
 import '../features/diagnostics/presentation/connection_test_page.dart';
 import '../features/saved_devices/presentation/saved_devices_page.dart';
 import '../features/send/application/model.dart';
@@ -16,6 +17,7 @@ abstract final class AppRoutePaths {
   static const String settings = '/settings';
   static const String savedDevices = '/settings/saved-devices';
   static const String connectionTest = '/settings/connection-test';
+  static const String about = '/settings/about';
   static const String sendDraft = '/send/draft';
   static const String sendTransfer = '/send/transfer';
   static const String receiveTransfer = '/receive/transfer';
@@ -24,6 +26,7 @@ abstract final class AppRoutePaths {
   static const String settingsSegment = 'settings';
   static const String savedDevicesSegment = 'saved-devices';
   static const String connectionTestSegment = 'connection-test';
+  static const String aboutSegment = 'about';
   static const String sendDraftSegment = 'send/draft';
   static const String sendTransferSegment = 'send/transfer';
   static const String receiveTransferSegment = 'receive/transfer';
@@ -37,6 +40,8 @@ extension AppRouteNavigation on BuildContext {
   void pushSavedDevices() => push(AppRoutePaths.savedDevices);
 
   void pushConnectionTest() => push(AppRoutePaths.connectionTest);
+
+  void pushAbout() => push(AppRoutePaths.about);
 
   void goSendDraft({required List<SendPickedFile> files}) =>
       go(AppRoutePaths.sendDraft, extra: files);
@@ -70,6 +75,11 @@ GoRouter buildAppRouter({List<NavigatorObserver> observers = const []}) {
                 path: AppRoutePaths.connectionTestSegment,
                 builder: (context, state) =>
                     const TitleBarShell(child: ConnectionTestPage()),
+              ),
+              GoRoute(
+                path: AppRoutePaths.aboutSegment,
+                builder: (context, state) =>
+                    const TitleBarShell(child: AboutPage()),
               ),
             ],
           ),

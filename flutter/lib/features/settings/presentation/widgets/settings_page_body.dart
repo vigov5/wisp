@@ -457,6 +457,44 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                             ),
                           ),
                         ),
+                        const SizedBox(height: 28),
+                        const Divider(color: kBorder, height: 1),
+                        const SizedBox(height: 18),
+                        SettingsSectionField(
+                          label: 'About',
+                          child: InkWell(
+                            onTap: () => context.pushAbout(),
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
+                              decoration: BoxDecoration(
+                                color: kSurface,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: kBorder),
+                              ),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      'Version, source code, and licenses',
+                                      style: wispSans(
+                                        fontSize: 13,
+                                        color: kInk,
+                                      ),
+                                    ),
+                                  ),
+                                  const Icon(
+                                    Icons.chevron_right_rounded,
+                                    color: kMuted,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
