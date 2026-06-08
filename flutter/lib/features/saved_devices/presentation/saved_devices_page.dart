@@ -94,6 +94,9 @@ class SavedDevicesPage extends ConsumerWidget {
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: kAccentCyanStrong,
+            ),
             child: const Text('Clear'),
           ),
         ],

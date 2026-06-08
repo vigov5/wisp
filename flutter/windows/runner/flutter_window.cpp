@@ -1,8 +1,19 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <string>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "single_instance.h"
+#include "windows_integration.h"
+
+namespace {
+
+// Channel name shared with the Dart side (lib/platform/windows_context_menu.dart).
+constexpr const char* kWindowsIntegrationChannel =
+    "dev.vigov5.wisp/windows_integration";
+
+}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -27,6 +38,33 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
+  // Bridge the Windows shell integration to Dart. Register/unregister/status
+  // calls are handled synchronously here; forwarded "Send via Wisp" paths are
+  // pushed to Dart via InvokeMethod("onSendViaWisp", [path]) on WM_COPYDATA.
+  windows_integration_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          kWindowsIntegrationChannel,
+          &flutter::StandardMethodCodec::GetInstance());
+  windows_integration_channel_->SetMethodCallHandler(
+      [](const flutter::MethodCall<flutter::EncodableValue>& call,
+         std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+             result) {
+        const std::string& method = call.method_name();
+        if (method == "registerContextMenu") {
+          result->Success(
+              flutter::EncodableValue(wisp_integration::RegisterContextMenu()));
+        } else if (method == "unregisterContextMenu") {
+          result->Success(flutter::EncodableValue(
+              wisp_integration::UnregisterContextMenu()));
+        } else if (method == "isContextMenuRegistered") {
+          result->Success(flutter::EncodableValue(
+              wisp_integration::IsContextMenuRegistered()));
+        } else {
+          result->NotImplemented();
+        }
+      });
+
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
   });
@@ -40,11 +78,34 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  windows_integration_channel_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
 
   Win32Window::OnDestroy();
+}
+
+void FlutterWindow::HandleForwardedPath(const COPYDATASTRUCT* copy_data) {
+  const std::string path =
+      wisp_single_instance::DecodeForwardedPath(copy_data);
+  if (path.empty() || !windows_integration_channel_) {
+    return;
+  }
+  // Bring the window forward so the user sees the draft (the forwarding process
+  // also attempts this, but doing it on the host side is more reliable).
+  HWND hwnd = GetHandle();
+  if (hwnd != nullptr) {
+    if (IsIconic(hwnd)) {
+      ShowWindow(hwnd, SW_RESTORE);
+    }
+    SetForegroundWindow(hwnd);
+  }
+  windows_integration_channel_->InvokeMethod(
+      "onSendViaWisp",
+      std::make_unique<flutter::EncodableValue>(flutter::EncodableList{
+          flutter::EncodableValue(path),
+      }));
 }
 
 LRESULT
@@ -65,6 +126,9 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
+    case WM_COPYDATA:
+      HandleForwardedPath(reinterpret_cast<const COPYDATASTRUCT*>(lparam));
+      return TRUE;
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

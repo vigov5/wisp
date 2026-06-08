@@ -15,7 +15,10 @@ import 'features/transfers/feature.dart';
 import 'features/settings/settings_providers.dart';
 import 'src/rust/frb_generated.dart';
 
-Future<void> main() async {
+// [args] carries the process launch arguments. On Windows the native runner
+// forwards a "Send via Wisp" file/folder path here on cold start (warm-start
+// paths arrive via the windows_integration method channel instead).
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Register the SIL OFL 1.1 text for the bundled Noto fonts so it appears in
@@ -55,7 +58,7 @@ Future<void> main() async {
           bootstrap.savedDevicesRepository,
         ),
       ],
-      child: const WispApp(),
+      child: WispApp(initialSendPaths: args),
     ),
   );
   if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {

@@ -203,7 +203,13 @@ class _QrPairingPageState extends State<QrPairingPage> {
             style: wispSans(fontSize: 13, color: kMuted),
           ),
           const SizedBox(height: 20),
-          FilledButton(onPressed: _load, child: const Text('Retry')),
+          FilledButton(
+            onPressed: _load,
+            style: FilledButton.styleFrom(
+              backgroundColor: kAccentCyanStrong,
+            ),
+            child: const Text('Retry'),
+          ),
         ],
       ),
     );

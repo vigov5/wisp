@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../app/app_router.dart';
 import '../../../../platform/android_media_store.dart';
+import '../../../../platform/windows_context_menu.dart';
 import '../../../../src/rust/api/simple.dart' as rust_simple;
 import '../../../../theme/wisp_theme.dart';
 import '../../../../platform/rust/rendezvous_defaults.dart';
@@ -42,6 +43,11 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
   bool _skipClipboardConfirm = false;
   bool _saving = false;
   String _endpointId = '';
+  // Windows "Send via Wisp" context-menu state. The registry is the source of
+  // truth, so this mirrors the live registration status and applies changes
+  // immediately (independent of the Save button / _isDirty).
+  bool _contextMenuEnabled = false;
+  bool _contextMenuBusy = false;
 
   @override
   void initState() {
@@ -66,6 +72,38 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
       _endpointId = rust_simple.currentEndpointId();
     } catch (_) {
       // Bridge not yet initialized — stays empty, badge hides itself.
+    }
+    if (Platform.isWindows) {
+      unawaited(_refreshContextMenuStatus());
+    }
+  }
+
+  // Reads the live context-menu registration status from the registry and
+  // updates the toggle to match reality (handles manual registry edits or a
+  // failed write). Windows only.
+  Future<void> _refreshContextMenuStatus() async {
+    final enabled = await WindowsContextMenu.isRegistered();
+    if (mounted) {
+      setState(() => _contextMenuEnabled = enabled);
+    }
+  }
+
+  // Applies the context-menu toggle immediately, then re-reads the registry so
+  // the displayed value reflects the actual outcome.
+  Future<void> _toggleContextMenu(bool value) async {
+    if (_contextMenuBusy) return;
+    setState(() => _contextMenuBusy = true);
+    try {
+      if (value) {
+        await WindowsContextMenu.register();
+      } else {
+        await WindowsContextMenu.unregister();
+      }
+      await _refreshContextMenuStatus();
+    } finally {
+      if (mounted) {
+        setState(() => _contextMenuBusy = false);
+      }
     }
   }
 
@@ -122,6 +160,9 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: kAccentCyanStrong,
+              ),
               child: const Text('Discard'),
             ),
           ],
@@ -348,6 +389,18 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                           },
                         ),
                         const SizedBox(height: 18),
+                        if (Platform.isWindows) ...[
+                          SettingsToggleField(
+                            title: 'Windows right-click menu',
+                            subtitle:
+                                "Show 'Send via Wisp' on files and folders "
+                                'in File Explorer.',
+                            value: _contextMenuEnabled,
+                            onChanged: (value) =>
+                                unawaited(_toggleContextMenu(value)),
+                          ),
+                          const SizedBox(height: 18),
+                        ],
                         SettingsSectionField(
                           label: 'Connection Test',
                           child: InkWell(

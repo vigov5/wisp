@@ -8,6 +8,7 @@ const String _downloadRootKey = 'settings.download_root';
 const String _discoverableKey = 'settings.discoverable';
 const String _serverUrlKey = 'settings.server_url';
 const String _skipClipboardConfirmKey = 'settings.skip_clipboard_confirm';
+const String _contextMenuPromptedKey = 'settings.context_menu_prompted';
 
 class SettingsRepository {
   SettingsRepository({
@@ -52,6 +53,16 @@ class SettingsRepository {
       settings.skipClipboardConfirm,
     );
   }
+
+  /// Whether the one-time "add Wisp to the right-click menu?" prompt has been
+  /// shown (Windows only). Tracked separately from [AppSettings] because the
+  /// registry — not a stored flag — is the source of truth for the enabled
+  /// state; this only prevents re-prompting on every launch.
+  bool contextMenuPrompted() =>
+      prefs.getBool(_contextMenuPromptedKey) ?? false;
+
+  Future<void> markContextMenuPrompted() =>
+      prefs.setBool(_contextMenuPromptedKey, true);
 
   AppSettings? _readExisting() {
     if (!prefs.containsKey(_deviceNameKey) ||
