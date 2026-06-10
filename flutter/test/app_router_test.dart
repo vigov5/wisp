@@ -7,6 +7,7 @@ import 'package:app/features/send/application/model.dart';
 import 'package:app/features/send/application/send_selection_picker.dart';
 import 'package:app/platform/rust/receiver/fake_source.dart';
 import 'package:app/features/settings/settings_providers.dart';
+import 'package:app/features/update/application/update_providers.dart';
 import 'package:app/features/send/presentation/send_draft_preview.dart';
 import 'package:app/features/send/presentation/send_transfer_route.dart';
 import 'package:app/features/saved_devices/application/saved_devices_controller.dart';
@@ -137,12 +138,14 @@ void main() {
   ) async {
     final receiverSource = FakeReceiverServiceSource();
     final savedDevicesRepo = await mockSavedDevicesRepo();
+    final updateRepo = await mockUpdateRepo();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           initialAppSettingsProvider.overrideWithValue(testAppSettings),
           receiverServiceSourceProvider.overrideWithValue(receiverSource),
           savedDevicesRepositoryProvider.overrideWithValue(savedDevicesRepo),
+          updateRepositoryProvider.overrideWithValue(updateRepo),
         ],
         child: const WispApp(),
       ),

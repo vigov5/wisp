@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../src/rust/api/diagnostics.dart' as rust;
@@ -41,8 +42,15 @@ class FirewallWarningController extends Notifier<FirewallWarningState> {
   }
 
   Future<void> _probe() async {
-    final result = await rust.firewallInboundWarning();
-    state = state.copyWith(warning: result);
+    try {
+      final result = await rust.firewallInboundWarning();
+      state = state.copyWith(warning: result);
+    } catch (error) {
+      // The native bridge may be uninitialized (e.g. widget tests that pump
+      // the shell without RustLib.init()) or the probe may fail; leave the
+      // warning unset rather than letting an unhandled async error surface.
+      debugPrint('[firewall] inbound warning probe failed: $error');
+    }
   }
 
   void dismissForSession() {

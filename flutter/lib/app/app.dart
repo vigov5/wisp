@@ -59,9 +59,24 @@ class _WispAppState extends ConsumerState<WispApp> {
         _syncReceiverDiscovery();
         _wireShareIntent();
         _wireWindowsSendIntent();
-        unawaited(_maybePromptContextMenu());
+        // Fire-and-forget startup side-effects. Guard each so a failure (a
+        // missing plugin/bridge under widget tests, or a transient runtime
+        // error) stays contained instead of surfacing as an unhandled async
+        // error — neither is essential to a usable first frame.
         unawaited(
-          ref.read(updateControllerProvider.notifier).checkForUpdates(),
+          _maybePromptContextMenu().catchError(
+            (Object error) =>
+                debugPrint('[app] context-menu prompt skipped: $error'),
+          ),
+        );
+        unawaited(
+          ref
+              .read(updateControllerProvider.notifier)
+              .checkForUpdates()
+              .catchError(
+                (Object error) =>
+                    debugPrint('[app] update check skipped: $error'),
+              ),
         );
       }
     });

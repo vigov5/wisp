@@ -1,4 +1,5 @@
 import 'package:app/features/saved_devices/application/saved_devices_repository.dart';
+import 'package:app/features/update/application/update_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -21,6 +22,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 Future<SavedDevicesRepository> mockSavedDevicesRepo() async {
   final prefs = await SharedPreferences.getInstance();
   return SavedDevicesRepository(prefs: prefs);
+}
+
+/// In-memory [UpdateRepository] for tests that pump a screen reading the
+/// update-checker preferences (e.g. the Settings page). Spread its override
+/// into the `ProviderScope`. Pair with `SharedPreferences.setMockInitialValues`.
+Future<UpdateRepository> mockUpdateRepo() async {
+  final prefs = await SharedPreferences.getInstance();
+  return UpdateRepository(prefs: prefs);
 }
 
 /// Finite-duration replacement for [WidgetTester.pumpAndSettle].

@@ -10,6 +10,7 @@ import 'package:app/features/send/application/model.dart';
 import 'package:app/features/send/application/send_selection_picker.dart';
 import 'package:app/features/transfers/feature.dart';
 import 'package:app/features/settings/feature.dart';
+import 'package:app/features/update/application/update_providers.dart';
 import 'package:app/features/send/presentation/send_draft_preview.dart';
 import 'package:app/features/send/send_drop_zone.dart';
 import 'package:app/features/saved_devices/application/saved_devices_controller.dart';
@@ -96,11 +97,13 @@ void main() {
   ) async {
     final router = buildAppRouter();
     final savedDevicesRepo = await mockSavedDevicesRepo();
+    final updateRepo = await mockUpdateRepo();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           initialAppSettingsProvider.overrideWithValue(testAppSettings),
           savedDevicesRepositoryProvider.overrideWithValue(savedDevicesRepo),
+          updateRepositoryProvider.overrideWithValue(updateRepo),
         ],
         child: MaterialApp.router(routerConfig: router),
       ),
