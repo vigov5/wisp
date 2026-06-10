@@ -12,6 +12,9 @@ import '../features/send/application/state.dart';
 import '../features/transfers/application/controller.dart';
 import '../features/transfers/application/service.dart';
 import '../features/transfers/application/state.dart' as transfer_state;
+import '../features/update/application/update_providers.dart';
+import '../features/update/domain/update_status.dart';
+import '../features/update/presentation/update_available_dialog.dart';
 import 'app_router.dart';
 import '../theme/wisp_theme.dart';
 import '../features/settings/settings_providers.dart';
@@ -57,6 +60,9 @@ class _WispAppState extends ConsumerState<WispApp> {
         _wireShareIntent();
         _wireWindowsSendIntent();
         unawaited(_maybePromptContextMenu());
+        unawaited(
+          ref.read(updateControllerProvider.notifier).checkForUpdates(),
+        );
       }
     });
   }
@@ -232,8 +238,24 @@ class _WispAppState extends ConsumerState<WispApp> {
     super.dispose();
   }
 
+  // Surfaces the "update available" dialog when a check (startup or manual)
+  // transitions into the `available` phase. This is the single source of truth
+  // for the prompt — the Settings/About manual check only shows inline
+  // feedback for the up-to-date / error outcomes.
+  void _maybeShowUpdateDialog(UpdateState? prev, UpdateState next) {
+    final becameAvailable =
+        prev?.phase != UpdatePhase.available &&
+        next.phase == UpdatePhase.available;
+    if (!becameAvailable || next.release == null) return;
+    final navContext = _router.routerDelegate.navigatorKey.currentContext;
+    if (navContext == null || !navContext.mounted) return;
+    unawaited(showUpdateAvailableDialog(navContext, ref, next.release!));
+  }
+
   @override
   Widget build(BuildContext context) {
+    ref.listen<UpdateState>(updateControllerProvider, _maybeShowUpdateDialog);
+
     // When an incoming offer arrives while the user is on any other screen
     // (Settings, Saved devices, QR pairing/scan, deep dialogs, etc.), pop
     // anything stacked on top of the GoRouter and push the receive-transfer

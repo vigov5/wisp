@@ -1,4 +1,6 @@
 import 'package:app/features/settings/feature.dart';
+import 'package:app/features/update/application/update_providers.dart';
+import 'package:app/features/update/application/update_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -32,6 +34,9 @@ void main() {
         overrides: [
           settingsRepositoryProvider.overrideWithValue(repo),
           initialAppSettingsProvider.overrideWithValue(initialSettings),
+          updateRepositoryProvider.overrideWithValue(
+            UpdateRepository(prefs: prefs),
+          ),
         ],
         child: const MaterialApp(home: SettingsFeature()),
       ),
@@ -69,6 +74,9 @@ void main() {
         overrides: [
           settingsRepositoryProvider.overrideWithValue(repo),
           initialAppSettingsProvider.overrideWithValue(initialSettings),
+          updateRepositoryProvider.overrideWithValue(
+            UpdateRepository(prefs: prefs),
+          ),
         ],
         child: const MaterialApp(home: SettingsFeature()),
       ),
@@ -116,6 +124,9 @@ void main() {
         overrides: [
           settingsRepositoryProvider.overrideWithValue(repo),
           initialAppSettingsProvider.overrideWithValue(customSettings),
+          updateRepositoryProvider.overrideWithValue(
+            UpdateRepository(prefs: prefs),
+          ),
         ],
         child: const MaterialApp(home: SettingsFeature()),
       ),

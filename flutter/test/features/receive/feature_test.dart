@@ -7,7 +7,10 @@ import 'package:app/app/app_router.dart';
 import 'package:app/features/receive/feature.dart';
 import 'package:app/features/settings/feature.dart';
 import 'package:app/features/transfers/feature.dart';
+import 'package:app/features/update/application/update_providers.dart';
+import 'package:app/features/update/application/update_repository.dart';
 import 'package:app/platform/rust/receiver/fake_source.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../support/settings_test_overrides.dart';
 
 GoRouter _buildReceiveFeatureRouter({required Size size}) {
@@ -164,12 +167,17 @@ void main() {
   testWidgets('opens settings from the idle gear button', (
     WidgetTester tester,
   ) async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
     final router = _buildReceiveFeatureRouter(size: const Size(440, 560));
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           transferReviewAnimationProvider.overrideWithValue(false),
           initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          updateRepositoryProvider.overrideWithValue(
+            UpdateRepository(prefs: prefs),
+          ),
         ],
         child: MaterialApp.router(routerConfig: router),
       ),

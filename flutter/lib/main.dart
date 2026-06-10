@@ -13,6 +13,7 @@ import 'features/receive/feature.dart';
 import 'features/saved_devices/application/saved_devices_controller.dart';
 import 'features/transfers/feature.dart';
 import 'features/settings/settings_providers.dart';
+import 'features/update/application/update_providers.dart';
 import 'src/rust/frb_generated.dart';
 
 // [args] carries the process launch arguments. On Windows the native runner
@@ -56,6 +57,9 @@ Future<void> main(List<String> args) async {
         ),
         savedDevicesRepositoryProvider.overrideWithValue(
           bootstrap.savedDevicesRepository,
+        ),
+        updateRepositoryProvider.overrideWithValue(
+          bootstrap.updateRepository,
         ),
       ],
       child: WispApp(initialSendPaths: args),

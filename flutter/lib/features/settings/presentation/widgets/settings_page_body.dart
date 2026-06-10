@@ -12,6 +12,8 @@ import '../../../../src/rust/api/simple.dart' as rust_simple;
 import '../../../../theme/wisp_theme.dart';
 import '../../../../platform/rust/rendezvous_defaults.dart';
 import '../../../transfers/application/pubkey_visual.dart';
+import '../../../update/application/update_providers.dart';
+import '../../../update/domain/update_status.dart';
 import '../../application/controller.dart';
 import '../../settings_providers.dart';
 import 'reliability_settings_section.dart';
@@ -48,6 +50,10 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
   // immediately (independent of the Save button / _isDirty).
   bool _contextMenuEnabled = false;
   bool _contextMenuBusy = false;
+  // Update-checker state. The toggle mirrors the persisted preference; the flag
+  // gates inline snackbar feedback to user-initiated checks only.
+  bool _checkOnStartup = true;
+  bool _awaitingManualUpdateResult = false;
 
   @override
   void initState() {
@@ -76,6 +82,37 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
     if (Platform.isWindows) {
       unawaited(_refreshContextMenuStatus());
     }
+    _checkOnStartup = ref
+        .read(updateControllerProvider.notifier)
+        .checkOnStartup();
+  }
+
+  void _checkForUpdates() {
+    _awaitingManualUpdateResult = true;
+    ref.read(updateControllerProvider.notifier).checkForUpdates(manual: true);
+  }
+
+  // Surfaces inline feedback for a user-initiated check. The "available"
+  // outcome is handled by the global dialog in WispApp, so here we only report
+  // the up-to-date / error results.
+  void _onUpdateState(UpdateState? prev, UpdateState next) {
+    if (!_awaitingManualUpdateResult) return;
+    if (next.phase == UpdatePhase.upToDate) {
+      _awaitingManualUpdateResult = false;
+      _showUpdateSnack("You're on the latest version.");
+    } else if (next.phase == UpdatePhase.error) {
+      _awaitingManualUpdateResult = false;
+      _showUpdateSnack(next.errorMessage ?? 'Could not check for updates.');
+    } else if (next.phase == UpdatePhase.available) {
+      _awaitingManualUpdateResult = false;
+    }
+  }
+
+  void _showUpdateSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   // Reads the live context-menu registration status from the registry and
@@ -284,6 +321,9 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
   Widget build(BuildContext context) {
     final state = ref.watch(settingsControllerProvider);
     final saving = _saving || state.isSaving;
+    ref.listen<UpdateState>(updateControllerProvider, _onUpdateState);
+    final checkingForUpdates =
+        ref.watch(updateControllerProvider).phase == UpdatePhase.checking;
 
     return PopScope(
       canPop: !_isDirty,
@@ -515,37 +555,113 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                         const SizedBox(height: 18),
                         SettingsSectionField(
                           label: 'About',
-                          child: InkWell(
-                            onTap: () => context.pushAbout(),
-                            borderRadius: BorderRadius.circular(12),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                color: kSurface,
+                          child: Column(
+                            children: [
+                              InkWell(
+                                onTap: checkingForUpdates
+                                    ? null
+                                    : _checkForUpdates,
                                 borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: kBorder),
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      'Version, source code, and licenses',
-                                      style: wispSans(
-                                        fontSize: 13,
-                                        color: kInk,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 12,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: kSurface,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: kBorder),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          checkingForUpdates
+                                              ? 'Checking for updates…'
+                                              : 'Check for updates',
+                                          style: wispSans(
+                                            fontSize: 13,
+                                            color: kInk,
+                                          ),
+                                        ),
                                       ),
-                                    ),
+                                      if (checkingForUpdates)
+                                        const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: kAccentCyanStrong,
+                                          ),
+                                        )
+                                      else
+                                        const Icon(
+                                          Icons.refresh_rounded,
+                                          color: kMuted,
+                                          size: 20,
+                                        ),
+                                    ],
                                   ),
-                                  const Icon(
-                                    Icons.chevron_right_rounded,
-                                    color: kMuted,
-                                  ),
-                                ],
+                                ),
                               ),
-                            ),
+                              const SizedBox(height: 10),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: kSurface,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: kBorder),
+                                ),
+                                child: SettingsToggleField(
+                                  title: 'Check for updates on startup',
+                                  subtitle:
+                                      'Notify me when a new version is available',
+                                  value: _checkOnStartup,
+                                  onChanged: (value) {
+                                    setState(() => _checkOnStartup = value);
+                                    ref
+                                        .read(updateControllerProvider.notifier)
+                                        .setCheckOnStartup(value);
+                                  },
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              InkWell(
+                                onTap: () => context.pushAbout(),
+                                borderRadius: BorderRadius.circular(12),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 12,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: kSurface,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: kBorder),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          'Version, source code, and licenses',
+                                          style: wispSans(
+                                            fontSize: 13,
+                                            color: kInk,
+                                          ),
+                                        ),
+                                      ),
+                                      const Icon(
+                                        Icons.chevron_right_rounded,
+                                        color: kMuted,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],

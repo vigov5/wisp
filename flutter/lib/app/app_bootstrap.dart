@@ -8,6 +8,7 @@ import '../features/receive/application/pairing_cache.dart';
 import '../features/saved_devices/application/saved_devices_repository.dart';
 import '../features/settings/application/repository.dart';
 import '../features/settings/application/state.dart';
+import '../features/update/application/update_repository.dart';
 import '../platform/android_media_store.dart';
 import '../platform/identity_storage.dart';
 import '../platform/rust/receiver/rust_source.dart';
@@ -20,12 +21,14 @@ class AppBootstrap {
     required this.initialSettings,
     required this.receiverSource,
     required this.savedDevicesRepository,
+    required this.updateRepository,
   });
 
   final SettingsRepository settingsRepository;
   final AppSettings initialSettings;
   final RustReceiverServiceSource receiverSource;
   final SavedDevicesRepository savedDevicesRepository;
+  final UpdateRepository updateRepository;
 }
 
 Future<AppBootstrap> loadAppBootstrap({
@@ -78,6 +81,7 @@ Future<AppBootstrap> loadAppBootstrap({
     settingsRepository: repository,
     initialSettings: initialSettings,
     savedDevicesRepository: SavedDevicesRepository(prefs: prefs),
+    updateRepository: UpdateRepository(prefs: prefs),
     receiverSource:
         RustReceiverServiceSource(
             deviceName: initialSettings.deviceName,
