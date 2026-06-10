@@ -32,6 +32,13 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
 
+# permission_handler_windows (and other cppwinrt-based plugins) still include
+# <experimental/coroutine>, which newer MSVC toolchains (VS 2022 17.14+/VS 18)
+# promote from a deprecation warning to a hard error (C2338 / STL1011). Define
+# the silence macro directory-wide so it propagates to the plugin targets added
+# below via generated_plugins.cmake, the same way -DUNICODE does.
+add_definitions(-D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 # Compilation settings that should be applied to most targets.
 #
 # Be cautious about adding new options here, as plugins use this function by
