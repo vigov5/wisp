@@ -38,8 +38,12 @@ const Color kPrimaryLight = Color(0xFFA5F3FC);
 const Color kSurface2 = Color(0xFFFAFBFB);
 
 // ─── Button conventions ─────────────────────────────────────────────────────
-// Action buttons in this app fall into three styles. Reach for an existing one
+// Action buttons in this app fall into four styles. Reach for an existing one
 // before inventing a new colour/alpha combination.
+//
+// Two cyans, two jobs: a *filled* primary CTA uses the darker
+// [kAccentCyanStrong]; an *inline text* action uses the brighter
+// [kAccentCyan]. Don't mix them up — that distinction is the whole system.
 //
 // 1. Primary — the dominant action (Done, Accept, Send). `FilledButton` with a
 //    solid fill (`kPrimary`/`kAccentCyanStrong`, white text). One per row.
@@ -51,11 +55,25 @@ const Color kSurface2 = Color(0xFFFAFBFB);
 //        side:            <accent>.withValues(alpha: 0.15)
 //    Destructive uses the red accent (0xFFB34A4A) — see "Cancel transfer" /
 //    "Decline". Affirmative-but-secondary uses [kAccentCyan]/[kAccentCyanStrong]
-//    — see "Show in Files" on the transfer result card. Do NOT hand-pick other
-//    alphas; keep 0.08 / 0.15 so the tint language stays consistent.
+//    — see "Show in Files" on the transfer result card, or "Choose" beside the
+//    download-root field. Do NOT hand-pick other alphas; keep 0.08 / 0.15 so
+//    the tint language stays consistent.
 //
 // 3. Neutral outline — low-emphasis escape hatches (e.g. "Done" beside a
 //    "Retry"). `OutlinedButton` with `kInk` text and a `kBorder` side, no fill.
+//
+// 4. Inline text action — a low-chrome action that sits next to a section
+//    title or inside an action cluster (e.g. "Scan QR" / "Stop" / "Rescan" on
+//    the send screen, "Add files" / "Add folders", "Clear" on the Storage row,
+//    "Re-check" on the Update row). `TextButton.icon` with:
+//        foregroundColor: kAccentCyan          // the *bright* cyan, not Strong
+//        label: wispSans(fontSize: 13, fontWeight: FontWeight.w500)
+//        icon size 18
+//    Make it compact when it hugs a title (padding: EdgeInsets.zero,
+//    minimumSize: Size.zero, tapTargetSize: shrinkWrap). When the button can be
+//    disabled (e.g. "Clear"), let the colour come from the button's
+//    foreground/`disabledForegroundColor` rather than hard-coding it on the
+//    label, so the disabled state still greys out.
 // ─────────────────────────────────────────────────────────────────────────────
 
 TextStyle wispSans({
