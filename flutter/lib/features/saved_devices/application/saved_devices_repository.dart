@@ -111,6 +111,20 @@ class SavedDevicesRepository {
     return trimmed;
   }
 
+  /// Set or clear the user-authored nickname for an existing saved device.
+  /// A null/blank value clears the nickname (reverts to the broadcast label).
+  /// No-op if the device isn't in the list.
+  Future<void> rename(String endpointId, String? nickname) async {
+    final trimmed = nickname?.trim();
+    final next = (trimmed == null || trimmed.isEmpty) ? null : trimmed;
+    final all = loadAll();
+    final index = all.indexWhere((d) => d.endpointId == endpointId);
+    if (index < 0) return;
+    await upsert(
+      all[index].copyWith(nickname: next, clearNickname: next == null),
+    );
+  }
+
   Future<void> remove(String endpointId) async {
     final all = loadAll().where((d) => d.endpointId != endpointId).toList();
     await _save(all);

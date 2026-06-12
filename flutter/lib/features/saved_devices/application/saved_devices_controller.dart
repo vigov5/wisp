@@ -16,6 +16,17 @@ final savedDevicesProvider =
       SavedDevicesController.new,
     );
 
+/// Cheap `endpointId -> nickname` lookup for any screen that needs to resolve
+/// a device's display name by pubkey. Only includes devices with a non-empty
+/// user-authored nickname.
+final savedNicknamesProvider = Provider<Map<String, String>>((ref) {
+  final devices = ref.watch(savedDevicesProvider);
+  return {
+    for (final d in devices)
+      if ((d.nickname ?? '').isNotEmpty) d.endpointId: d.nickname!,
+  };
+});
+
 class SavedDevicesController extends Notifier<List<SavedDevice>> {
   @override
   List<SavedDevice> build() {
@@ -38,6 +49,13 @@ class SavedDevicesController extends Notifier<List<SavedDevice>> {
       bytesTransferred: bytesTransferred,
       lastTicket: lastTicket,
     );
+    state = repo.loadAll();
+  }
+
+  /// Set or clear the user-authored nickname for a saved device.
+  Future<void> rename(String endpointId, String? nickname) async {
+    final repo = ref.read(savedDevicesRepositoryProvider);
+    await repo.rename(endpointId, nickname);
     state = repo.loadAll();
   }
 

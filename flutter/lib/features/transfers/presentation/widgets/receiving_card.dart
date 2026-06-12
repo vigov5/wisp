@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/state.dart';
+import '../../../saved_devices/application/device_display_name.dart';
 import 'package:app/features/send/presentation/widgets/recipient_avatar.dart';
 import 'sending_connection_strip.dart';
 import 'transfer_flow_layout.dart';
@@ -24,7 +25,11 @@ class ReceivingCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final senderName = displaySender(offer.sender.displayName);
+    final senderName = resolveDeviceName(
+      ref,
+      endpointId: offer.senderEndpointId ?? '',
+      broadcastLabel: displaySender(offer.sender.displayName),
+    ).primary;
 
     final Widget subtitle;
     if (progress.speedLabel != null) {

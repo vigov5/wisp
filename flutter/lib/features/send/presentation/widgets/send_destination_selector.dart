@@ -7,6 +7,7 @@ import '../../../../src/rust/api/lan.dart' as rust_lan;
 import '../../../../theme/wisp_theme.dart';
 import '../../../receive/application/service.dart';
 import '../../../receive/application/state.dart';
+import '../../../saved_devices/application/device_display_name.dart';
 import '../../../saved_devices/application/saved_device.dart';
 import '../../../saved_devices/application/saved_devices_controller.dart';
 import '../../../transfers/application/pubkey_visual.dart';
@@ -266,7 +267,7 @@ class _SendDestinationSelectorState
           Text('Recent', style: titleStyle),
           const SizedBox(height: 12),
           SizedBox(
-            height: 120,
+            height: 134,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
@@ -307,7 +308,7 @@ class _SendDestinationSelectorState
           )
         else
           SizedBox(
-            height: 120,
+            height: 134,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
@@ -545,7 +546,7 @@ String _relativeTime(DateTime t) {
   return '${(delta.inDays / 30).floor()}mo ago';
 }
 
-class _RecentDeviceTile extends StatelessWidget {
+class _RecentDeviceTile extends ConsumerWidget {
   const _RecentDeviceTile({
     required this.device,
     required this.isSelected,
@@ -557,8 +558,13 @@ class _RecentDeviceTile extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final badgeColor = colorFromPubkey(device.endpointId);
+    final name = resolveDeviceName(
+      ref,
+      endpointId: device.endpointId,
+      broadcastLabel: device.label.isEmpty ? 'Saved device' : device.label,
+    );
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
@@ -583,7 +589,7 @@ class _RecentDeviceTile extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              device.label.isEmpty ? 'Saved device' : device.label,
+              name.primary,
               style: wispSans(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w600,
@@ -594,6 +600,21 @@ class _RecentDeviceTile extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
             ),
+            if (name.broadcast != null) ...[
+              const SizedBox(height: 2),
+              Text(
+                name.broadcast!,
+                style: wispSans(
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w400,
+                  color: kMuted,
+                  height: 1.1,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
+            ],
             const SizedBox(height: 4),
             Tooltip(
               message:
@@ -637,7 +658,7 @@ class _RecentDeviceTile extends StatelessWidget {
   }
 }
 
-class _NearbyDeviceTile extends StatelessWidget {
+class _NearbyDeviceTile extends ConsumerWidget {
   const _NearbyDeviceTile({
     required this.receiver,
     required this.isSelected,
@@ -653,7 +674,12 @@ class _NearbyDeviceTile extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final name = resolveDeviceName(
+      ref,
+      endpointId: receiver.endpointId,
+      broadcastLabel: receiver.label,
+    );
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 300),
       opacity: isStale ? 0.45 : 1.0,
@@ -681,7 +707,7 @@ class _NearbyDeviceTile extends StatelessWidget {
               Icon(icon, size: 22, color: isSelected ? kAccentCyan : kMuted),
               const SizedBox(height: 8),
               Text(
-                receiver.label,
+                name.primary,
                 style: wispSans(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w600,
@@ -692,6 +718,21 @@ class _NearbyDeviceTile extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
               ),
+              if (name.broadcast != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  name.broadcast!,
+                  style: wispSans(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w400,
+                    color: kMuted,
+                    height: 1.1,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                ),
+              ],
               if (receiver.endpointId.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Tooltip(

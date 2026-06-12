@@ -47,6 +47,31 @@ Widget buildSubtitleText(String text) {
   );
 }
 
+/// Subtitle line plus an optional, smaller "broadcasts as …" line shown only
+/// when the user has renamed the device — keeps the peer-reported name visible
+/// for trust without repeating it inside the instruction text. [broadcast] is
+/// the peer-reported name (null when no nickname overrides it).
+Widget buildSubtitleWithBroadcast(String text, String? broadcast) {
+  if (broadcast == null) return buildSubtitleText(text);
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      buildSubtitleText(text),
+      const SizedBox(height: 4),
+      Text(
+        'Their name: "$broadcast"',
+        textAlign: TextAlign.center,
+        style: wispSans(
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          color: kSubtle,
+          height: 1.3,
+        ),
+      ),
+    ],
+  );
+}
+
 Widget buildSpeedLine({required String speedLabel, required String? etaLabel}) {
   return Text.rich(
     TextSpan(

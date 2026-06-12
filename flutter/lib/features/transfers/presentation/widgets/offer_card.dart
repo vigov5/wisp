@@ -5,13 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../application/service.dart';
 import '../../application/state.dart';
 import '../../../../theme/wisp_theme.dart';
+import '../../../saved_devices/application/device_display_name.dart';
 import 'package:app/features/send/presentation/widgets/recipient_avatar.dart';
 import 'sending_connection_strip.dart';
 import 'transfer_flow_layout.dart';
 import 'transfer_manifest_panel.dart';
 import 'transfer_presentation_helpers.dart';
 
-class OfferCard extends StatelessWidget {
+class OfferCard extends ConsumerWidget {
   const OfferCard({
     super.key,
     required this.offer,
@@ -34,7 +35,7 @@ class OfferCard extends StatelessWidget {
   final VoidCallback onDecline;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     if (offer.inlineText != null) {
       return _TextOfferCard(
         offer: offer,
@@ -43,7 +44,12 @@ class OfferCard extends StatelessWidget {
         onDecline: onDecline,
       );
     }
-    final senderName = displaySender(offer.sender.displayName);
+    final name = resolveDeviceName(
+      ref,
+      endpointId: offer.senderEndpointId ?? '',
+      broadcastLabel: displaySender(offer.sender.displayName),
+    );
+    final senderName = name.primary;
     final itemCount = offer.manifest.itemCount;
     final totalSize = formatBytes(offer.manifest.totalSizeBytes);
     final willResume = offer.willResume;
@@ -53,7 +59,7 @@ class OfferCard extends StatelessWidget {
       child: TransferFlowLayout(
         statusLabel: 'Incoming',
         statusColor: kAccentCyanStrong,
-        subtitle: buildSubtitleText(subtitle),
+        subtitle: buildSubtitleWithBroadcast(subtitle, name.broadcast),
         explainer: Text(
           willResume
               ? 'Resuming previous transfer. Wisp will skip files you already have and download the rest. Accept only if you trust the sender.'
@@ -210,13 +216,18 @@ class _TextOfferCardState extends ConsumerState<_TextOfferCard> {
 
   @override
   Widget build(BuildContext context) {
-    final senderName = displaySender(widget.offer.sender.displayName);
+    final name = resolveDeviceName(
+      ref,
+      endpointId: widget.offer.senderEndpointId ?? '',
+      broadcastLabel: displaySender(widget.offer.sender.displayName),
+    );
+    final senderName = name.primary;
 
     return SizedBox.expand(
       child: TransferFlowLayout(
         statusLabel: 'Incoming text',
         statusColor: kAccentCyanStrong,
-        subtitle: buildSubtitleText('$senderName sent you text'),
+        subtitle: buildSubtitleWithBroadcast('Sent you text', name.broadcast),
         explainer: Text(
           'Copy it or save it as a .txt file. '
           'Accept only if you trust the sender.',

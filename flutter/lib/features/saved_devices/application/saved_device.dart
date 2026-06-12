@@ -12,6 +12,7 @@ class SavedDevice {
     required this.transferCount,
     required this.totalBytes,
     this.lastTicket,
+    this.nickname,
   });
 
   /// Iroh `EndpointId` (= base32 public key, ~52 chars).  Stable across the
@@ -20,6 +21,12 @@ class SavedDevice {
 
   /// Human-readable name reported by the peer (e.g. "Maya MacBook").
   final String label;
+
+  /// Optional user-authored name pinned to [endpointId]. Distinct from the
+  /// peer-controlled [label]: when set it takes display precedence everywhere
+  /// the device appears, while [label] is still surfaced as "broadcasts as …".
+  /// `null` means the user hasn't renamed this device.
+  final String? nickname;
 
   /// "phone" | "laptop" — used to pick the icon on the tile.
   final String deviceType;
@@ -41,6 +48,8 @@ class SavedDevice {
     int? transferCount,
     BigInt? totalBytes,
     String? lastTicket,
+    String? nickname,
+    bool clearNickname = false,
   }) {
     return SavedDevice(
       endpointId: endpointId ?? this.endpointId,
@@ -50,6 +59,7 @@ class SavedDevice {
       transferCount: transferCount ?? this.transferCount,
       totalBytes: totalBytes ?? this.totalBytes,
       lastTicket: lastTicket ?? this.lastTicket,
+      nickname: clearNickname ? null : (nickname ?? this.nickname),
     );
   }
 
@@ -61,6 +71,7 @@ class SavedDevice {
     'transferCount': transferCount,
     'totalBytes': totalBytes.toString(),
     'lastTicket': lastTicket,
+    'nickname': nickname,
   };
 
   static SavedDevice? fromJson(Map<String, Object?> json) {
@@ -74,8 +85,10 @@ class SavedDevice {
       lastSeenAt: lastSeen ?? DateTime.now().toUtc(),
       transferCount: (json['transferCount'] as int?) ?? 0,
       totalBytes:
-          BigInt.tryParse((json['totalBytes'] as String?) ?? '0') ?? BigInt.zero,
+          BigInt.tryParse((json['totalBytes'] as String?) ?? '0') ??
+          BigInt.zero,
       lastTicket: json['lastTicket'] as String?,
+      nickname: json['nickname'] as String?,
     );
   }
 
@@ -90,7 +103,8 @@ class SavedDevice {
           lastSeenAt == other.lastSeenAt &&
           transferCount == other.transferCount &&
           totalBytes == other.totalBytes &&
-          lastTicket == other.lastTicket;
+          lastTicket == other.lastTicket &&
+          nickname == other.nickname;
 
   @override
   int get hashCode => Object.hash(
@@ -101,5 +115,6 @@ class SavedDevice {
     transferCount,
     totalBytes,
     lastTicket,
+    nickname,
   );
 }

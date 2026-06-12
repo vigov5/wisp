@@ -50,6 +50,7 @@ class SavedDevicesPage extends ConsumerWidget {
                 final device = devices[index];
                 return _SavedDeviceRow(
                   device: device,
+                  onRename: () => _renameDevice(context, ref, device),
                   onDelete: () => ref
                       .read(savedDevicesProvider.notifier)
                       .remove(device.endpointId),
@@ -79,14 +80,29 @@ class SavedDevicesPage extends ConsumerWidget {
     );
   }
 
+  Future<void> _renameDevice(
+    BuildContext context,
+    WidgetRef ref,
+    SavedDevice device,
+  ) async {
+    final result = await showDialog<String?>(
+      context: context,
+      builder: (context) => _RenameDialog(device: device),
+    );
+    // null => dialog dismissed/cancelled (no change). A returned string (incl.
+    // empty) => apply; empty clears the nickname back to the broadcast name.
+    if (result == null) return;
+    await ref
+        .read(savedDevicesProvider.notifier)
+        .rename(device.endpointId, result);
+  }
+
   Future<void> _confirmClearAll(BuildContext context, WidgetRef ref) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Clear all saved devices?'),
-        content: const Text(
-          'You can re-discover them next time you transfer.',
-        ),
+        content: const Text('You can re-discover them next time you transfer.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -94,9 +110,7 @@ class SavedDevicesPage extends ConsumerWidget {
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            style: FilledButton.styleFrom(
-              backgroundColor: kAccentCyanStrong,
-            ),
+            style: FilledButton.styleFrom(backgroundColor: kAccentCyanStrong),
             child: const Text('Clear'),
           ),
         ],
@@ -108,15 +122,97 @@ class SavedDevicesPage extends ConsumerWidget {
   }
 }
 
-class _SavedDeviceRow extends StatelessWidget {
-  const _SavedDeviceRow({required this.device, required this.onDelete});
+/// Owns its own [TextEditingController] so the controller's lifecycle matches
+/// the dialog route — disposing in the parent right after `showDialog` returns
+/// races the dialog's exit animation, which rebuilds the field and re-attaches
+/// a listener to a disposed controller.
+class _RenameDialog extends StatefulWidget {
+  const _RenameDialog({required this.device});
 
   final SavedDevice device;
+
+  @override
+  State<_RenameDialog> createState() => _RenameDialogState();
+}
+
+class _RenameDialogState extends State<_RenameDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.device.nickname ?? '');
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final broadcast = widget.device.label.trim();
+    return AlertDialog(
+      title: const Text('Rename device'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: InputDecoration(
+              labelText: 'Nickname',
+              hintText: broadcast.isEmpty ? 'My device' : broadcast,
+            ),
+            onSubmitted: (value) => Navigator.of(context).pop(value),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            broadcast.isEmpty
+                ? 'Leave empty to use their device name.'
+                : 'Leave empty to use their name "$broadcast".',
+            style: wispSans(fontSize: 12, color: kMuted, height: 1.4),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text),
+          style: FilledButton.styleFrom(backgroundColor: kAccentCyanStrong),
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
+class _SavedDeviceRow extends StatelessWidget {
+  const _SavedDeviceRow({
+    required this.device,
+    required this.onRename,
+    required this.onDelete,
+  });
+
+  final SavedDevice device;
+  final VoidCallback onRename;
   final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     final isPhone = device.deviceType.toLowerCase() == 'phone';
+    final nickname = device.nickname?.trim() ?? '';
+    final hasNickname = nickname.isNotEmpty;
+    final broadcast = device.label.trim();
+    final primary = hasNickname
+        ? nickname
+        : (broadcast.isEmpty ? 'Saved device' : broadcast);
     return Dismissible(
       key: ValueKey('saved-${device.endpointId}'),
       direction: DismissDirection.endToStart,
@@ -150,7 +246,7 @@ class _SavedDeviceRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    device.label.isEmpty ? 'Saved device' : device.label,
+                    primary,
                     style: wispSans(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
@@ -159,13 +255,29 @@ class _SavedDeviceRow extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
+                  if (hasNickname) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      broadcast.isEmpty
+                          ? 'No name from them'
+                          : 'Their name: $broadcast',
+                      style: wispSans(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w400,
+                        color: kMuted,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                   const SizedBox(height: 6),
                   Row(
                     children: [
                       PubkeyBadge(
                         endpointId: device.endpointId,
                         size: PubkeyBadgeSize.small,
-                        tooltip: 'Identity badge (from public key) — '
+                        tooltip:
+                            'Identity badge (from public key) — '
                             'same color = same device.',
                       ),
                       const SizedBox(width: 8),
@@ -187,6 +299,12 @@ class _SavedDeviceRow extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.edit_outlined, size: 19),
+              color: kMuted,
+              onPressed: onRename,
+              tooltip: 'Rename',
             ),
             IconButton(
               icon: const Icon(Icons.close_rounded, size: 20),
