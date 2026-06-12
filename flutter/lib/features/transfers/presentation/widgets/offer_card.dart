@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../application/service.dart';
 import '../../application/state.dart';
@@ -164,6 +165,32 @@ class _TextOfferCardState extends ConsumerState<_TextOfferCard> {
 
   String get _text => widget.offer.inlineText ?? '';
 
+  /// When the whole snippet is a single web link, we surface an "Open" button.
+  /// Detection is deliberately strict — the entire trimmed text must be one
+  /// http(s) URL with a host — so we never offer to "open" prose that merely
+  /// happens to contain a link somewhere inside it.
+  Uri? get _detectedLink {
+    final trimmed = _text.trim();
+    if (trimmed.isEmpty || trimmed.contains(RegExp(r'\s'))) return null;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || uri.host.isEmpty) return null;
+    if (uri.scheme != 'http' && uri.scheme != 'https') return null;
+    return uri;
+  }
+
+  /// Opens the detected link in the system browser. Unlike Copy/Save this
+  /// doesn't resolve the offer — the user still picks Copy, Save, or Decline.
+  Future<void> _open() async {
+    final link = _detectedLink;
+    if (link == null) return;
+    final ok = await launchUrl(link, mode: LaunchMode.externalApplication);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Couldn\'t open link')));
+    }
+  }
+
   Future<void> _copy() async {
     if (_busy) return;
     setState(() => _busy = true);
@@ -273,6 +300,31 @@ class _TextOfferCardState extends ConsumerState<_TextOfferCard> {
               ),
             ),
             const SizedBox(height: 12),
+            // If the snippet is a bare link, offer to open it straight away —
+            // sits above Save/Copy so it reads as the obvious thing to do with
+            // a URL, without displacing the standard actions below.
+            if (_detectedLink != null) ...[
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _busy ? null : _open,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: kAccentCyanStrong,
+                    minimumSize: const Size(0, 52),
+                    side: const BorderSide(color: kAccentCyanStrong),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                  label: Text(
+                    'Open link',
+                    style: wispSans(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             // Secondary action (Save .txt) on the left, primary action (Copy)
             // on the right — matches the app-wide button convention.
             Row(
