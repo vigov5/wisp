@@ -121,7 +121,7 @@ class OfferCard extends ConsumerWidget {
             ),
             const SizedBox(width: 12),
             Expanded(
-              flex: 3,
+              flex: 2,
               child: FilledButton(
                 onPressed: onAccept,
                 style: FilledButton.styleFrom(
