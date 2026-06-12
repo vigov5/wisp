@@ -50,6 +50,11 @@ class TransferResultCard extends StatelessWidget {
                 mode: TransferManifestPanelMode.liveList,
                 items: viewData.manifestItems!,
                 initiallyExpanded: true,
+                // On a successful receive every file is saved — show the same
+                // success ticks the sender shows. Cancelled/failed keep the
+                // neutral file icons (not all files made it).
+                allComplete:
+                    viewData.outcome == TransferResultOutcome.success,
               ),
         footer: Row(
           children: [

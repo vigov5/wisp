@@ -10,11 +10,17 @@ class ActiveTransferFileList extends StatefulWidget {
     required this.items,
     this.progress,
     this.initiallyExpanded = false,
+    this.allComplete = false,
   });
 
   final List<TransferManifestItem> items;
   final TransferTransferProgress? progress;
   final bool initiallyExpanded;
+
+  /// Render every file as done (check icon) even without a live [progress]
+  /// stream. Used on the result card after a successful transfer so the file
+  /// list shows the same success ticks the sender shows.
+  final bool allComplete;
 
   @override
   State<ActiveTransferFileList> createState() => _ActiveTransferFileListState();
@@ -83,7 +89,8 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                   _FileIcon(
                     isSingleFile: isSingleFile,
                     progress: isSingleFile
-                        ? (widget.progress?.progressFraction ?? 0.0)
+                        ? (widget.progress?.progressFraction ??
+                              (widget.allComplete ? 1.0 : 0.0))
                         : null,
                   ),
                   const SizedBox(width: 12),
@@ -159,7 +166,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                       ? segments.sublist(0, segments.length - 1).join('/')
                       : null;
 
-                  double itemProgress = 0;
+                  double itemProgress = widget.allComplete ? 1.0 : 0;
                   if (widget.progress != null) {
                     final p = widget.progress!;
                     if (p.activeFileIndex != null) {

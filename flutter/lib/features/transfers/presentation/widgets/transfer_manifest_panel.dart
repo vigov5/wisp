@@ -14,12 +14,17 @@ class TransferManifestPanel extends StatelessWidget {
     required this.items,
     this.progress,
     this.initiallyExpanded = false,
+    this.allComplete = false,
   });
 
   final TransferManifestPanelMode mode;
   final List<TransferManifestItem> items;
   final TransferTransferProgress? progress;
   final bool initiallyExpanded;
+
+  /// Forwarded to [ActiveTransferFileList] (liveList mode) to show success
+  /// ticks on every file when there's no live progress stream.
+  final bool allComplete;
 
   @override
   Widget build(BuildContext context) {
@@ -32,6 +37,7 @@ class TransferManifestPanel extends StatelessWidget {
         items: items,
         progress: progress,
         initiallyExpanded: initiallyExpanded,
+        allComplete: allComplete,
       ),
     };
   }
