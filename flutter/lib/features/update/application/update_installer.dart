@@ -61,20 +61,46 @@ class UpdateInstaller {
     return file;
   }
 
-  /// Launches the downloaded Inno Setup installer silently and quits the app so
-  /// it can overwrite the running executable. `/CLOSEAPPLICATIONS` lets the
-  /// installer shut any lingering Wisp window via the Restart Manager; the
-  /// installer's `[Run]` entry relaunches Wisp once the install completes (the
-  /// `skipifsilent` flag was removed from inno_setup.iss for this).
+  /// Launches the downloaded Inno Setup installer silently and quits the app.
+  ///
+  /// The installer overwrites Wisp.exe and its bundled DLLs (the Flutter engine
+  /// and the Rust native library) in `{app}`. Those files stay locked for as
+  /// long as *our own process* is alive, so the install must not begin until we
+  /// have fully exited. Previously we started the installer, waited 300 ms, then
+  /// called [WindowManager.destroy] — letting Inno's `/CLOSEAPPLICATIONS`
+  /// Restart Manager race our own teardown. By the time Inno reached the copy
+  /// step our DLLs were often still mapped, so it hit a locked file and rolled
+  /// the whole update back.
+  ///
+  /// Instead we hand the install off to a tiny detached PowerShell stub that
+  /// blocks on our PID and only spawns the installer once we are gone, then we
+  /// hard-exit. With the directory unlocked Inno copies cleanly and its `[Run]`
+  /// entry relaunches Wisp (`skipifsilent` was removed from inno_setup.iss so
+  /// the postinstall relaunch fires under `/SILENT`). `/CLOSEAPPLICATIONS`
+  /// remains as a safety net for any second Wisp instance.
   Future<void> runWindowsInstaller(File installer) async {
-    await Process.start(installer.path, const [
-      '/SILENT',
-      '/SUPPRESSMSGBOXES',
-      '/CLOSEAPPLICATIONS',
+    // PowerShell single-quoted literals only need the quote itself doubled.
+    final escapedPath = installer.path.replaceAll("'", "''");
+    final command =
+        'Wait-Process -Id $pid -ErrorAction SilentlyContinue; '
+        "Start-Process -FilePath '$escapedPath' "
+        "-ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/CLOSEAPPLICATIONS'";
+
+    await Process.start('powershell', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-WindowStyle',
+      'Hidden',
+      '-Command',
+      command,
     ], mode: ProcessStartMode.detached);
-    // Give the detached process a moment to spawn before we exit.
-    await Future<void>.delayed(const Duration(milliseconds: 300));
+
+    // Close the window for a clean shutdown, then hard-exit so the process — and
+    // every file handle it holds in {app} — is guaranteed gone before the stub
+    // unblocks and runs the installer. Without the exit() backstop, lingering
+    // native threads could keep us alive and the install would never start.
     await windowManager.destroy();
+    exit(0);
   }
 
   Future<void> openReleasesPage() async {
