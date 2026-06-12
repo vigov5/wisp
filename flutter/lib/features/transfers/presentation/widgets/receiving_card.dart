@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../application/state.dart';
 import '../../../saved_devices/application/device_display_name.dart';
 import 'package:app/features/send/presentation/widgets/recipient_avatar.dart';
+import 'relay_tip_note.dart';
 import 'sending_connection_strip.dart';
 import 'transfer_flow_layout.dart';
 import 'transfer_manifest_panel.dart';
@@ -67,6 +68,9 @@ class ReceivingCard extends ConsumerWidget {
           items: offer.manifest.items,
           progress: progress,
         ),
+        footerNote: progress.progressFraction >= 1.0
+            ? null
+            : RelayTipNote(path: connectionPath),
         footer: progress.progressFraction >= 1.0
             ? const SizedBox(height: 48)
             : Row(

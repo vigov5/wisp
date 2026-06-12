@@ -5,6 +5,7 @@ import '../../../theme/wisp_theme.dart';
 import '../../../app/app_router.dart';
 import '../../transfers/application/manifest.dart';
 import '../../transfers/application/state.dart' as transfer_state;
+import '../../transfers/presentation/widgets/relay_tip_note.dart';
 import '../../transfers/presentation/widgets/sending_connection_strip.dart';
 import '../../transfers/presentation/widgets/transfer_flow_layout.dart';
 import '../../transfers/presentation/widgets/transfer_presentation_helpers.dart';
@@ -220,6 +221,9 @@ class _TransferStateCard extends StatelessWidget {
               progress: progress,
               initiallyExpanded: state is SendStateResult,
             ),
+      footerNote: state is SendStateTransferring
+          ? RelayTipNote(path: viewData.connectionPath)
+          : null,
       footer: _buildFooter(
         state: state,
         showFooterButton: showFooterButton,

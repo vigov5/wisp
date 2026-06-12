@@ -8,6 +8,7 @@ import '../../application/state.dart';
 import '../../../../theme/wisp_theme.dart';
 import '../../../saved_devices/application/device_display_name.dart';
 import 'package:app/features/send/presentation/widgets/recipient_avatar.dart';
+import 'relay_tip_note.dart';
 import 'sending_connection_strip.dart';
 import 'transfer_flow_layout.dart';
 import 'transfer_manifest_panel.dart';
@@ -87,6 +88,7 @@ class OfferCard extends ConsumerWidget {
           mode: TransferManifestPanelMode.previewTree,
           items: offer.manifest.items,
         ),
+        footerNote: RelayTipNote(path: offer.connectionPath),
         // Secondary action (Decline) on the left, primary action (Save) on
         // the right — matches the app-wide button convention.
         footer: Row(

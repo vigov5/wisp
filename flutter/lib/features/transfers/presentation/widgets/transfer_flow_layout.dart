@@ -11,6 +11,7 @@ class TransferFlowLayout extends StatelessWidget {
     this.explainer,
     required this.illustration,
     this.manifest,
+    this.footerNote,
     required this.footer,
   });
 
@@ -20,6 +21,11 @@ class TransferFlowLayout extends StatelessWidget {
   final Widget? explainer;
   final Widget illustration;
   final Widget? manifest;
+
+  /// Optional advisory pinned directly above the footer's divider line (the
+  /// "horizon" rule above the action buttons). Stays out of the scroll area so
+  /// it remains visible next to Cancel / Decline. Used for the relay-speed tip.
+  final Widget? footerNote;
   final Widget footer;
 
   @override
@@ -87,6 +93,7 @@ class TransferFlowLayout extends StatelessWidget {
             ),
           ),
         ),
+        ?footerNote,
         Container(
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
           decoration: BoxDecoration(
