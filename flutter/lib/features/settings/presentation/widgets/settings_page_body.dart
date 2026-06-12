@@ -197,9 +197,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              style: FilledButton.styleFrom(
-                backgroundColor: kAccentCyanStrong,
-              ),
+              style: FilledButton.styleFrom(backgroundColor: kAccentCyanStrong),
               child: const Text('Discard'),
             ),
           ],
@@ -369,6 +367,10 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                           SettingsErrorBanner(message: state.errorMessage!),
                           const SizedBox(height: 16),
                         ],
+                        const _SettingsGroupHeader(
+                          title: 'Identity',
+                          showDivider: false,
+                        ),
                         SettingsSectionField(
                           label: 'Device name',
                           child: TextField(
@@ -387,7 +389,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                           onBackup: () => context.pushIdentityBackup(),
                           onRestore: () => context.pushIdentityImport(),
                         ),
-                        const SizedBox(height: 22),
+                        const _SettingsGroupHeader(title: 'Files & Storage'),
                         SettingsSectionField(
                           label: 'Save received files to',
                           child: Column(
@@ -412,7 +414,13 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                             ],
                           ),
                         ),
-                        const SizedBox(height: 22),
+                        const SizedBox(height: 18),
+                        SettingsStorageSection(
+                          downloadRoot: _downloadRootValue,
+                        ),
+                        const _SettingsGroupHeader(
+                          title: 'Devices & Discovery',
+                        ),
                         SettingsToggleField(
                           title: 'Nearby discoverability',
                           subtitle:
@@ -423,29 +431,6 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                           },
                         ),
                         const SizedBox(height: 18),
-                        SettingsToggleField(
-                          title: 'Skip clipboard confirmation',
-                          subtitle:
-                              'When on, "Share clipboard" sends right away. '
-                              'When off, you confirm the text first.',
-                          value: _skipClipboardConfirm,
-                          onChanged: (value) {
-                            setState(() => _skipClipboardConfirm = value);
-                          },
-                        ),
-                        const SizedBox(height: 18),
-                        if (Platform.isWindows) ...[
-                          SettingsToggleField(
-                            title: 'Windows right-click menu',
-                            subtitle:
-                                "Show 'Send via Wisp' on files and folders "
-                                'in File Explorer.',
-                            value: _contextMenuEnabled,
-                            onChanged: (value) =>
-                                unawaited(_toggleContextMenu(value)),
-                          ),
-                          const SizedBox(height: 18),
-                        ],
                         SettingsSectionField(
                           label: 'Connection Test',
                           child: InkWell(
@@ -482,8 +467,6 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                           ),
                         ),
                         const SizedBox(height: 18),
-                        const ReliabilitySettingsSection(),
-                        const SizedBox(height: 18),
                         SettingsSectionField(
                           label: 'Saved devices',
                           child: InkWell(
@@ -519,33 +502,35 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 18),
-                        SettingsStorageSection(
-                          downloadRoot: _downloadRootValue,
+                        const _SettingsGroupHeader(title: 'Preferences'),
+                        SettingsToggleField(
+                          title: 'Skip clipboard confirmation',
+                          subtitle:
+                              'When on, "Share clipboard" sends right away. '
+                              'When off, you confirm the text first.',
+                          value: _skipClipboardConfirm,
+                          onChanged: (value) {
+                            setState(() => _skipClipboardConfirm = value);
+                          },
                         ),
-                        const SizedBox(height: 28),
-                        const Divider(color: kBorder, height: 1),
                         const SizedBox(height: 18),
-                        Text(
-                          'Advanced',
-                          style: wispSans(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            color: kInk,
-                            letterSpacing: -0.35,
+                        const ReliabilitySettingsSection(),
+                        if (Platform.isWindows) ...[
+                          const SizedBox(height: 18),
+                          SettingsToggleField(
+                            title: 'Windows right-click menu',
+                            subtitle:
+                                "Show 'Send via Wisp' on files and folders "
+                                'in File Explorer.',
+                            value: _contextMenuEnabled,
+                            onChanged: (value) =>
+                                unawaited(_toggleContextMenu(value)),
                           ),
+                        ],
+                        const _SettingsGroupHeader(
+                          title: 'Advanced',
+                          subtitle: 'Only needed for self-hosted setups.',
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Only needed for self-hosted setups.',
-                          style: wispSans(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w400,
-                            color: kMuted,
-                            height: 1.45,
-                          ),
-                        ),
-                        const SizedBox(height: 18),
                         SettingsSectionField(
                           label: 'Discovery Server',
                           child: TextField(
@@ -555,119 +540,115 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 28),
-                        const Divider(color: kBorder, height: 1),
-                        const SizedBox(height: 18),
-                        SettingsSectionField(
-                          label: 'About',
-                          child: Column(
-                            children: [
-                              InkWell(
-                                onTap: checkingForUpdates
-                                    ? null
-                                    : _checkForUpdates,
-                                borderRadius: BorderRadius.circular(12),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 12,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: kSurface,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: kBorder),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          checkingForUpdates
-                                              ? 'Checking for updates…'
-                                              : 'Check for updates',
-                                          style: wispSans(
-                                            fontSize: 13,
-                                            color: kInk,
-                                          ),
-                                        ),
-                                      ),
-                                      if (checkingForUpdates)
-                                        const SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: kAccentCyanStrong,
-                                          ),
-                                        )
-                                      else
-                                        const Icon(
-                                          Icons.refresh_rounded,
-                                          color: kMuted,
-                                          size: 20,
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              Container(
+                        const _SettingsGroupHeader(title: 'About'),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            InkWell(
+                              onTap: checkingForUpdates
+                                  ? null
+                                  : _checkForUpdates,
+                              borderRadius: BorderRadius.circular(12),
+                              child: Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 14,
-                                  vertical: 10,
+                                  vertical: 12,
                                 ),
                                 decoration: BoxDecoration(
                                   color: kSurface,
                                   borderRadius: BorderRadius.circular(12),
                                   border: Border.all(color: kBorder),
                                 ),
-                                child: SettingsToggleField(
-                                  title: 'Check for updates on startup',
-                                  subtitle:
-                                      'Notify me when a new version is available',
-                                  value: _checkOnStartup,
-                                  onChanged: (value) {
-                                    setState(() => _checkOnStartup = value);
-                                    ref
-                                        .read(updateControllerProvider.notifier)
-                                        .setCheckOnStartup(value);
-                                  },
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              InkWell(
-                                onTap: () => context.pushAbout(),
-                                borderRadius: BorderRadius.circular(12),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 12,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: kSurface,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: kBorder),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          'Version, source code, and licenses',
-                                          style: wispSans(
-                                            fontSize: 13,
-                                            color: kInk,
-                                          ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        checkingForUpdates
+                                            ? 'Checking for updates…'
+                                            : 'Check for updates',
+                                        style: wispSans(
+                                          fontSize: 13,
+                                          color: kInk,
                                         ),
                                       ),
+                                    ),
+                                    if (checkingForUpdates)
+                                      const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: kAccentCyanStrong,
+                                        ),
+                                      )
+                                    else
                                       const Icon(
-                                        Icons.chevron_right_rounded,
+                                        Icons.refresh_rounded,
                                         color: kMuted,
+                                        size: 20,
                                       ),
-                                    ],
-                                  ),
+                                  ],
                                 ),
                               ),
-                            ],
-                          ),
+                            ),
+                            const SizedBox(height: 10),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: kSurface,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: kBorder),
+                              ),
+                              child: SettingsToggleField(
+                                title: 'Check for updates on startup',
+                                subtitle:
+                                    'Notify me when a new version is available',
+                                value: _checkOnStartup,
+                                onChanged: (value) {
+                                  setState(() => _checkOnStartup = value);
+                                  ref
+                                      .read(updateControllerProvider.notifier)
+                                      .setCheckOnStartup(value);
+                                },
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            InkWell(
+                              onTap: () => context.pushAbout(),
+                              borderRadius: BorderRadius.circular(12),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: kSurface,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: kBorder),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        'Version, source code, and licenses',
+                                        style: wispSans(
+                                          fontSize: 13,
+                                          color: kInk,
+                                        ),
+                                      ),
+                                    ),
+                                    const Icon(
+                                      Icons.chevron_right_rounded,
+                                      color: kMuted,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -845,6 +826,59 @@ class _IdentityBackupRow extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Section header used to group the settings list into labelled blocks
+/// (Identity / Files & Storage / …). Matches the existing Advanced/About
+/// styling: a hairline divider above, a bold title, an optional subtitle.
+/// The first group passes [showDivider] = false so it doesn't draw a rule at
+/// the very top of the list.
+class _SettingsGroupHeader extends StatelessWidget {
+  const _SettingsGroupHeader({
+    required this.title,
+    this.subtitle,
+    this.showDivider = true,
+  });
+
+  final String title;
+  final String? subtitle;
+  final bool showDivider;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (showDivider) ...[
+          const SizedBox(height: 28),
+          const Divider(color: kBorder, height: 1),
+          const SizedBox(height: 18),
+        ],
+        Text(
+          title,
+          style: wispSans(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: kInk,
+            letterSpacing: -0.35,
+          ),
+        ),
+        if (subtitle != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            subtitle!,
+            style: wispSans(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w400,
+              color: kMuted,
+              height: 1.45,
+            ),
+          ),
+        ],
+        const SizedBox(height: 16),
+      ],
     );
   }
 }
