@@ -262,6 +262,30 @@ pub async fn classify_connection_path(
     snapshot_connection_path(endpoint, remote_id).await.kind
 }
 
+/// Return the peer's relay URL if iroh knows one, **regardless of whether the
+/// relay is the actively-used path**.
+///
+/// [`snapshot_connection_path`] only reports `relay_url` when the relay is the
+/// *active* path, so a direct (LAN) transfer yields `relay_url: None` even
+/// though iroh still tracks the peer's home relay as a fallback candidate. That
+/// is the right call for the connection-path badge (we show what's in use), but
+/// the wrong input for a persisted "send back" ticket: dropping the relay means
+/// that when the peer later changes networks (e.g. Wi-Fi → 4G) the saved ticket
+/// carries only an unreachable direct IP, and iroh has nothing to fall back to.
+///
+/// This helper scans every known candidate (any `usage()`) and returns the
+/// first relay, so the send-back ticket can always carry a relay fallback.
+pub async fn peer_relay_url(
+    endpoint: &iroh::Endpoint,
+    remote_id: iroh::EndpointId,
+) -> Option<String> {
+    let info = endpoint.remote_info(remote_id).await?;
+    info.addrs().find_map(|addr| match addr.addr() {
+        TransportAddr::Relay(url) => Some(url.to_string()),
+        _ => None,
+    })
+}
+
 pub fn confirm_accept() -> std::result::Result<bool, ConfirmAcceptError> {
     print!("Accept? [y/N]: ");
     io::stdout()

@@ -97,6 +97,12 @@ impl ReceiverSession {
         let initial_path = snapshot_connection_path(&endpoint, remote_id).await;
         let current_path = Arc::new(Mutex::new(initial_path));
         let watcher_endpoint = endpoint.clone();
+        // Kept past `session.start()` (which consumes `endpoint`) so we can look
+        // up the peer's relay URL when synthesizing the send-back ticket, even
+        // when the active path is direct. Without a relay in that ticket, a
+        // later network change on the peer (Wi-Fi → 4G) leaves only an
+        // unreachable direct IP and iroh has nothing to fall back to.
+        let relay_lookup_endpoint = endpoint.clone();
         let session = CoreReceiverSession::new(build_core_receiver_request(
             device_name.clone(),
             device_type,
@@ -432,6 +438,16 @@ impl ReceiverSession {
         }
 
         let final_path = Some(current_path.lock().unwrap().clone());
+        // Resolve the peer's relay URL for the send-back ticket. The active
+        // path's `relay_url` is only set when iroh is *actually* relaying, so a
+        // direct (LAN) transfer leaves it `None`. We fall back to the peer's
+        // known relay candidate so the persisted ticket always carries a relay:
+        // when the peer later changes networks (Wi-Fi → 4G) its saved direct IP
+        // goes stale, and the relay is the only path iroh can still race onto.
+        let relay_url = match final_path.as_ref().and_then(|p| p.relay_url.clone()) {
+            Some(url) => Some(url),
+            None => wisp_core::util::peer_relay_url(&relay_lookup_endpoint, remote_id).await,
+        };
         // Synthesize a "send back" ticket so the receiver can later dial this
         // sender via the saved-devices fast path. Best effort: a parse error
         // on the snapshotted addr just drops the ticket. Stale addrs are
@@ -442,7 +458,7 @@ impl ReceiverSession {
         let sender_ticket = final_path.as_ref().and_then(|path| {
             wisp_core::util::synthesize_ticket(
                 remote_id,
-                path.relay_url.as_deref(),
+                relay_url.as_deref(),
                 path.direct_addr.as_deref(),
             )
             .map_err(|err| {
