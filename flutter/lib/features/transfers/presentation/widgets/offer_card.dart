@@ -97,11 +97,20 @@ class OfferCard extends ConsumerWidget {
               flex: 1,
               child: TextButton(
                 onPressed: onDecline,
+                // Same soft-destructive treatment as the "Cancel transfer"
+                // button (red text + red tint + red border). Radius/height stay
+                // at 14/52 to line up with the Save button beside it.
                 style: TextButton.styleFrom(
                   foregroundColor: const Color(0xFFB34A4A),
+                  backgroundColor: const Color(
+                    0xFFB34A4A,
+                  ).withValues(alpha: 0.08),
                   minimumSize: const Size(0, 52),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
+                    side: BorderSide(
+                      color: const Color(0xFFB34A4A).withValues(alpha: 0.15),
+                    ),
                   ),
                 ),
                 child: const Text(
@@ -379,11 +388,21 @@ class _TextOfferCardState extends ConsumerState<_TextOfferCard> {
             ),
           ],
         ),
+        // Standalone footer (no neighbour to align with), so it mirrors the
+        // "Cancel transfer" button exactly: red text + red tint + red border,
+        // radius 12, full width.
         footer: TextButton(
           onPressed: _busy ? null : widget.onDecline,
           style: TextButton.styleFrom(
             foregroundColor: const Color(0xFFB34A4A),
+            backgroundColor: const Color(0xFFB34A4A).withValues(alpha: 0.08),
             minimumSize: const Size(double.infinity, 48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(
+                color: const Color(0xFFB34A4A).withValues(alpha: 0.15),
+              ),
+            ),
           ),
           child: const Text(
             'Decline',
