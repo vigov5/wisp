@@ -37,12 +37,14 @@ class UpdateController extends Notifier<UpdateState> {
     return parsed;
   }
 
-  /// Checks GitHub for a newer release. [manual] checks bypass the startup
-  /// throttle and surface errors; automatic checks respect the toggle/throttle
-  /// and fail quietly.
+  /// Checks GitHub for a newer release. Automatic checks run on every launch
+  /// (gated only by the on/off [checkOnStartup] toggle) and fail quietly;
+  /// [manual] checks ignore the toggle and the skip list and surface errors.
   Future<void> checkForUpdates({bool manual = false}) async {
-    final now = DateTime.now();
-    if (!manual && !_repository.shouldAutoCheck(now)) return;
+    if (!manual && !_repository.checkOnStartup()) {
+      debugPrint('[update] startup check skipped: disabled in settings');
+      return;
+    }
     if (state.phase == UpdatePhase.checking ||
         state.phase == UpdatePhase.downloading) {
       return;
@@ -55,12 +57,17 @@ class UpdateController extends Notifier<UpdateState> {
     );
     try {
       final release = await _api.fetchLatest();
-      await _repository.markChecked(now);
       final current = await _resolveCurrentVersion();
 
       final isNewer = release.version > current;
       final skipped =
           !manual && release.tagName == _repository.skippedVersion();
+      if (skipped) {
+        debugPrint(
+          '[update] ${release.tagName} available but skipped by user '
+          '(use the manual check to update anyway)',
+        );
+      }
       if (isNewer && !skipped) {
         state = state.copyWith(phase: UpdatePhase.available, release: release);
       } else {
