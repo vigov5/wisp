@@ -92,7 +92,7 @@ class _UpdateAvailableDialog extends ConsumerWidget {
               if (canAutoInstall) {
                 showUpdateProgressDialog(navigator.context, ref);
               } else {
-                controller.openReleasesPage();
+                controller.openUpdatePage();
               }
             },
             style: FilledButton.styleFrom(
@@ -100,7 +100,11 @@ class _UpdateAvailableDialog extends ConsumerWidget {
               foregroundColor: Colors.white,
               minimumSize: const Size(0, 46),
             ),
-            child: Text(canAutoInstall ? 'Update now' : 'Download'),
+            child: Text(
+              canAutoInstall
+                  ? 'Update now'
+                  : (Platform.isAndroid ? 'Update' : 'Download'),
+            ),
           ),
           const SizedBox(height: 6),
           Row(

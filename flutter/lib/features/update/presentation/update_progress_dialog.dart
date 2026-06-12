@@ -80,7 +80,7 @@ class _UpdateProgressDialog extends ConsumerWidget {
               ),
               FilledButton(
                 onPressed: () {
-                  controller.openReleasesPage();
+                  controller.openUpdatePage();
                   Navigator.of(context).pop();
                 },
                 style: FilledButton.styleFrom(

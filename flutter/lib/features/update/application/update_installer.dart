@@ -10,6 +10,11 @@ import '../domain/update_release.dart';
 
 const String releasesPageUrl = 'https://github.com/vigov5/wisp/releases';
 
+/// Matches the Android `applicationId` in android/app/build.gradle.kts.
+const String _androidPackageId = 'dev.vigov5.wisp';
+const String playStoreWebUrl =
+    'https://play.google.com/store/apps/details?id=$_androidPackageId';
+
 /// Downloads release installers and launches them. Windows is the only
 /// platform with a true in-app install path; macOS/Linux open the Releases
 /// page in a browser instead.
@@ -80,6 +85,27 @@ class UpdateInstaller {
       );
     } catch (error) {
       debugPrint('[update] could not open releases page: $error');
+    }
+  }
+
+  /// Opens the Play Store listing for Wisp. Prefers the `market://` deep link so
+  /// the Play Store app handles it directly; falls back to the https listing
+  /// when the Play Store app isn't installed (e.g. emulators without Play
+  /// services, or sideloaded builds). The `market` scheme is declared in
+  /// AndroidManifest's `<queries>` so canLaunchUrl resolves on Android 11+.
+  Future<void> openPlayStore() async {
+    final marketUri = Uri.parse('market://details?id=$_androidPackageId');
+    try {
+      if (await canLaunchUrl(marketUri)) {
+        await launchUrl(marketUri, mode: LaunchMode.externalApplication);
+        return;
+      }
+      await launchUrl(
+        Uri.parse(playStoreWebUrl),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (error) {
+      debugPrint('[update] could not open Play Store: $error');
     }
   }
 }

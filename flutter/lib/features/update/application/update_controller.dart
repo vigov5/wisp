@@ -62,10 +62,7 @@ class UpdateController extends Notifier<UpdateState> {
       final skipped =
           !manual && release.tagName == _repository.skippedVersion();
       if (isNewer && !skipped) {
-        state = state.copyWith(
-          phase: UpdatePhase.available,
-          release: release,
-        );
+        state = state.copyWith(phase: UpdatePhase.available, release: release);
       } else {
         state = state.copyWith(phase: UpdatePhase.upToDate, clearRelease: true);
       }
@@ -84,15 +81,15 @@ class UpdateController extends Notifier<UpdateState> {
   }
 
   /// Windows: downloads the installer asset and launches it (quitting the app).
-  /// On other platforms, or when no installer asset is present, opens the
-  /// Releases page instead.
+  /// On other platforms, or when no installer asset is present, hands off to the
+  /// external update destination (Play Store on Android, Releases page else).
   Future<void> downloadAndInstall() async {
     final release = state.release;
     if (release == null) return;
 
     final asset = release.assetForCurrentPlatform();
     if (!Platform.isWindows || asset == null) {
-      await _installer.openReleasesPage();
+      await _openExternalUpdate();
       return;
     }
 
@@ -119,8 +116,16 @@ class UpdateController extends Notifier<UpdateState> {
     }
   }
 
-  /// Opens the GitHub Releases page (used by the "update manually" path).
-  Future<void> openReleasesPage() => _installer.openReleasesPage();
+  /// Opens the platform's update destination for the "update manually" /
+  /// "Download" paths: the Play Store listing on Android, the GitHub Releases
+  /// page everywhere else.
+  Future<void> openUpdatePage() => _openExternalUpdate();
+
+  Future<void> _openExternalUpdate() {
+    return Platform.isAndroid
+        ? _installer.openPlayStore()
+        : _installer.openReleasesPage();
+  }
 
   /// Suppresses notifications for the current available release until a newer
   /// one ships.
