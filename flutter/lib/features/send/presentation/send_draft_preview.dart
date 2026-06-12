@@ -352,7 +352,10 @@ class SendDraftPreview extends ConsumerWidget {
                           ],
                         ),
                       ),
-                    const SizedBox(height: 18),
+                    // Only the gap before the destination selector is widened
+                    // (18 -> 28): keeps the compact Add files/folders cluster
+                    // clear of "Scan QR" just below without changing its style.
+                    const SizedBox(height: 28),
                     SendDestinationSelector(controller: controller),
                     if (state is SendStateResult) ...[
                       const SizedBox(height: 18),
