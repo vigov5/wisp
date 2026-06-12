@@ -159,9 +159,17 @@ class _SettingsStorageSectionState
         const SizedBox(width: 12),
         Padding(
           padding: const EdgeInsets.only(top: 2),
-          child: TextButton(
+          child: TextButton.icon(
             onPressed: canClear ? _clearCache : null,
-            child: Text(_clearing ? 'Clearing…' : 'Clear'),
+            icon: const Icon(Icons.cleaning_services_rounded, size: 18),
+            label: Text(
+              _clearing ? 'Clearing…' : 'Clear',
+              style: wispSans(fontSize: 13, fontWeight: FontWeight.w500),
+            ),
+            style: TextButton.styleFrom(
+              foregroundColor: kAccentCyan,
+              disabledForegroundColor: kSubtle,
+            ),
           ),
         ),
       ],

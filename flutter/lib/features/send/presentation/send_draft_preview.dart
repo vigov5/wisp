@@ -307,8 +307,21 @@ class SendDraftPreview extends ConsumerWidget {
                                       (picker) => picker.pickFiles(),
                                     )
                                   : null,
-                              icon: const Icon(Icons.add_rounded, size: 16),
-                              label: const Text('Add files'),
+                              icon: const Icon(Icons.add_rounded, size: 18),
+                              label: Text(
+                                'Add files',
+                                style: wispSans(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  color: kAccentCyan,
+                                ),
+                              ),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                foregroundColor: kAccentCyan,
+                              ),
                             ),
                             TextButton.icon(
                               onPressed: canEditDraft
@@ -319,9 +332,22 @@ class SendDraftPreview extends ConsumerWidget {
                                   : null,
                               icon: const Icon(
                                 Icons.create_new_folder_outlined,
-                                size: 16,
+                                size: 18,
                               ),
-                              label: const Text('Add folders'),
+                              label: Text(
+                                'Add folders',
+                                style: wispSans(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  color: kAccentCyan,
+                                ),
+                              ),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                foregroundColor: kAccentCyan,
+                              ),
                             ),
                           ],
                         ),

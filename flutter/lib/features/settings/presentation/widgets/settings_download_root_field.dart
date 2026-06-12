@@ -33,13 +33,16 @@ class SettingsDownloadRootField extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
+        // Soft-tint secondary style (see drift button-style conventions):
+        // accent foreground, accent fill at 0.08, accent border at 0.15.
         OutlinedButton(
           onPressed: onChoose,
           style: OutlinedButton.styleFrom(
             minimumSize: const Size(0, 48),
             padding: const EdgeInsets.symmetric(horizontal: 14),
-            foregroundColor: kInk,
-            side: const BorderSide(color: kBorder),
+            foregroundColor: kAccentCyanStrong,
+            backgroundColor: kAccentCyanStrong.withValues(alpha: 0.08),
+            side: BorderSide(color: kAccentCyanStrong.withValues(alpha: 0.15)),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
             ),
@@ -49,7 +52,7 @@ class SettingsDownloadRootField extends StatelessWidget {
             style: wispSans(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: kInk,
+              color: kAccentCyanStrong,
             ),
           ),
         ),

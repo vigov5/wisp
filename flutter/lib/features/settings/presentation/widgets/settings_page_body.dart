@@ -540,40 +540,47 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                             ),
                           ),
                         ),
-                        const _SettingsGroupHeader(title: 'About'),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                        const _SettingsGroupHeader(title: 'Update'),
+                        // Styled like the Storage row: a label on the left and
+                        // a primary action button on the right.
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            InkWell(
-                              onTap: checkingForUpdates
-                                  ? null
-                                  : _checkForUpdates,
-                              borderRadius: BorderRadius.circular(12),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 12,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: kSurface,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: kBorder),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        checkingForUpdates
-                                            ? 'Checking for updates…'
-                                            : 'Check for updates',
-                                        style: wispSans(
-                                          fontSize: 13,
-                                          color: kInk,
-                                        ),
-                                      ),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Check for updates',
+                                    style: wispSans(
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: kInk,
                                     ),
-                                    if (checkingForUpdates)
-                                      const SizedBox(
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    checkingForUpdates
+                                        ? 'Checking…'
+                                        : 'Get the latest version of Wisp.',
+                                    style: wispSans(
+                                      fontSize: 11.5,
+                                      color: kMuted,
+                                      height: 1.4,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: TextButton.icon(
+                                onPressed: checkingForUpdates
+                                    ? null
+                                    : _checkForUpdates,
+                                icon: checkingForUpdates
+                                    ? const SizedBox(
                                         width: 16,
                                         height: 16,
                                         child: CircularProgressIndicator(
@@ -581,74 +588,66 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                                           color: kAccentCyanStrong,
                                         ),
                                       )
-                                    else
-                                      const Icon(
+                                    : const Icon(
                                         Icons.refresh_rounded,
-                                        color: kMuted,
-                                        size: 20,
+                                        size: 18,
                                       ),
-                                  ],
+                                label: Text(
+                                  'Re-check',
+                                  style: wispSans(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                    color: kAccentCyan,
+                                  ),
                                 ),
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: kSurface,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: kBorder),
-                              ),
-                              child: SettingsToggleField(
-                                title: 'Check for updates on startup',
-                                subtitle:
-                                    'Notify me when a new version is available',
-                                value: _checkOnStartup,
-                                onChanged: (value) {
-                                  setState(() => _checkOnStartup = value);
-                                  ref
-                                      .read(updateControllerProvider.notifier)
-                                      .setCheckOnStartup(value);
-                                },
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            InkWell(
-                              onTap: () => context.pushAbout(),
-                              borderRadius: BorderRadius.circular(12),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 12,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: kSurface,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: kBorder),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        'Version, source code, and licenses',
-                                        style: wispSans(
-                                          fontSize: 13,
-                                          color: kInk,
-                                        ),
-                                      ),
-                                    ),
-                                    const Icon(
-                                      Icons.chevron_right_rounded,
-                                      color: kMuted,
-                                    ),
-                                  ],
+                                style: TextButton.styleFrom(
+                                  foregroundColor: kAccentCyan,
                                 ),
                               ),
                             ),
                           ],
+                        ),
+                        const SizedBox(height: 16),
+                        SettingsToggleField(
+                          title: 'Check for updates on startup',
+                          subtitle: 'Notify me when a new version is available',
+                          value: _checkOnStartup,
+                          onChanged: (value) {
+                            setState(() => _checkOnStartup = value);
+                            ref
+                                .read(updateControllerProvider.notifier)
+                                .setCheckOnStartup(value);
+                          },
+                        ),
+                        const _SettingsGroupHeader(title: 'About'),
+                        InkWell(
+                          onTap: () => context.pushAbout(),
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 12,
+                            ),
+                            decoration: BoxDecoration(
+                              color: kSurface,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: kBorder),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    'Version, source code, and licenses',
+                                    style: wispSans(fontSize: 13, color: kInk),
+                                  ),
+                                ),
+                                const Icon(
+                                  Icons.chevron_right_rounded,
+                                  color: kMuted,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
                     ),
