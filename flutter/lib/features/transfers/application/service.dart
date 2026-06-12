@@ -156,8 +156,12 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
                   ),
             );
           }
+          // Like the completed event, the cancelled event carries no file
+          // list, so prefer the offer retained from `offerReady` to keep the
+          // manifest on the finish screen. recordTransfer above still uses the
+          // fresh `offer` for its accurate partial bytesReceived / ticket.
           state = TransferSessionState.cancelled(
-            offer: offer,
+            offer: _incomingOffer ?? offer,
             errorMessage: event.error?.message ?? event.statusMessage,
           );
           _incomingOffer = null;
