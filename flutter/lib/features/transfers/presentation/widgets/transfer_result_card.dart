@@ -60,12 +60,18 @@ class TransferResultCard extends StatelessWidget {
           children: [
             if (secondaryLabel != null && onSecondary != null) ...[
               Expanded(
-                flex: 2,
                 child: OutlinedButton(
                   onPressed: onSecondary,
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: kInk,
-                    side: BorderSide(color: kBorder.withValues(alpha: 0.8)),
+                    // Cyan tint so "Show in Files" reads as a real action
+                    // rather than a washed-out outline. Same soft-tint formula
+                    // as the red Cancel/Decline buttons (bg @0.08, border
+                    // @0.15), just in the accent colour.
+                    foregroundColor: kAccentCyanStrong,
+                    backgroundColor: kAccentCyan.withValues(alpha: 0.08),
+                    side: BorderSide(
+                      color: kAccentCyan.withValues(alpha: 0.15),
+                    ),
                     minimumSize: const Size(0, 52),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
@@ -83,7 +89,6 @@ class TransferResultCard extends StatelessWidget {
             ],
             if (viewData.primaryLabel.isNotEmpty && onPrimary != null)
               Expanded(
-                flex: secondaryLabel != null && onSecondary != null ? 3 : 1,
                 child: FilledButton(
                   onPressed: onPrimary,
                   style: FilledButton.styleFrom(
