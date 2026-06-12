@@ -22,6 +22,7 @@ class AppBootstrap {
     required this.receiverSource,
     required this.savedDevicesRepository,
     required this.updateRepository,
+    required this.identityStorage,
   });
 
   final SettingsRepository settingsRepository;
@@ -29,6 +30,7 @@ class AppBootstrap {
   final RustReceiverServiceSource receiverSource;
   final SavedDevicesRepository savedDevicesRepository;
   final UpdateRepository updateRepository;
+  final IdentityStorage identityStorage;
 }
 
 Future<AppBootstrap> loadAppBootstrap({
@@ -80,6 +82,7 @@ Future<AppBootstrap> loadAppBootstrap({
   return AppBootstrap(
     settingsRepository: repository,
     initialSettings: initialSettings,
+    identityStorage: identity,
     savedDevicesRepository: SavedDevicesRepository(prefs: prefs),
     updateRepository: UpdateRepository(prefs: prefs),
     receiverSource:

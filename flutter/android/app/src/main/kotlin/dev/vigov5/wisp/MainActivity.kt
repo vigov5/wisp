@@ -19,7 +19,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -32,7 +32,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
-class MainActivity : FlutterActivity() {
+// Extends FlutterFragmentActivity (not FlutterActivity) so local_auth's
+// BiometricPrompt can attach — it requires a FragmentActivity host.
+class MainActivity : FlutterFragmentActivity() {
 
     companion object {
         private const val CHANNEL = "dev.vigov5.wisp/file_picker"

@@ -61,6 +61,51 @@ class IdentityStorage {
     return bytes;
   }
 
+  /// Returns the currently persisted 32-byte secret key, or `null` when none
+  /// is stored yet. Unlike [loadOrCreate] this never generates a new key — it
+  /// is used by the backup screen, which must only ever reveal a key that is
+  /// already the device's identity (generating one here would surface a key
+  /// the running engine isn't actually using).
+  Future<Uint8List?> read() async {
+    final secureValue = await _safeRead();
+    if (secureValue != null) {
+      final bytes = _tryDecode(secureValue);
+      if (bytes != null) return bytes;
+    }
+    final legacy = prefs.getString(_legacyPrefsKey);
+    if (legacy != null && legacy.isNotEmpty) {
+      return _tryDecode(legacy);
+    }
+    return null;
+  }
+
+  /// Overwrites the persisted identity with [bytes] (an imported backup).
+  ///
+  /// The caller is responsible for prompting the user to restart the app: the
+  /// native engine reads the secret key once during bootstrap (before any
+  /// sender/receiver session starts), so a swap performed while the app is
+  /// running only takes effect on the next launch. Writing here — and letting
+  /// [loadAppBootstrap] re-install on relaunch — keeps the engine's identity
+  /// and the stored key from diverging mid-session.
+  ///
+  /// Throws [ArgumentError] when [bytes] is not exactly 32 bytes.
+  Future<void> replace(Uint8List bytes) async {
+    if (bytes.length != _secretKeyLength) {
+      throw ArgumentError(
+        'secret key must be exactly $_secretKeyLength bytes, got ${bytes.length}',
+      );
+    }
+    final encoded = base64.encode(bytes);
+    final wroteToSecure = await _safeWrite(encoded);
+    // Drop any stale legacy plaintext copy so a later launch doesn't migrate
+    // the old key back over the imported one — but only when the new key went
+    // to secure storage. If _safeWrite fell back to prefs, that *is* the new
+    // key (same storage key), so removing it would wipe what we just wrote.
+    if (wroteToSecure) {
+      await prefs.remove(_legacyPrefsKey);
+    }
+  }
+
   Uint8List? _tryDecode(String b64) {
     try {
       final bytes = base64.decode(b64);
@@ -92,14 +137,21 @@ class IdentityStorage {
     }
   }
 
-  Future<void> _safeWrite(String value) async {
+  /// Persists [value], returning `true` when it landed in secure storage and
+  /// `false` when it fell back to plaintext prefs. Callers that also clear the
+  /// legacy prefs key must check this: `_secureKey` and `_legacyPrefsKey` are
+  /// the same string, so removing the legacy copy after a fallback write would
+  /// delete the value we just stored.
+  Future<bool> _safeWrite(String value) async {
     try {
       await _secure.write(key: _secureKey, value: value);
+      return true;
     } catch (_) {
       // If secure storage is unavailable on the host, fall back to plaintext
       // prefs so the app still works (iroh identity is the only thing at
       // stake — the threat model accepts this on dev environments).
       await prefs.setString(_legacyPrefsKey, value);
+      return false;
     }
   }
 }

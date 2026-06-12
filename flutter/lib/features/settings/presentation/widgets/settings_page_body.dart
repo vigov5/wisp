@@ -382,6 +382,11 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                           const SizedBox(height: 8),
                           _IdentityBadgeRow(endpointId: _endpointId),
                         ],
+                        const SizedBox(height: 14),
+                        _IdentityBackupRow(
+                          onBackup: () => context.pushIdentityBackup(),
+                          onRestore: () => context.pushIdentityImport(),
+                        ),
                         const SizedBox(height: 22),
                         SettingsSectionField(
                           label: 'Save received files to',
@@ -780,6 +785,66 @@ class _IdentityBadgeRow extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// Two tappable rows under the public-key badge: back up the device's secret
+/// key, or restore one from a backup. Keeps the same identity (and therefore
+/// the same public key) across reinstalls / device moves so saved peers keep
+/// connecting without re-pairing.
+class _IdentityBackupRow extends StatelessWidget {
+  const _IdentityBackupRow({required this.onBackup, required this.onRestore});
+
+  final VoidCallback onBackup;
+  final VoidCallback onRestore;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _tile(
+          icon: Icons.backup_outlined,
+          label: 'Back up identity',
+          onTap: onBackup,
+        ),
+        const SizedBox(height: 8),
+        _tile(
+          icon: Icons.restore_rounded,
+          label: 'Restore identity',
+          onTap: onRestore,
+        ),
+      ],
+    );
+  }
+
+  Widget _tile({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: kSurface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: kBorder),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: kMuted),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(label, style: wispSans(fontSize: 13, color: kInk)),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: kMuted),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -99,4 +99,41 @@ void main() {
     final bytes = await identity.loadOrCreate();
     expect(bytes, hasLength(32));
   });
+
+  test('read returns null when nothing is stored', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final identity = IdentityStorage(prefs: prefs);
+    expect(await identity.read(), isNull);
+  });
+
+  test('read returns the stored key without generating one', () async {
+    final stored = base64.encode(List<int>.generate(32, (i) => i + 1));
+    secureStore['app.secret_key.b64'] = stored;
+    final prefs = await SharedPreferences.getInstance();
+    final identity = IdentityStorage(prefs: prefs);
+    final bytes = await identity.read();
+    expect(bytes, isNotNull);
+    expect(base64.encode(bytes!), stored);
+    // No new key was minted as a side effect.
+    expect(secureStore['app.secret_key.b64'], stored);
+  });
+
+  test('replace overwrites the stored key', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final identity = IdentityStorage(prefs: prefs);
+    await identity.loadOrCreate();
+    final imported = Uint8List.fromList(List<int>.generate(32, (i) => 255 - i));
+    await identity.replace(imported);
+    expect(secureStore['app.secret_key.b64'], base64.encode(imported));
+    expect(await identity.read(), imported);
+  });
+
+  test('replace rejects a wrong-length key', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final identity = IdentityStorage(prefs: prefs);
+    expect(
+      () => identity.replace(Uint8List.fromList([1, 2, 3])),
+      throwsA(isA<ArgumentError>()),
+    );
+  });
 }

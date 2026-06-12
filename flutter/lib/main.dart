@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app/app.dart';
+import 'features/identity/identity_providers.dart';
 import 'features/receive/feature.dart';
 import 'features/saved_devices/application/saved_devices_controller.dart';
 import 'features/transfers/feature.dart';
@@ -60,6 +61,9 @@ Future<void> main(List<String> args) async {
         ),
         updateRepositoryProvider.overrideWithValue(
           bootstrap.updateRepository,
+        ),
+        identityStorageProvider.overrideWithValue(
+          bootstrap.identityStorage,
         ),
       ],
       child: WispApp(initialSendPaths: args),
