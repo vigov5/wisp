@@ -117,10 +117,18 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
             _transferStartTime = null;
             return;
           }
+          // The Rust `Completed` event ships an empty file list (see
+          // completed_offer_event in crates/app/src/receiver/session.rs), so
+          // the freshly mapped `offer` has no manifest items. Prefer the offer
+          // retained from `offerReady`, which carries the full file list, so
+          // the finish screen shows the same manifest the sender does. Capture
+          // it now — the 1s delay below could see an intervening event mutate
+          // `_incomingOffer`.
+          final completedOffer = _incomingOffer ?? offer;
           unawaited(
             Future.delayed(const Duration(milliseconds: 1000)).then((_) {
               state = TransferSessionState.completed(
-                offer: offer,
+                offer: completedOffer,
                 result: result,
               );
               _incomingOffer = null;
