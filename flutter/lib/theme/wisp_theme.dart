@@ -37,6 +37,27 @@ const Color kPrimaryDark = kAccentCyanStrong;
 const Color kPrimaryLight = Color(0xFFA5F3FC);
 const Color kSurface2 = Color(0xFFFAFBFB);
 
+// ─── Button conventions ─────────────────────────────────────────────────────
+// Action buttons in this app fall into three styles. Reach for an existing one
+// before inventing a new colour/alpha combination.
+//
+// 1. Primary — the dominant action (Done, Accept, Send). `FilledButton` with a
+//    solid fill (`kPrimary`/`kAccentCyanStrong`, white text). One per row.
+//
+// 2. Soft-tint — secondary or destructive actions that should read as a real,
+//    tappable surface without competing with the primary. The recipe is:
+//        foregroundColor: <accent>
+//        backgroundColor: <accent>.withValues(alpha: 0.08)
+//        side:            <accent>.withValues(alpha: 0.15)
+//    Destructive uses the red accent (0xFFB34A4A) — see "Cancel transfer" /
+//    "Decline". Affirmative-but-secondary uses [kAccentCyan]/[kAccentCyanStrong]
+//    — see "Show in Files" on the transfer result card. Do NOT hand-pick other
+//    alphas; keep 0.08 / 0.15 so the tint language stays consistent.
+//
+// 3. Neutral outline — low-emphasis escape hatches (e.g. "Done" beside a
+//    "Retry"). `OutlinedButton` with `kInk` text and a `kBorder` side, no fill.
+// ─────────────────────────────────────────────────────────────────────────────
+
 TextStyle wispSans({
   required double fontSize,
   FontWeight fontWeight = FontWeight.w400,
