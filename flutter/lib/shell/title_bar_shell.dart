@@ -21,11 +21,19 @@ class TitleBarShell extends StatelessWidget {
           if (isDesktop)
             _DesktopTitleBar(showWindowControls: Platform.isWindows),
           Expanded(child: child),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: const AppVersionText(),
+          // Android 15 (targetSdk 35) enforces edge-to-edge, so the system
+          // navigation bar draws over the bottom of the window. Without a
+          // bottom inset the gesture/3-button nav bar covers the "Get Wisp for
+          // desktop" link and swallows its taps. SafeArea(top: false) lifts the
+          // version row above the nav bar; on desktop the inset is 0 (no-op).
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: const AppVersionText(),
+              ),
             ),
           ),
         ],
