@@ -151,8 +151,9 @@ class OfferCard extends ConsumerWidget {
 }
 
 /// Incoming text offer: the snippet already arrived inline, so we render it
-/// with Copy and Save-as-.txt actions. Both also accept the transfer (so the
-/// sender sees "delivered"); Decline rejects it.
+/// with Copy and Save-as-.txt actions — plus an Open button when the snippet is
+/// a bare link. All three accept the transfer (so the sender sees "delivered");
+/// Decline rejects it.
 class _TextOfferCard extends ConsumerStatefulWidget {
   const _TextOfferCard({
     required this.offer,
@@ -189,17 +190,28 @@ class _TextOfferCardState extends ConsumerState<_TextOfferCard> {
     return uri;
   }
 
-  /// Opens the detected link in the system browser. Unlike Copy/Save this
-  /// doesn't resolve the offer — the user still picks Copy, Save, or Decline.
+  /// Opens the detected link in the system browser and, like Copy/Save,
+  /// resolves the offer so the sender sees "delivered". Nothing is written to
+  /// disk, so we report it as a [TransferTextDelivery.copy] delivery — that
+  /// dismisses straight back to idle without a save/finish screen. If the
+  /// launch fails we leave the offer pending so the user can still Copy, Save,
+  /// or Decline.
   Future<void> _open() async {
+    if (_busy) return;
     final link = _detectedLink;
     if (link == null) return;
+    setState(() => _busy = true);
     final ok = await launchUrl(link, mode: LaunchMode.externalApplication);
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Couldn\'t open link')));
+    if (!ok) {
+      if (mounted) {
+        setState(() => _busy = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Couldn\'t open link')));
+      }
+      return;
     }
+    widget.onAcceptText(TransferTextDelivery.copy, null);
   }
 
   Future<void> _copy() async {
