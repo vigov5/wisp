@@ -60,15 +60,22 @@ class _DesktopTitleBar extends StatelessWidget {
             // glance like a normal Windows app.  Maximize button is
             // intentionally omitted because the window is fixed-size
             // (see main.dart: maximumSize == initialSize).
-            Text(
-              'Wisp',
-              style: wispSans(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: kInk,
-                letterSpacing: -0.2,
+            //
+            // Skipped on macOS: the app name already shows in the global menu
+            // bar, and the native traffic-light buttons sit at the top-left —
+            // an in-window label would be redundant and collide with them. We
+            // keep just the empty draggable strip (the conventional macOS
+            // hidden-title-bar look).
+            if (!Platform.isMacOS)
+              Text(
+                'Wisp',
+                style: wispSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: kInk,
+                  letterSpacing: -0.2,
+                ),
               ),
-            ),
             const Expanded(child: SizedBox.shrink()),
             if (showWindowControls) ...[
               _TitleBarButton(
