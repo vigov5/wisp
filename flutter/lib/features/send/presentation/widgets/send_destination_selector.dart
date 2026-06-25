@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../platform/android/usb_tether_channel.dart';
 import '../../../../src/rust/api/lan.dart' as rust_lan;
 import '../../../../theme/wisp_theme.dart';
 import '../../../receive/application/service.dart';
@@ -40,15 +41,35 @@ class _SendDestinationSelectorState
   // it or scans a different one — gives the user a visible target so they
   // know what they're sending to (Nearby/Recent won't show this peer).
   NearbyReceiver? _qrPairedReceiver;
+  // Last-detected USB-tethering link (null = no cable link). Refreshed each
+  // scan tick; a peer reached over the cable shows up in the Nearby list like
+  // any other, so this only drives the cable-status banner + setup guidance.
+  rust_lan.UsbLinkData? _usbLink;
 
   @override
   void initState() {
     super.initState();
+    _refreshUsbLink();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         unawaited(_startContinuousScan());
       }
     });
+  }
+
+  // Cheap, synchronous interface enumeration in Rust. Guarded so a platform
+  // without the bridge (e.g. web) just reports "no cable" instead of throwing.
+  void _refreshUsbLink() {
+    rust_lan.UsbLinkData? link;
+    try {
+      link = rust_lan.detectUsbLink();
+    } catch (_) {
+      link = null;
+    }
+    if (!mounted) return;
+    if (link?.localIp != _usbLink?.localIp || link?.isHost != _usbLink?.isHost) {
+      setState(() => _usbLink = link);
+    }
   }
 
   @override
@@ -127,6 +148,7 @@ class _SendDestinationSelectorState
       iteration
         ..reset()
         ..start();
+      _refreshUsbLink();
       try {
         final devices = await ref
             .read(receiverServiceProvider.notifier)
@@ -345,6 +367,13 @@ class _SendDestinationSelectorState
           hintText: 'AB12CD',
           understated: true,
         ),
+        const SizedBox(height: 18),
+        _UsbCableSection(
+          link: _usbLink,
+          titleStyle: titleStyle,
+          onOpenTethering: _openTethering,
+          onShowGuide: _showUsbGuide,
+        ),
       ],
     );
   }
@@ -393,6 +422,39 @@ class _SendDestinationSelectorState
 
   void _clearQrPaired() {
     setState(() => _qrPairedReceiver = null);
+  }
+
+  Future<void> _openTethering() async {
+    final opened = await UsbTether.openTetherSettings();
+    if (!mounted) return;
+    if (!opened) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Open Settings → Hotspot & tethering, then turn on USB tethering.',
+          ),
+          duration: Duration(seconds: 4),
+        ),
+      );
+    }
+    // Give the interface a moment to come up, then re-check.
+    Future<void>.delayed(const Duration(seconds: 1), _refreshUsbLink);
+  }
+
+  void _showUsbGuide() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: kBg,
+      showDragHandle: true,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => _UsbGuideSheet(
+        link: _usbLink,
+        onOpenTethering: _openTethering,
+      ),
+    );
   }
 }
 
@@ -462,6 +524,285 @@ class _ScanAction extends StatelessWidget {
   }
 }
 
+/// "Connect over USB cable" section. The cable peer appears in the Nearby list
+/// like any other device, so this block's job is to (a) report cable-link
+/// status and (b) walk the user through the one manual step Android requires —
+/// turning on USB tethering. Positioned around the cases MTP handles poorly:
+/// sending *to* a phone, bulk transfers, and when there's no shared Wi-Fi.
+class _UsbCableSection extends StatelessWidget {
+  const _UsbCableSection({
+    required this.link,
+    required this.titleStyle,
+    required this.onOpenTethering,
+    required this.onShowGuide,
+  });
+
+  final rust_lan.UsbLinkData? link;
+  final TextStyle titleStyle;
+  final Future<void> Function() onOpenTethering;
+  final VoidCallback onShowGuide;
+
+  @override
+  Widget build(BuildContext context) {
+    final link = this.link;
+    final active = link != null;
+    final isHost = link?.isHost ?? false;
+
+    // Detection is a best-effort *positive* hint only. On Windows the RNDIS
+    // adapter has no telltale name and the tether subnet varies by phone, so a
+    // live cable often can't be detected — the inactive state must therefore
+    // read as neutral guidance, never "no cable". The transfer works either
+    // way: discovery broadcasts to every interface's subnet regardless.
+    final String statusText;
+    final IconData statusIcon;
+    if (!active) {
+      statusText = 'Connect a cable, then turn on USB tethering on the phone.';
+      statusIcon = Icons.cable_rounded;
+    } else if (isHost) {
+      statusText = 'Tethering on — keep this screen open.';
+      statusIcon = Icons.usb_rounded;
+    } else {
+      statusText = 'Cable link active · ${link.localIp}';
+      statusIcon = Icons.check_circle_rounded;
+    }
+    final statusColor = active ? kAccentDirect : kMuted;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text('USB cable', style: titleStyle),
+            const SizedBox(width: 8),
+            Icon(
+              active ? Icons.usb_rounded : Icons.cable_rounded,
+              size: 16,
+              color: statusColor,
+            ),
+            const Spacer(),
+            TextButton.icon(
+              onPressed: onShowGuide,
+              icon: const Icon(Icons.help_outline_rounded, size: 18),
+              label: Text(
+                'How it works',
+                style: wispSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: kAccentCyan,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                foregroundColor: kAccentCyan,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'No shared Wi-Fi or internet — a direct, encrypted link over the '
+          'cable. Great for large transfers and sending to a phone.',
+          style: wispSans(fontSize: 12.5, color: kMuted, height: 1.4),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: kSurface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: active
+                  ? kAccentDirect.withValues(alpha: 0.45)
+                  : kBorder.withValues(alpha: 0.55),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(statusIcon, size: 20, color: statusColor),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  statusText,
+                  style: wispSans(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: active ? kInk : kMuted,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Only offer the deep-link where it does something: on Android (the
+        // device that actually toggles tethering) and only while no link is up
+        // yet. On Windows/desktop the cable's host is the phone, so there's
+        // nothing to turn on here; once a link is active the action is moot.
+        // Sits outside the status card, right-aligned, matching the flat
+        // "Add files / Add folders" action affordance.
+        if (UsbTether.isSupported && !active) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: onOpenTethering,
+              icon: const Icon(Icons.settings_rounded, size: 18),
+              label: Text(
+                'Turn on tethering',
+                style: wispSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: kAccentCyan,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                foregroundColor: kAccentCyan,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Bottom-sheet walkthrough for the USB-cable flow. Steps are deliberately
+/// short; the primary CTA jumps straight to the tethering settings screen.
+class _UsbGuideSheet extends StatelessWidget {
+  const _UsbGuideSheet({required this.link, required this.onOpenTethering});
+
+  final rust_lan.UsbLinkData? link;
+  final Future<void> Function() onOpenTethering;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        24,
+        4,
+        24,
+        24 + MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Send over a USB cable',
+            style: wispSans(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: kInk,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'A direct, encrypted link over the cable — no shared Wi-Fi, no '
+            'internet. Best for large transfers and sending files to a phone '
+            '(where USB file transfer / MTP is slow or unreliable).',
+            style: wispSans(fontSize: 13, color: kMuted, height: 1.45),
+          ),
+          const SizedBox(height: 18),
+          const _UsbGuideStep(
+            n: 1,
+            text: 'Connect the two devices with a USB-C cable.',
+          ),
+          const _UsbGuideStep(
+            n: 2,
+            text:
+                'On the Android phone, turn on USB tethering '
+                '(Settings → Hotspot & tethering → USB tethering).',
+          ),
+          const _UsbGuideStep(
+            n: 3,
+            text:
+                'The other device appears under "Nearby devices" — pick it '
+                'and send as usual.',
+            last: true,
+          ),
+          // Deep-link only on Android (where tethering is actually toggled).
+          // On Windows/desktop the host is the phone, so there's no settings
+          // screen to open here — the steps above already say to do it there.
+          if (UsbTether.isSupported) ...[
+            const SizedBox(height: 18),
+            FilledButton.icon(
+              onPressed: () async {
+                await onOpenTethering();
+                if (context.mounted) Navigator.of(context).pop();
+              },
+              icon: const Icon(Icons.settings_rounded, size: 18),
+              label: const Text('Open tethering settings'),
+              style: FilledButton.styleFrom(
+                backgroundColor: kAccentCyanStrong,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _UsbGuideStep extends StatelessWidget {
+  const _UsbGuideStep({
+    required this.n,
+    required this.text,
+    this.last = false,
+  });
+
+  final int n;
+  final String text;
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: last ? 0 : 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 26,
+            height: 26,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: kAccentCyanHover,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '$n',
+              style: wispSans(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: kAccentCyanStrong,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                text,
+                style: wispSans(fontSize: 13.5, color: kInk, height: 1.4),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _NearbyStatusCard extends StatelessWidget {
   const _NearbyStatusCard({required this.isScanning});
 
@@ -473,8 +814,8 @@ class _NearbyStatusCard extends StatelessWidget {
         ? 'Scanning for nearby receivers...'
         : 'No nearby devices found';
     final subtitle = isScanning
-        ? 'Make sure both devices are on the same Wi-Fi.'
-        : 'Make sure both devices are on the same Wi-Fi. Local network access may be required.';
+        ? 'Make sure both devices are on the same Wi-Fi, or connected by a USB cable.'
+        : 'Make sure both devices are on the same Wi-Fi, or connected by a USB cable. Local network access may be required.';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),

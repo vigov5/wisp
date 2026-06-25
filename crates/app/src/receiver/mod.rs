@@ -33,6 +33,25 @@ use self::wisp_handler::WispProtocolHandler;
 /// before we GC it.
 const STALE_TRANSFER_RECORD_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
+/// Maps a core LAN scan hit to the app-facing [`NearbyReceiver`], decoding the
+/// endpoint id from the ticket (best-effort; empty when the ticket won't parse).
+fn map_core_nearby_receiver(receiver: wisp_core::lan::NearbyReceiver) -> NearbyReceiver {
+    let endpoint_id = wisp_core::util::decode_ticket(&receiver.ticket)
+        .map(|a| a.id.to_string())
+        .unwrap_or_default();
+    NearbyReceiver {
+        fullname: receiver.fullname,
+        label: receiver.label,
+        device_type: match receiver.device_type {
+            DeviceType::Phone => "phone".to_owned(),
+            DeviceType::Laptop => "laptop".to_owned(),
+        },
+        code: receiver.code,
+        ticket: receiver.ticket,
+        endpoint_id,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiverLifecycle {
     Starting,
@@ -319,19 +338,30 @@ impl ReceiverService {
     }
 
     pub async fn scan_nearby(&self, timeout_secs: u64) -> AppResult<Vec<NearbyReceiver>> {
-        let (reply_tx, reply_rx) = oneshot::channel();
-        self.cmd_tx
-            .send(ReceiverCommand::ScanNearby {
-                timeout: Duration::from_secs(timeout_secs.max(1)),
-                reply: reply_tx,
-            })
-            .await
-            .map_err(|_| AppError::ActorStopped {
-                action: "scanning nearby",
-            })?;
-        reply_rx.await.map_err(|_| AppError::ActorDroppedReply {
-            action: "scanning nearby",
+        // Deliberately bypasses the actor command queue. The scan is pure
+        // UDP/mDNS and only needs our own endpoint id (to drop self from the
+        // results). The actor also performs *blocking* rendezvous-registration
+        // HTTP — at startup and on a 15s maintenance tick — which hangs when
+        // there's no internet (USB-cable / isolated-LAN transfers). Queuing the
+        // scan behind that starved discovery entirely, defeating the whole
+        // point of an offline link, so we run the browse directly here.
+        let exclude = Some(self.endpoint.addr().id);
+        let timeout = Duration::from_secs(timeout_secs.max(1));
+        let receivers = tokio::task::spawn_blocking(move || {
+            wisp_core::lan::browse_nearby_receivers(timeout, exclude)
+        })
+        .await
+        .map_err(|e| AppError::Internal {
+            message: format!("nearby scan task: {e}"),
         })?
+        .map_err(|e| AppError::Internal {
+            message: format!("nearby scan error: {e}"),
+        })?;
+
+        Ok(receivers
+            .into_iter()
+            .map(map_core_nearby_receiver)
+            .collect())
     }
 
     pub async fn shutdown(&self) -> AppResult<()> {

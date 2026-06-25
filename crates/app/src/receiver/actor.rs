@@ -5,8 +5,7 @@ use tokio::time::{MissedTickBehavior, interval};
 
 use crate::error::{AppError, AppResult};
 use crate::types::{
-    ConnectionPath, NearbyReceiver, PairingCodeState, ReceiverOfferEvent, ReceiverOfferPhase,
-    ReceiverRegistration,
+    ConnectionPath, PairingCodeState, ReceiverOfferEvent, ReceiverOfferPhase, ReceiverRegistration,
 };
 
 use super::runtime::ReceiverRuntime;
@@ -48,10 +47,6 @@ pub(super) enum ReceiverCommand {
     OfferConnectionPathChanged {
         offer_id: u64,
         connection_path: ConnectionPath,
-    },
-    ScanNearby {
-        timeout: Duration,
-        reply: oneshot::Sender<AppResult<Vec<NearbyReceiver>>>,
     },
     Shutdown {
         reply: oneshot::Sender<AppResult<()>>,
@@ -161,48 +156,6 @@ pub(super) async fn run_receiver_actor(
                             offer_id,
                             connection_path,
                         });
-                    }
-                    ReceiverCommand::ScanNearby { timeout, reply } => {
-                        let exclude = Some(runtime.endpoint_id());
-                        let result = tokio::task::spawn_blocking(move || {
-                            wisp_core::lan::browse_nearby_receivers(timeout, exclude)
-                        })
-                        .await
-                        .map_err(|e| AppError::Internal {
-                            message: format!("receiver v2 nearby scan task: {e}"),
-                        })
-                        .and_then(|result| {
-                            result.map_err(|e| AppError::Internal {
-                                message: format!("receiver v2 nearby scan error: {e}"),
-                            })
-                        })
-                        .map(|receivers| {
-                            receivers
-                                .into_iter()
-                                .map(|receiver| {
-                                    let endpoint_id =
-                                        wisp_core::util::decode_ticket(&receiver.ticket)
-                                            .map(|a| a.id.to_string())
-                                            .unwrap_or_default();
-                                    NearbyReceiver {
-                                        fullname: receiver.fullname,
-                                        label: receiver.label,
-                                        device_type: match receiver.device_type {
-                                            wisp_core::protocol::DeviceType::Phone => {
-                                                "phone".to_owned()
-                                            }
-                                            wisp_core::protocol::DeviceType::Laptop => {
-                                                "laptop".to_owned()
-                                            }
-                                        },
-                                        code: receiver.code,
-                                        ticket: receiver.ticket,
-                                        endpoint_id,
-                                    }
-                                })
-                                .collect()
-                        });
-                        let _ = reply.send(result);
                     }
                     ReceiverCommand::Shutdown { reply } => {
                         runtime.clear_advertising();

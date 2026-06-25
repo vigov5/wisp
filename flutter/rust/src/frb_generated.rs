@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1560443717;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1311261117;
 
 // Section: executor
 
@@ -303,6 +303,35 @@ fn wire__crate__api__lan__decode_ticket_info_impl(
             deserializer.end();
             transform_result_sse::<_, crate::api::error::UserFacingErrorData>((move || {
                 let output_ok = crate::api::lan::decode_ticket_info(api_ticket)?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__lan__detect_usb_link_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "detect_usb_link",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(crate::api::lan::detect_usb_link())?;
                 Ok(output_ok)
             })())
         },
@@ -1323,6 +1352,17 @@ impl SseDecode for Option<u64> {
     }
 }
 
+impl SseDecode for Option<crate::api::lan::UsbLinkData> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::lan::UsbLinkData>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::error::UserFacingErrorData> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1694,6 +1734,20 @@ impl SseDecode for () {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {}
 }
 
+impl SseDecode for crate::api::lan::UsbLinkData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_localIp = <String>::sse_decode(deserializer);
+        let mut var_isHost = <bool>::sse_decode(deserializer);
+        let mut var_gatewayIp = <Option<String>>::sse_decode(deserializer);
+        return crate::api::lan::UsbLinkData {
+            local_ip: var_localIp,
+            is_host: var_isHost,
+            gateway_ip: var_gatewayIp,
+        };
+    }
+}
+
 impl SseDecode for crate::api::error::UserFacingErrorData {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1775,50 +1829,50 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        9 => wire__crate__api__receiver__ensure_receiver_registration_impl(
+        10 => wire__crate__api__receiver__ensure_receiver_registration_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        10 => wire__crate__api__diagnostics__firewall_inbound_warning_impl(
+        11 => wire__crate__api__diagnostics__firewall_inbound_warning_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        12 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__preview__inspect_paths_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__receiver__register_receiver_impl(port, ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__preview__remove_path_impl(port, ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__receiver__respond_to_receiver_offer_impl(
+        13 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__preview__inspect_paths_impl(port, ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__receiver__register_receiver_impl(port, ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__preview__remove_path_impl(port, ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__receiver__respond_to_receiver_offer_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        18 => wire__crate__api__diagnostics__run_connection_test_impl(
+        19 => wire__crate__api__diagnostics__run_connection_test_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        19 => wire__crate__api__receiver__save_text_file_impl(port, ptr, rust_vec_len, data_len),
-        20 => wire__crate__api__lan__scan_nearby_receivers_impl(port, ptr, rust_vec_len, data_len),
-        22 => wire__crate__api__receiver__set_receiver_discoverable_impl(
+        20 => wire__crate__api__receiver__save_text_file_impl(port, ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__lan__scan_nearby_receivers_impl(port, ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__receiver__set_receiver_discoverable_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        23 => wire__crate__api__receiver__start_receiver_transfer_listener_impl(
+        24 => wire__crate__api__receiver__start_receiver_transfer_listener_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        24 => wire__crate__api__sender__start_send_transfer_impl(port, ptr, rust_vec_len, data_len),
-        25 => wire__crate__api__receiver__watch_receiver_pairing_impl(
+        25 => wire__crate__api__sender__start_send_transfer_impl(port, ptr, rust_vec_len, data_len),
+        26 => wire__crate__api__receiver__watch_receiver_pairing_impl(
             port,
             ptr,
             rust_vec_len,
@@ -1838,9 +1892,10 @@ fn pde_ffi_dispatcher_sync_impl(
     match func_id {
         5 => wire__crate__api__simple__current_endpoint_id_impl(ptr, rust_vec_len, data_len),
         8 => wire__crate__api__lan__decode_ticket_info_impl(ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__device__random_device_name_impl(ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__simple__set_app_identity_impl(ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__lan__detect_usb_link_impl(ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__device__random_device_name_impl(ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__simple__set_app_identity_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -2439,6 +2494,25 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::transfer::TransferSnapshotDat
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::lan::UsbLinkData {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.local_ip.into_into_dart().into_dart(),
+            self.is_host.into_into_dart().into_dart(),
+            self.gateway_ip.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::lan::UsbLinkData {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::lan::UsbLinkData>
+    for crate::api::lan::UsbLinkData
+{
+    fn into_into_dart(self) -> crate::api::lan::UsbLinkData {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::error::UserFacingErrorData {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -2824,6 +2898,16 @@ impl SseEncode for Option<u64> {
     }
 }
 
+impl SseEncode for Option<crate::api::lan::UsbLinkData> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::lan::UsbLinkData>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::error::UserFacingErrorData> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3091,6 +3175,15 @@ impl SseEncode for u8 {
 impl SseEncode for () {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {}
+}
+
+impl SseEncode for crate::api::lan::UsbLinkData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.local_ip, serializer);
+        <bool>::sse_encode(self.is_host, serializer);
+        <Option<String>>::sse_encode(self.gateway_ip, serializer);
+    }
 }
 
 impl SseEncode for crate::api::error::UserFacingErrorData {

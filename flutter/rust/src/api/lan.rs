@@ -30,6 +30,28 @@ pub(crate) fn map_nearby_receiver(item: NearbyReceiver) -> NearbyReceiverInfo {
     }
 }
 
+/// Heuristic info about a detected USB-tethering (IP-over-USB) link, surfaced
+/// to the Flutter UI so it can confirm a cable link is present and guide setup.
+#[derive(Debug, Clone)]
+pub struct UsbLinkData {
+    pub local_ip: String,
+    /// True when this device is the tethering host (the phone).
+    pub is_host: bool,
+    /// The peer's gateway IP (the phone) when inferable, else null.
+    pub gateway_ip: Option<String>,
+}
+
+/// Detect a likely USB-tethering link on a local interface (no network I/O).
+/// Returns null when no USB-over-IP link is present.
+#[flutter_rust_bridge::frb(sync)]
+pub fn detect_usb_link() -> Option<UsbLinkData> {
+    wisp_core::lan::detect_usb_link().map(|l| UsbLinkData {
+        local_ip: l.local_ip.to_string(),
+        is_host: l.is_host,
+        gateway_ip: l.gateway_ip.map(|ip| ip.to_string()),
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct DecodedTicketData {
     pub endpoint_id: String,

@@ -40,6 +40,7 @@ class MainActivity : FlutterFragmentActivity() {
         private const val CHANNEL = "dev.vigov5.wisp/file_picker"
         private const val KEEPALIVE_CHANNEL = "dev.vigov5.wisp/transfer_keepalive"
         private const val SHARE_CHANNEL = "dev.vigov5.wisp/share_intent"
+        private const val USB_TETHER_CHANNEL = "dev.vigov5.wisp/usb_tether"
         private const val REQUEST_CODE_PICK_FILES = 2001
         private const val REQUEST_CODE_PICK_FOLDER = 2002
         private const val REQUEST_CODE_PICK_SAVE_FOLDER = 2003
@@ -190,6 +191,16 @@ class MainActivity : FlutterFragmentActivity() {
             KEEPALIVE_CHANNEL,
         ).setMethodCallHandler { call, result -> handleKeepaliveCall(call, result) }
 
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            USB_TETHER_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "openTetherSettings" -> openTetherSettings(result)
+                else -> result.notImplemented()
+            }
+        }
+
         shareChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             SHARE_CHANNEL,
@@ -303,6 +314,33 @@ class MainActivity : FlutterFragmentActivity() {
             }
             else -> result.notImplemented()
         }
+    }
+
+    // Opens the system Tethering settings so the user can flip on USB
+    // tethering (Android has no public API to toggle it programmatically).
+    // The dedicated TetherSettings screen isn't a documented component, so we
+    // fall back through progressively-broader settings panels per device.
+    private fun openTetherSettings(result: MethodChannel.Result) {
+        val intents = listOf(
+            Intent().setClassName(
+                "com.android.settings",
+                "com.android.settings.TetherSettings",
+            ),
+            Intent(Settings.ACTION_WIRELESS_SETTINGS),
+            Intent(Settings.ACTION_SETTINGS),
+        )
+        for (intent in intents) {
+            try {
+                startActivity(intent)
+                result.success(true)
+                return
+            } catch (_: ActivityNotFoundException) {
+                // Try the next, broader fallback.
+            } catch (_: SecurityException) {
+                // Some OEMs guard the hidden component; fall through.
+            }
+        }
+        result.success(false)
     }
 
     private fun ensureNotificationPermission() {

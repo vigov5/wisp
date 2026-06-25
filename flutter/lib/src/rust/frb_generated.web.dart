@@ -89,6 +89,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
+  UsbLinkData dco_decode_box_autoadd_usb_link_data(dynamic raw);
+
+  @protected
   UserFacingErrorData dco_decode_box_autoadd_user_facing_error_data(
     dynamic raw,
   );
@@ -180,6 +183,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
+  UsbLinkData? dco_decode_opt_box_autoadd_usb_link_data(dynamic raw);
+
+  @protected
   UserFacingErrorData? dco_decode_opt_box_autoadd_user_facing_error_data(
     dynamic raw,
   );
@@ -246,6 +252,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void dco_decode_unit(dynamic raw);
+
+  @protected
+  UsbLinkData dco_decode_usb_link_data(dynamic raw);
 
   @protected
   UserFacingErrorData dco_decode_user_facing_error_data(dynamic raw);
@@ -324,6 +333,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
+
+  @protected
+  UsbLinkData sse_decode_box_autoadd_usb_link_data(
+    SseDeserializer deserializer,
+  );
 
   @protected
   UserFacingErrorData sse_decode_box_autoadd_user_facing_error_data(
@@ -437,6 +451,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
+  UsbLinkData? sse_decode_opt_box_autoadd_usb_link_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   UserFacingErrorData? sse_decode_opt_box_autoadd_user_facing_error_data(
     SseDeserializer deserializer,
   );
@@ -533,6 +552,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
+  UsbLinkData sse_decode_usb_link_data(SseDeserializer deserializer);
+
+  @protected
   UserFacingErrorData sse_decode_user_facing_error_data(
     SseDeserializer deserializer,
   );
@@ -625,6 +647,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_usb_link_data(
+    UsbLinkData self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_user_facing_error_data(
@@ -759,6 +787,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_usb_link_data(
+    UsbLinkData? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_user_facing_error_data(
     UserFacingErrorData? self,
     SseSerializer serializer,
@@ -874,6 +908,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_usb_link_data(UsbLinkData self, SseSerializer serializer);
 
   @protected
   void sse_encode_user_facing_error_data(

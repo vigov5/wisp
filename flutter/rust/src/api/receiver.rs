@@ -216,6 +216,18 @@ pub fn watch_receiver_pairing(
         let service = ensure_receiver_service(config.clone()).await.map_err(|e| {
             internal_user_facing_error("Couldn't start receiver service for pairing", e)
         })?;
+        // Enable LAN advertising BEFORE rendezvous registration. Registration
+        // needs an online ticket (relay handshake) and can stall offline; the
+        // receiver actor is single-threaded, so registering first would queue
+        // the SetDiscoverable behind that stall and leave the device invisible
+        // on the very offline link (USB cable / isolated LAN) this path exists
+        // for. Advertising needs only the offline ticket, so start it first.
+        service.set_discoverable(true).await.map_err(|e| {
+            internal_user_facing_error(
+                "Couldn't enable receiver discovery for pairing",
+                e.to_string(),
+            )
+        })?;
         if let Some(server_url) = config.server_url.clone() {
             if let Err(error) = service.ensure_registered(Some(server_url)).await {
                 println!(
@@ -224,12 +236,6 @@ pub fn watch_receiver_pairing(
                 );
             }
         }
-        service.set_discoverable(true).await.map_err(|e| {
-            internal_user_facing_error(
-                "Couldn't enable receiver discovery for pairing",
-                e.to_string(),
-            )
-        })?;
 
         replace_pairing_task(config, service, updates);
         Ok(())
@@ -265,6 +271,16 @@ pub fn start_receiver_transfer_listener(
         let service = ensure_receiver_service(config.clone()).await.map_err(|e| {
             internal_user_facing_error("Couldn't start receiver service for incoming transfers", e)
         })?;
+        // Enable LAN advertising before rendezvous registration — see the
+        // matching note in `watch_receiver_pairing`. Offline, registration can
+        // stall and would otherwise starve the SetDiscoverable that makes this
+        // device reachable over the cable / isolated LAN.
+        service.set_discoverable(true).await.map_err(|e| {
+            internal_user_facing_error(
+                "Couldn't enable receiver discovery for incoming transfers",
+                e.to_string(),
+            )
+        })?;
         if let Some(server_url) = config.server_url.clone() {
             if let Err(error) = service.ensure_registered(Some(server_url)).await {
                 println!(
@@ -273,12 +289,6 @@ pub fn start_receiver_transfer_listener(
                 );
             }
         }
-        service.set_discoverable(true).await.map_err(|e| {
-            internal_user_facing_error(
-                "Couldn't enable receiver discovery for incoming transfers",
-                e.to_string(),
-            )
-        })?;
 
         replace_updates_task(config, service, updates);
         Ok(())

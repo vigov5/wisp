@@ -130,10 +130,12 @@ void main() {
 
     expect(find.text('Drop files to send'), findsOneWidget);
     expect(receiverSource.lastDiscoverableEnabled, isTrue);
-    expect(receiverSource.setDiscoverableCalls, 1);
+    // Discovery is re-asserted (settings + service-state + navigation), so the
+    // exact call count isn't pinned — only that it engaged at least once.
+    expect(receiverSource.setDiscoverableCalls, greaterThanOrEqualTo(1));
   });
 
-  testWidgets('receiver discovery turns off for settings and back on home', (
+  testWidgets('receiver discovery stays on across navigation when enabled', (
     tester,
   ) async {
     final receiverSource = FakeReceiverServiceSource();
@@ -157,14 +159,42 @@ void main() {
     await tester.tap(find.byTooltip('Settings'));
     await pumpFinite(tester);
 
+    // Discoverability follows the Settings toggle + foreground state, not the
+    // route, so leaving Home no longer makes the device go dark. This is what
+    // keeps PC→phone working over an offline link (USB tethering): the phone
+    // stays advertised wherever the user navigates.
     expect(find.text('Settings'), findsWidgets);
-    expect(receiverSource.lastDiscoverableEnabled, isFalse);
+    expect(receiverSource.lastDiscoverableEnabled, isTrue);
 
     await tester.tap(find.byTooltip('Back'));
     await pumpFinite(tester);
 
     expect(find.text('Drop files to send'), findsOneWidget);
     expect(receiverSource.lastDiscoverableEnabled, isTrue);
+  });
+
+  testWidgets('receiver discovery stays off when the setting is disabled', (
+    tester,
+  ) async {
+    final receiverSource = FakeReceiverServiceSource();
+    final savedDevicesRepo = await mockSavedDevicesRepo();
+    final updateRepo = await mockUpdateRepo();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          initialAppSettingsProvider.overrideWithValue(
+            testAppSettings.copyWith(discoverableByDefault: false),
+          ),
+          receiverServiceSourceProvider.overrideWithValue(receiverSource),
+          savedDevicesRepositoryProvider.overrideWithValue(savedDevicesRepo),
+          updateRepositoryProvider.overrideWithValue(updateRepo),
+        ],
+        child: const WispApp(),
+      ),
+    );
+    await pumpFinite(tester);
+
+    expect(receiverSource.lastDiscoverableEnabled, isFalse);
   });
 
   testWidgets('receiver discovery turns off while send draft is open', (

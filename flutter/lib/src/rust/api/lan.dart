@@ -8,13 +8,17 @@ import 'error.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `map_nearby_receiver`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`
 
 Future<List<NearbyReceiverInfo>> scanNearbyReceivers({
   required BigInt timeoutSecs,
 }) => RustLib.instance.api.crateApiLanScanNearbyReceivers(
   timeoutSecs: timeoutSecs,
 );
+
+/// Detect a likely USB-tethering link on a local interface (no network I/O).
+/// Returns null when no USB-over-IP link is present.
+UsbLinkData? detectUsbLink() => RustLib.instance.api.crateApiLanDetectUsbLink();
 
 /// Pure decode (no network) of a ticket string. Used by the QR scanner so
 /// the sender UI can show the receiver's name/type/pubkey before dialing.
@@ -83,4 +87,34 @@ class NearbyReceiverInfo {
           code == other.code &&
           ticket == other.ticket &&
           endpointId == other.endpointId;
+}
+
+/// Heuristic info about a detected USB-tethering (IP-over-USB) link, surfaced
+/// to the Flutter UI so it can confirm a cable link is present and guide setup.
+class UsbLinkData {
+  final String localIp;
+
+  /// True when this device is the tethering host (the phone).
+  final bool isHost;
+
+  /// The peer's gateway IP (the phone) when inferable, else null.
+  final String? gatewayIp;
+
+  const UsbLinkData({
+    required this.localIp,
+    required this.isHost,
+    this.gatewayIp,
+  });
+
+  @override
+  int get hashCode => localIp.hashCode ^ isHost.hashCode ^ gatewayIp.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UsbLinkData &&
+          runtimeType == other.runtimeType &&
+          localIp == other.localIp &&
+          isHost == other.isHost &&
+          gatewayIp == other.gatewayIp;
 }

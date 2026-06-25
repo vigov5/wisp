@@ -5013,6 +5013,7 @@ dependencies = [
  "iroh-blobs",
  "irpc",
  "mdns-sd",
+ "netdev",
  "rand 0.8.5",
  "reqwest",
  "serde",

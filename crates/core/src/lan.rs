@@ -109,6 +109,131 @@ fn all_local_ipv4_addrs() -> Vec<Ipv4Addr> {
         .collect()
 }
 
+/// Collects the IPv4 default-gateway address of every local interface.
+///
+/// Over USB tethering the phone is the gateway (and the receiver), and Android
+/// drops subnet-broadcast arriving *from* a downstream client — so the scanner
+/// can't find the phone by broadcast alone. Unicasting the discovery query
+/// straight to the gateway sidesteps that filtering. We probe *all* interface
+/// gateways (Wi-Fi router included) since an extra unanswered unicast is cheap
+/// and we can't tell which gateway is the cable without OS routing details.
+fn local_gateways() -> Vec<Ipv4Addr> {
+    netdev::get_interfaces()
+        .into_iter()
+        .filter_map(|iface| iface.gateway)
+        .flat_map(|gw| gw.ipv4)
+        .filter(|ip| !ip.is_unspecified() && !ip.is_loopback())
+        .collect()
+}
+
+/// Default Android USB-tethering host address. Android is the only side that
+/// can tether, and it puts itself at `192.168.42.129/24`, handing the peer a
+/// `192.168.42.x` lease over the cable.
+const USB_TETHER_HOST: Ipv4Addr = Ipv4Addr::new(192, 168, 42, 129);
+
+/// Heuristic description of a detected USB-tethering (IP-over-USB) link.
+///
+/// USB tethering turns the cable into a private IPv4 segment that is, from the
+/// transport's point of view, indistinguishable from a Wi-Fi hotspot — so the
+/// existing iroh / broadcast-discovery path runs over it unchanged. This struct
+/// only exists so the UI can tell the user a cable link is present and so the
+/// scanner can probe the host directly (see [`broadcast_scan`]).
+#[derive(Debug, Clone)]
+pub struct UsbLinkInfo {
+    /// Local IPv4 on the USB-tether interface.
+    pub local_ip: Ipv4Addr,
+    /// True when this device looks like the tethering host (the phone, `.129`).
+    pub is_host: bool,
+    /// The peer's gateway IP to probe directly, when it can be inferred (the
+    /// phone, from the PC's point of view). `None` on the host side or when the
+    /// link was matched only by interface name on a non-default subnet.
+    pub gateway_ip: Option<Ipv4Addr>,
+}
+
+fn iface_name_looks_usb(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    // Distinctive tokens of USB-tether / RNDIS adapters. On Windows the friendly
+    // name is generic ("Ethernet 7") but the *description* reads "Remote NDIS
+    // based Internet Sharing Device" — hence "remote ndis" and "internet
+    // sharing". Deliberately NOT a bare "ndis": that would also match unrelated
+    // adapters like "Fortinet Virtual Ethernet Adapter (NDIS 6.30)".
+    if n.contains("rndis")
+        || n.contains("remote ndis")
+        || n.contains("ncm")
+        || n.contains("internet sharing")
+        || n.contains("tether")
+    {
+        return true;
+    }
+    // A bare "usb" substring is too broad: it also matches ordinary USB-to-
+    // Ethernet NICs like "ASIX USB to Gigabit Ethernet Family Adapter", which are
+    // plain wired networking, not a phone tether. Only accept "usb" as a
+    // standalone Linux/Android interface name (`usb`, `usb0`), never as a word
+    // inside a longer adapter description.
+    n.trim_end_matches(|c: char| c.is_ascii_digit()) == "usb"
+}
+
+fn in_usb_tether_subnet(ip: Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 192 && o[1] == 168 && o[2] == 42
+}
+
+/// Detect a likely USB-tethering link by scanning local interfaces.
+///
+/// Recognises the link two ways: an IPv4 in Android's default USB-tether subnet
+/// (`192.168.42.0/24`), or an interface whose name/description looks like an
+/// RNDIS/NCM/USB adapter. The default-subnet match is preferred because it also
+/// lets us infer the host's gateway address.
+pub fn detect_usb_link() -> Option<UsbLinkInfo> {
+    // 1) Default Android USB-tether subnet: highest-confidence match, and the
+    //    only case from which we can infer the host (`.129`) gateway address.
+    for ip in all_local_ipv4_addrs() {
+        if in_usb_tether_subnet(ip) {
+            let is_host = ip == USB_TETHER_HOST;
+            return Some(UsbLinkInfo {
+                local_ip: ip,
+                is_host,
+                gateway_ip: (!is_host).then_some(USB_TETHER_HOST),
+            });
+        }
+    }
+
+    // 2) Name/description heuristic. `if_addrs` exposes only the interface name
+    //    (generic on Windows, e.g. "Ethernet 7"), so consult `netdev` for the
+    //    richer friendly_name and description — that's what catches the Windows
+    //    RNDIS tether adapter ("Remote NDIS based Internet Sharing Device") on a
+    //    non-default subnet. We can't infer the host address here, so leave the
+    //    gateway unset and let broadcast / gateway-unicast discovery find it.
+    for iface in netdev::get_interfaces() {
+        let looks_usb = iface_name_looks_usb(&iface.name)
+            || iface
+                .friendly_name
+                .as_deref()
+                .is_some_and(iface_name_looks_usb)
+            || iface
+                .description
+                .as_deref()
+                .is_some_and(iface_name_looks_usb);
+        if !looks_usb {
+            continue;
+        }
+        if let Some(ip) = iface
+            .ipv4
+            .iter()
+            .map(|net| net.addr())
+            .find(|ip| !ip.is_loopback() && !ip.is_unspecified())
+        {
+            return Some(UsbLinkInfo {
+                local_ip: ip,
+                is_host: ip == USB_TETHER_HOST,
+                gateway_ip: None,
+            });
+        }
+    }
+
+    None
+}
+
 fn chunk_ascii(s: &str, max: usize) -> Vec<String> {
     s.as_bytes()
         .chunks(max)
@@ -460,7 +585,12 @@ fn run_presence_loop(socket: UdpSocket, stop: Arc<AtomicBool>) {
                 }
                 let nonce = u64::from_be_bytes(p[8..16].try_into().unwrap());
                 let pong = build_presence_packet(OP_PONG, nonce);
-                let _ = socket.send_to(&pong, from);
+                // Log send failures: on an offline Android tether *host* there is
+                // no default network, so app-socket sends fail with ENETUNREACH
+                // even though the ping arrived — the reply never leaves the phone.
+                if let Err(e) = socket.send_to(&pong, from) {
+                    warn!(%from, error = %e, "lan_presence.pong_send_failed");
+                }
             }
             Err(e)
                 if e.kind() == std::io::ErrorKind::WouldBlock
@@ -577,7 +707,9 @@ fn run_discovery_responder_loop(
                 reply.extend_from_slice(ticket_bytes);
 
                 debug!(%from, "lan_discovery.query_received - sending reply");
-                let _ = socket.send_to(&reply, from);
+                if let Err(e) = socket.send_to(&reply, from) {
+                    warn!(%from, error = %e, "lan_discovery.reply_send_failed");
+                }
             }
             Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {}
             Err(_) => break,
@@ -667,6 +799,27 @@ fn broadcast_scan(timeout: Duration, nonce: u64) -> Vec<(NearbyReceiver, Ipv4Add
                 WISP_LAN_DISCOVERY_PORT,
             ));
         }
+        // Unicast the query to each interface's default gateway too. Over USB
+        // tethering the phone IS the gateway+receiver, and Android drops
+        // broadcast arriving from a downstream client, so the directed-subnet
+        // broadcast above never reaches it — a direct unicast does.
+        for gateway in local_gateways() {
+            t.push(SocketAddr::new(
+                IpAddr::V4(gateway),
+                WISP_LAN_DISCOVERY_PORT,
+            ));
+        }
+        // `local_gateways()` reads the OS routing table, which is empty for the
+        // tether adapter when the phone has no upstream internet — Windows
+        // installs no default route through an RNDIS/NCM link that can't reach
+        // the internet, so the unicast above is skipped exactly in the
+        // offline-cable case this feature exists for. Derive the tether host
+        // from the local subnet instead (`192.168.42.x` ⇒ host `.129`), which
+        // needs no routing-table entry, and unicast there as well.
+        if let Some(host) = detect_usb_link().and_then(|link| link.gateway_ip) {
+            t.push(SocketAddr::new(IpAddr::V4(host), WISP_LAN_DISCOVERY_PORT));
+        }
+        t.sort();
         t.dedup();
         t
     };
@@ -1130,6 +1283,36 @@ mod tests {
 
         let kept: std::collections::BTreeSet<_> = preserved.addrs.iter().cloned().collect();
         assert_eq!(kept, original_addrs, "safety net preserves original addrs");
+    }
+
+    #[test]
+    fn usb_tether_subnet_matching() {
+        assert!(in_usb_tether_subnet(Ipv4Addr::new(192, 168, 42, 1)));
+        assert!(in_usb_tether_subnet(USB_TETHER_HOST));
+        assert!(!in_usb_tether_subnet(Ipv4Addr::new(192, 168, 1, 5)));
+        assert!(!in_usb_tether_subnet(Ipv4Addr::new(10, 0, 0, 1)));
+    }
+
+    #[test]
+    fn usb_iface_name_heuristic() {
+        assert!(iface_name_looks_usb("rndis0"));
+        assert!(iface_name_looks_usb("usb0"));
+        assert!(iface_name_looks_usb("Ethernet (NCM)"));
+        // Windows RNDIS tether adapter — only identifiable via its description.
+        assert!(iface_name_looks_usb(
+            "Remote NDIS based Internet Sharing Device"
+        ));
+        assert!(!iface_name_looks_usb("wlan0"));
+        assert!(!iface_name_looks_usb("eth0"));
+        // Must NOT false-positive on unrelated NDIS adapters.
+        assert!(!iface_name_looks_usb(
+            "Fortinet Virtual Ethernet Adapter (NDIS 6.30)"
+        ));
+        // Must NOT false-positive on a USB-to-Ethernet NIC: it carries "usb" only
+        // as a word inside its description, and is ordinary wired networking.
+        assert!(!iface_name_looks_usb(
+            "ASIX USB to Gigabit Ethernet Family Adapter"
+        ));
     }
 
     #[test]

@@ -18,6 +18,7 @@ import '../features/update/presentation/update_available_dialog.dart';
 import 'app_router.dart';
 import '../theme/wisp_theme.dart';
 import '../features/settings/settings_providers.dart';
+import '../features/settings/application/controller.dart';
 import '../platform/android/keepalive_lifecycle_observer.dart';
 import '../platform/android_share_intent.dart';
 import '../platform/windows_context_menu.dart';
@@ -34,7 +35,7 @@ class WispApp extends ConsumerStatefulWidget {
   ConsumerState<WispApp> createState() => _WispAppState();
 }
 
-class _WispAppState extends ConsumerState<WispApp> {
+class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
   late final GoRouter _router;
   late final ReceiverServiceSource _receiverService;
   late final KeepaliveLifecycleObserver _keepaliveObserver;
@@ -42,21 +43,23 @@ class _WispAppState extends ConsumerState<WispApp> {
   StreamSubscription<String>? _shareTextSub;
   StreamSubscription<List<String>>? _windowsSendSub;
   bool _discoverableEnabled = false;
+  bool _isForeground = true;
 
   @override
   void initState() {
     super.initState();
     _router = buildAppRouter(
-      observers: [DiscoveryRouterObserver(_syncReceiverDiscovery)],
+      observers: [DiscoveryRouterObserver(_applyDiscoverability)],
     );
     _receiverService = ref.read(receiverServiceSourceProvider);
     _keepaliveObserver = KeepaliveLifecycleObserver(
       hasActiveTransfer: _hasActiveTransfer,
     );
     WidgetsBinding.instance.addObserver(_keepaliveObserver);
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _syncReceiverDiscovery();
+        _applyDiscoverability();
         _wireShareIntent();
         _wireWindowsSendIntent();
         // Fire-and-forget startup side-effects. Guard each so a failure (a
@@ -229,18 +232,38 @@ class _WispAppState extends ConsumerState<WispApp> {
     return sendActive || receiveActive;
   }
 
-  void _syncReceiverDiscovery() {
-    final routePath = _router.routeInformationProvider.value.uri.path;
-    final enabled = routePath == AppRoutePaths.home;
-    if (enabled == _discoverableEnabled) {
-      return;
+  // Receiver LAN discovery follows the Settings "discoverable" toggle and the
+  // app's foreground state — NOT the current route. As long as the user keeps
+  // discovery on and the app is foreground, this device advertises on every
+  // screen (Home, Send composer, Settings…), so a sender can always find it.
+  // This is what makes PC→phone work over an offline link like USB tethering:
+  // the phone stays discoverable instead of going dark the moment it leaves
+  // Home.
+  //
+  // Re-applied (not set once) on settings change, lifecycle resume, navigation,
+  // and whenever the receiver service (re)starts. The re-apply matters: the
+  // Rust bridge silently no-ops `setDiscoverable` until the receiver service is
+  // registered, so a single startup call can race ahead of service init and be
+  // lost. Re-asserting on the service-state stream closes that gap. Repeated
+  // `setDiscoverable(true)` is cheap — Rust keeps an existing advertisement
+  // alive instead of rebuilding it.
+  void _applyDiscoverability() {
+    final wanted =
+        ref.read(settingsControllerProvider).settings.discoverableByDefault &&
+        _isForeground;
+    if (wanted != _discoverableEnabled) {
+      _discoverableEnabled = wanted;
+      debugPrint('[app] receiver discovery ${wanted ? 'enabled' : 'disabled'}');
     }
-    _discoverableEnabled = enabled;
-    debugPrint(
-      '[app] receiver discovery ${enabled ? 'enabled' : 'disabled'} '
-      'route="$routePath"',
-    );
-    unawaited(_receiverService.setDiscoverable(enabled: enabled));
+    unawaited(_receiverService.setDiscoverable(enabled: wanted));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final foreground = state == AppLifecycleState.resumed;
+    if (foreground == _isForeground) return;
+    _isForeground = foreground;
+    _applyDiscoverability();
   }
 
   @override
@@ -249,6 +272,7 @@ class _WispAppState extends ConsumerState<WispApp> {
     unawaited(_shareTextSub?.cancel());
     unawaited(_windowsSendSub?.cancel());
     WidgetsBinding.instance.removeObserver(_keepaliveObserver);
+    WidgetsBinding.instance.removeObserver(this);
     unawaited(_receiverService.setDiscoverable(enabled: false));
     super.dispose();
   }
@@ -270,6 +294,17 @@ class _WispAppState extends ConsumerState<WispApp> {
   @override
   Widget build(BuildContext context) {
     ref.listen<UpdateState>(updateControllerProvider, _maybeShowUpdateDialog);
+
+    // Keep LAN discoverability in sync with the Settings toggle, and re-assert
+    // it whenever the receiver service (re)starts so a startup race can't leave
+    // the device silently un-advertised. See `_applyDiscoverability`.
+    ref.listen(
+      settingsControllerProvider.select(
+        (s) => s.settings.discoverableByDefault,
+      ),
+      (_, _) => _applyDiscoverability(),
+    );
+    ref.listen(receiverServiceProvider, (_, _) => _applyDiscoverability());
 
     // When an incoming offer arrives while the user is on any other screen
     // (Settings, Saved devices, QR pairing/scan, deep dialogs, etc.), pop

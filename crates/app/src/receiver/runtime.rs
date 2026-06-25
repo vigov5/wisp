@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointId};
 use time::OffsetDateTime;
@@ -6,7 +8,7 @@ use tokio::sync::{broadcast, watch};
 use tracing::warn;
 use wisp_core::lan::LanReceiveAdvertisement;
 use wisp_core::rendezvous::{RendezvousClient, resolve_server_url};
-use wisp_core::util::make_ticket;
+use wisp_core::util::{make_ticket, make_ticket_offline};
 
 use crate::error::{AppError, AppResult};
 use crate::types::{PairingCodeState, ReceiverConfig, ReceiverRegistration};
@@ -202,11 +204,37 @@ impl ReceiverRuntime {
             .server_url
             .clone()
             .ok_or(AppError::ReceiverSetupIncomplete)?;
-        let ticket = make_ticket(&self.endpoint)
-            .await
-            .map_err(|e| AppError::Internal {
-                message: e.to_string(),
-            })?;
+        // `make_ticket` awaits `endpoint.online()`, which never resolves until a
+        // relay handshake completes — i.e. it hangs forever on an offline link
+        // (USB cable / isolated LAN). The receiver actor is single-threaded, so
+        // a hang here freezes the entire command loop: queued `SetDiscoverable`
+        // (which starts LAN advertising), offer handling, everything. Bound it.
+        // Offline there is no remote pairing to register for anyway, so timing
+        // out and surfacing the failure keeps the actor responsive while LAN
+        // discovery still runs off the offline ticket (see `reconcile_advertising`).
+        const REGISTRATION_TICKET_TIMEOUT: Duration = Duration::from_secs(10);
+        let ticket = match tokio::time::timeout(
+            REGISTRATION_TICKET_TIMEOUT,
+            make_ticket(&self.endpoint),
+        )
+        .await
+        {
+            Ok(Ok(ticket)) => ticket,
+            Ok(Err(e)) => {
+                return Err(AppError::Internal {
+                    message: e.to_string(),
+                });
+            }
+            Err(_) => {
+                warn!(
+                    timeout_secs = REGISTRATION_TICKET_TIMEOUT.as_secs(),
+                    "receiver.registration_ticket_timeout (offline / no relay) — skipping rendezvous registration"
+                );
+                return Err(AppError::Internal {
+                    message: "registration ticket timed out (offline / no relay)".to_owned(),
+                });
+            }
+        };
         let registration = RendezvousClient::new(resolved_url)
             .register_peer(ticket)
             .await
@@ -456,7 +484,12 @@ impl ReceiverRuntime {
         if self.advertising.is_some() {
             return;
         }
-        let ticket = match make_ticket(&self.endpoint).await {
+        // Build the advertised ticket WITHOUT `endpoint.online().await`: that
+        // pends until a relay handshake completes and never resolves on an
+        // offline link (USB cable / isolated LAN), which would leave this
+        // device permanently undiscoverable there. The offline ticket already
+        // carries the LAN direct addresses a peer needs to dial over the cable.
+        let ticket = match make_ticket_offline(&self.endpoint) {
             Ok(ticket) => ticket,
             Err(error) => {
                 warn!(
