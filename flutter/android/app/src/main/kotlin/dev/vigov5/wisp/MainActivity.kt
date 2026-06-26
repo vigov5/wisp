@@ -61,11 +61,22 @@ class MainActivity : FlutterFragmentActivity() {
     // EXTRA_STREAM).  Handed to Flutter once via getInitialSharedText.
     private var initialSharedText: String? = null
     private var shareChannel: MethodChannel? = null
+    private var usbAoa: UsbAoaChannel? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         initialSharedFilesJob = extractSharedFilesAsync(intent)
         initialSharedText = extractSharedText(intent)
+        // Instantiate before configureFlutterEngine so an accessory-attach
+        // launch intent is recorded even though the channels wire up later.
+        if (usbAoa == null) usbAoa = UsbAoaChannel(this)
+        usbAoa?.notifyIntent(intent)
+    }
+
+    override fun onDestroy() {
+        usbAoa?.dispose()
+        usbAoa = null
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -73,6 +84,7 @@ class MainActivity : FlutterFragmentActivity() {
         // Persist the new intent so any later getIntent() lookups see it
         // (otherwise we'd keep re-reading the original launch intent).
         setIntent(intent)
+        usbAoa?.notifyIntent(intent)
 
         // Text shares carry EXTRA_TEXT and no EXTRA_STREAM — route them to the
         // Share-text flow instead of the (empty) file pipeline.
@@ -200,6 +212,10 @@ class MainActivity : FlutterFragmentActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        // Direct phone-to-phone USB (AOA) host/accessory link.
+        if (usbAoa == null) usbAoa = UsbAoaChannel(this)
+        usbAoa?.configure(flutterEngine.dartExecutor.binaryMessenger)
 
         shareChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -360,6 +376,10 @@ class MainActivity : FlutterFragmentActivity() {
 
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == UsbAoaChannel.REQUEST_CODE_VPN_CONSENT) {
+            usbAoa?.onVpnConsentResult(resultCode == Activity.RESULT_OK)
+            return
+        }
         if (requestCode == REQUEST_CODE_PICK_FILES) {
             val result = pendingResult
             pendingResult = null

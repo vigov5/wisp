@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../../../theme/wisp_theme.dart';
 import '../../../transfers/application/pubkey_visual.dart';
+import '../../../usb_cable/presentation/usb_status_entry.dart';
 import '../../application/state.dart';
 
 class ReceiveIdleCard extends StatefulWidget {
@@ -465,6 +466,8 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
               ),
             ),
           ],
+          const SizedBox(height: 10),
+          const UsbStatusEntry(),
         ],
       ),
     );

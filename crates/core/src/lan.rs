@@ -131,6 +131,19 @@ fn local_gateways() -> Vec<Ipv4Addr> {
 /// `192.168.42.x` lease over the cable.
 const USB_TETHER_HOST: Ipv4Addr = Ipv4Addr::new(192, 168, 42, 129);
 
+/// Point-to-point /30 used by the Android-to-Android AOA USB-cable tunnel
+/// (path A). The USB host takes `.1`, the accessory `.2`. Broadcast and mDNS do
+/// not traverse the `VpnService` TUN, so each side treats the *other* as its
+/// gateway and the scanner unicasts the discovery query straight across the
+/// cable (see [`broadcast_scan`]) — unicast UDP does traverse the tunnel.
+const USB_TUNNEL_HOST: Ipv4Addr = Ipv4Addr::new(10, 42, 0, 1);
+const USB_TUNNEL_ACCESSORY: Ipv4Addr = Ipv4Addr::new(10, 42, 0, 2);
+
+fn in_usb_tunnel_subnet(ip: Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 10 && o[1] == 42 && o[2] == 0
+}
+
 /// Heuristic description of a detected USB-tethering (IP-over-USB) link.
 ///
 /// USB tethering turns the cable into a private IPv4 segment that is, from the
@@ -185,6 +198,29 @@ fn in_usb_tether_subnet(ip: Ipv4Addr) -> bool {
 /// RNDIS/NCM/USB adapter. The default-subnet match is preferred because it also
 /// lets us infer the host's gateway address.
 pub fn detect_usb_link() -> Option<UsbLinkInfo> {
+    // 0) AOA USB-cable tunnel (`10.42.0.0/30`): the highest-confidence match for
+    //    Android-to-Android. Both ends point their gateway at the peer so the
+    //    scanner unicasts discovery across the cable in both directions.
+    for ip in all_local_ipv4_addrs() {
+        if in_usb_tunnel_subnet(ip) {
+            // Symmetric peers over the cable — neither is a tethering host, so
+            // report `is_host = false` on both ends (drives the neutral
+            // "cable link active" status, not the phone↔PC "tethering on" copy).
+            // The gateway still points at the other end so discovery unicasts
+            // across the cable in both directions.
+            let peer = if ip == USB_TUNNEL_HOST {
+                USB_TUNNEL_ACCESSORY
+            } else {
+                USB_TUNNEL_HOST
+            };
+            return Some(UsbLinkInfo {
+                local_ip: ip,
+                is_host: false,
+                gateway_ip: Some(peer),
+            });
+        }
+    }
+
     // 1) Default Android USB-tether subnet: highest-confidence match, and the
     //    only case from which we can infer the host (`.129`) gateway address.
     for ip in all_local_ipv4_addrs() {
@@ -456,7 +492,13 @@ pub async fn filter_endpoint_addr_by_presence_on_port(
 
     let before = addr.addrs.len();
     addr.addrs.retain(|t| match t {
-        TransportAddr::Ip(SocketAddr::V4(v4)) => alive.contains(v4.ip()),
+        // A point-to-point USB-cable tunnel address (10.42.0.0/30) is always
+        // kept: it's the only path on an offline cable link, and a presence
+        // ping over the isolated VpnService TUN can be unreliable — dropping it
+        // would leave the dial with no usable direct address.
+        TransportAddr::Ip(SocketAddr::V4(v4)) => {
+            alive.contains(v4.ip()) || in_usb_tunnel_subnet(*v4.ip())
+        }
         // IPv6 and Relay entries are kept — presence ping doesn't cover them.
         _ => true,
     });

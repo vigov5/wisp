@@ -20,6 +20,7 @@ import '../theme/wisp_theme.dart';
 import '../features/settings/settings_providers.dart';
 import '../features/settings/application/controller.dart';
 import '../platform/android/keepalive_lifecycle_observer.dart';
+import '../features/usb_cable/application/usb_cable_controller.dart';
 import '../platform/android_share_intent.dart';
 import '../platform/windows_context_menu.dart';
 import '../platform/rust/receiver/source.dart';
@@ -44,6 +45,11 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
   StreamSubscription<List<String>>? _windowsSendSub;
   bool _discoverableEnabled = false;
   bool _isForeground = true;
+  // True while the USB-cable IP tunnel is up. Forces discoverability on so the
+  // device advertises over the cable and EITHER phone can send to the other
+  // (the cable peer is found via unicast discovery to the tunnel gateway).
+  // Sourced from usbCableControllerProvider (single AOA event subscription).
+  bool _usbCableTunnelUp = false;
 
   @override
   void initState() {
@@ -248,9 +254,13 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
   // `setDiscoverable(true)` is cheap — Rust keeps an existing advertisement
   // alive instead of rebuilding it.
   void _applyDiscoverability() {
+    // The cable tunnel forces discoverability (even if the Settings default is
+    // off, or the app isn't foreground) so a freshly-plugged cable lets either
+    // side send without the user toggling anything.
     final wanted =
-        ref.read(settingsControllerProvider).settings.discoverableByDefault &&
-        _isForeground;
+        (ref.read(settingsControllerProvider).settings.discoverableByDefault &&
+            _isForeground) ||
+        _usbCableTunnelUp;
     if (wanted != _discoverableEnabled) {
       _discoverableEnabled = wanted;
       debugPrint('[app] receiver discovery ${wanted ? 'enabled' : 'disabled'}');
@@ -305,6 +315,17 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
       (_, _) => _applyDiscoverability(),
     );
     ref.listen(receiverServiceProvider, (_, _) => _applyDiscoverability());
+
+    // Keep the USB-cable controller alive (single AOA event subscription +
+    // auto-establish) and force discoverability while its tunnel is up so
+    // either phone can send over the cable.
+    ref.listen(
+      usbCableControllerProvider.select((s) => s.tunnelUp),
+      (_, up) {
+        _usbCableTunnelUp = up;
+        _applyDiscoverability();
+      },
+    );
 
     // When an incoming offer arrives while the user is on any other screen
     // (Settings, Saved devices, QR pairing/scan, deep dialogs, etc.), pop

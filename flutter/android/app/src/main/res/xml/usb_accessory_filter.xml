@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Identifies which Android Open Accessory (AOA) "accessory" this app will attach
+  to. When a peer phone running Wisp puts this phone into accessory mode, it
+  sends these exact manufacturer/model/version strings over the AOA handshake
+  (USB control request 52). Android matches them against this filter and offers
+  to launch Wisp in accessory mode — so the same APK on both ends pairs over the
+  cable. These three values MUST stay in sync with the strings sent by the host
+  side in UsbAoaChannel.kt (AOA_MANUFACTURER / AOA_MODEL / AOA_VERSION).
+-->
+<resources>
+    <usb-accessory
+        manufacturer="vigov5"
+        model="WispCable"
+        version="1.0" />
+</resources>

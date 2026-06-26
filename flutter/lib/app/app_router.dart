@@ -2,10 +2,12 @@ import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/about/presentation/about_page.dart';
+import '../features/dev/usb_aoa_spike_page.dart';
 import '../features/diagnostics/presentation/connection_test_page.dart';
 import '../features/identity/presentation/identity_backup_page.dart';
 import '../features/identity/presentation/identity_import_page.dart';
 import '../features/saved_devices/presentation/saved_devices_page.dart';
+import '../features/usb_cable/presentation/usb_setup_page.dart';
 import '../features/send/application/model.dart';
 import '../features/send/presentation/send_draft_preview.dart';
 import '../features/send/presentation/send_transfer_route.dart';
@@ -19,6 +21,8 @@ abstract final class AppRoutePaths {
   static const String settings = '/settings';
   static const String savedDevices = '/settings/saved-devices';
   static const String connectionTest = '/settings/connection-test';
+  static const String usbSpike = '/settings/usb-spike';
+  static const String usbSetup = '/usb';
   static const String identityBackup = '/settings/identity-backup';
   static const String identityImport = '/settings/identity-import';
   static const String about = '/settings/about';
@@ -30,6 +34,8 @@ abstract final class AppRoutePaths {
   static const String settingsSegment = 'settings';
   static const String savedDevicesSegment = 'saved-devices';
   static const String connectionTestSegment = 'connection-test';
+  static const String usbSpikeSegment = 'usb-spike';
+  static const String usbSetupSegment = 'usb';
   static const String identityBackupSegment = 'identity-backup';
   static const String identityImportSegment = 'identity-import';
   static const String aboutSegment = 'about';
@@ -46,6 +52,10 @@ extension AppRouteNavigation on BuildContext {
   void pushSavedDevices() => push(AppRoutePaths.savedDevices);
 
   void pushConnectionTest() => push(AppRoutePaths.connectionTest);
+
+  void pushUsbSpike() => push(AppRoutePaths.usbSpike);
+
+  void pushUsbSetup() => push(AppRoutePaths.usbSetup);
 
   void pushIdentityBackup() => push(AppRoutePaths.identityBackup);
 
@@ -87,6 +97,11 @@ GoRouter buildAppRouter({List<NavigatorObserver> observers = const []}) {
                     const TitleBarShell(child: ConnectionTestPage()),
               ),
               GoRoute(
+                path: AppRoutePaths.usbSpikeSegment,
+                builder: (context, state) =>
+                    const TitleBarShell(child: UsbAoaSpikePage()),
+              ),
+              GoRoute(
                 path: AppRoutePaths.identityBackupSegment,
                 builder: (context, state) =>
                     const TitleBarShell(child: IdentityBackupPage()),
@@ -102,6 +117,11 @@ GoRouter buildAppRouter({List<NavigatorObserver> observers = const []}) {
                     const TitleBarShell(child: AboutPage()),
               ),
             ],
+          ),
+          GoRoute(
+            path: AppRoutePaths.usbSetupSegment,
+            builder: (context, state) =>
+                const TitleBarShell(child: UsbSetupPage()),
           ),
           GoRoute(
             path: AppRoutePaths.sendDraftSegment,

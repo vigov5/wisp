@@ -9,6 +9,7 @@ import '../features/receive/presentation/qr_pairing_page.dart';
 import '../features/receive/presentation/receive_transfer_route_gate.dart';
 import '../features/receive/presentation/widgets/receiver_error_banner.dart';
 import '../features/send/presentation/send_selection_source_sheet.dart';
+import '../features/usb_cable/application/usb_link_status.dart';
 import '../app/app_router.dart';
 import '../theme/wisp_theme.dart';
 import 'widgets/android_permission_bootstrap.dart';
@@ -25,6 +26,7 @@ class MobileShell extends ConsumerWidget with ShellPickingActions {
     final receiverError = ref.watch(
       receiverServiceProvider.select((s) => s.error),
     );
+    final usbConnected = ref.watch(usbConnectedProvider);
 
     return AndroidPermissionBootstrap(
       child: ReceiveTransferRouteGate(
@@ -41,6 +43,16 @@ class MobileShell extends ConsumerWidget with ShellPickingActions {
                     child: Row(
                       children: [
                         const Spacer(),
+                        IconButton(
+                          onPressed: () => context.pushUsbSetup(),
+                          icon: Icon(
+                            Icons.usb_rounded,
+                            color: usbConnected ? kAccentDirect : null,
+                          ),
+                          tooltip: usbConnected
+                              ? 'USB connected'
+                              : 'USB transfer',
+                        ),
                         IconButton(
                           onPressed: () {
                             Navigator.of(context).push(

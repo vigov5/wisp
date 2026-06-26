@@ -34,6 +34,13 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- Direct phone-to-phone transfer over a USB cable (Android Open Accessory).
+         The sending phone drives USB host mode; the receiving phone is switched
+         into accessory mode. Neither feature is required so the app still
+         installs on devices without USB host / OTG support. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-feature android:name="android.hardware.usb.accessory" android:required="false" />
+
     <application
         android:label="Wisp"
         android:name="${applicationName}"
@@ -71,11 +78,31 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:mimeType="*/*"/>
             </intent-filter>
+            <!-- Launch in accessory mode when a peer phone running Wisp puts
+                 this device into AOA accessory mode over a USB cable. The
+                 matched accessory is described in res/xml/usb_accessory_filter. -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED"
+                android:resource="@xml/usb_accessory_filter" />
         </activity>
         <service
             android:name=".TransferKeepaliveService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- IP-over-AOA tunnel: turns the USB cable into a point-to-point IP
+             link so the existing iroh transfer stack runs over it unchanged.
+             VpnService requires the BIND_VPN_SERVICE permission + this filter. -->
+        <service
+            android:name=".UsbTunnelVpnService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
