@@ -34,8 +34,8 @@ It is designed to feel as simple as AirDrop, but without being limited to Apple 
 - **Offline pairing via QR**
   No internet? Scan a QR code shown on the receiver to pair over the same Wi-Fi without going through the rendezvous server.
 
-- **Direct transfer over a USB cable (Android)**
-  Plug two Android phones together with a USB cable and send files directly over it — no Wi-Fi, no network, and no rendezvous server. Great when there's no shared network or you want a fast, fully offline path.
+- **Direct transfer over a USB cable**
+  Move files over a USB cable with no shared Wi-Fi — either between two Android phones (a direct phone-to-phone link) or between an Android phone and a computer (over USB tethering). A guided setup walks each end through the steps. Great when there's no shared network or you want a fast, fully offline path.
 
 - **Send text and links, not just files**
   Share a snippet of text or a link straight across. The receiver can copy it to the clipboard or open the link in one tap.
@@ -97,7 +97,7 @@ See [`flutter/README.md`](flutter/README.md) for build instructions.
    - a nearby device discovered on your LAN,
    - the 6-character pairing code shown on the receiving device,
    - the QR code shown on the receiving device (scan it from the sender to pair offline, no internet needed), or
-   - another Android phone connected to yours with a USB cable.
+   - a device connected with a USB cable — another Android phone, or a computer via USB tethering.
 3. The receiver reviews the files and accepts the transfer.
 4. Wisp sends the files directly to the other device.
 
