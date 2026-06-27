@@ -68,6 +68,7 @@ class NearbyReceiver {
     required this.code,
     required this.ticket,
     this.endpointId = '',
+    this.overUsb = false,
   });
 
   final String fullname;
@@ -76,6 +77,10 @@ class NearbyReceiver {
   final String code;
   final String ticket;
   final String endpointId;
+
+  /// True when the receiver advertises a USB-cable address (AOA tunnel or
+  /// USB-tether). Drives the cable badge on its nearby tile.
+  final bool overUsb;
 }
 
 @immutable

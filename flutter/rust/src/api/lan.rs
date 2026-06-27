@@ -11,6 +11,9 @@ pub struct NearbyReceiverInfo {
     pub code: String,
     pub ticket: String,
     pub endpoint_id: String,
+    /// True when the receiver advertises a USB-cable address (AOA tunnel or
+    /// USB-tether), so the send UI can badge its nearby tile as a cable peer.
+    pub over_usb: bool,
 }
 
 pub fn scan_nearby_receivers(
@@ -27,6 +30,7 @@ pub(crate) fn map_nearby_receiver(item: NearbyReceiver) -> NearbyReceiverInfo {
         code: item.code,
         ticket: item.ticket,
         endpoint_id: item.endpoint_id,
+        over_usb: item.over_usb,
     }
 }
 

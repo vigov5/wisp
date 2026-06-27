@@ -1230,6 +1230,7 @@ impl SseDecode for crate::api::lan::NearbyReceiverInfo {
         let mut var_code = <String>::sse_decode(deserializer);
         let mut var_ticket = <String>::sse_decode(deserializer);
         let mut var_endpointId = <String>::sse_decode(deserializer);
+        let mut var_overUsb = <bool>::sse_decode(deserializer);
         return crate::api::lan::NearbyReceiverInfo {
             fullname: var_fullname,
             label: var_label,
@@ -1237,6 +1238,7 @@ impl SseDecode for crate::api::lan::NearbyReceiverInfo {
             code: var_code,
             ticket: var_ticket,
             endpoint_id: var_endpointId,
+            over_usb: var_overUsb,
         };
     }
 }
@@ -2054,6 +2056,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::lan::NearbyReceiverInfo {
             self.code.into_into_dart().into_dart(),
             self.ticket.into_into_dart().into_dart(),
             self.endpoint_id.into_into_dart().into_dart(),
+            self.over_usb.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -2805,6 +2808,7 @@ impl SseEncode for crate::api::lan::NearbyReceiverInfo {
         <String>::sse_encode(self.code, serializer);
         <String>::sse_encode(self.ticket, serializer);
         <String>::sse_encode(self.endpoint_id, serializer);
+        <bool>::sse_encode(self.over_usb, serializer);
     }
 }
 

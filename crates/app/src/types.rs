@@ -57,6 +57,10 @@ pub struct NearbyReceiver {
     /// Receiver's pubkey (base32 EndpointId), decoded from the advertised
     /// ticket. Empty when the ticket couldn't be parsed (bad input).
     pub endpoint_id: String,
+    /// True when the advertised ticket carries a USB-cable address (AOA tunnel
+    /// `10.42.0.0/30` or USB-tether `192.168.42.0/24`), so the UI can badge the
+    /// tile as a direct cable peer rather than a Wi-Fi one.
+    pub over_usb: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

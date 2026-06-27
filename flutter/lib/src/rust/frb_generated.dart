@@ -1246,8 +1246,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   NearbyReceiverInfo dco_decode_nearby_receiver_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return NearbyReceiverInfo(
       fullname: dco_decode_String(arr[0]),
       label: dco_decode_String(arr[1]),
@@ -1255,6 +1255,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       code: dco_decode_String(arr[3]),
       ticket: dco_decode_String(arr[4]),
       endpointId: dco_decode_String(arr[5]),
+      overUsb: dco_decode_bool(arr[6]),
     );
   }
 
@@ -1964,6 +1965,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_code = sse_decode_String(deserializer);
     var var_ticket = sse_decode_String(deserializer);
     var var_endpointId = sse_decode_String(deserializer);
+    var var_overUsb = sse_decode_bool(deserializer);
     return NearbyReceiverInfo(
       fullname: var_fullname,
       label: var_label,
@@ -1971,6 +1973,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       code: var_code,
       ticket: var_ticket,
       endpointId: var_endpointId,
+      overUsb: var_overUsb,
     );
   }
 
@@ -2821,6 +2824,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.code, serializer);
     sse_encode_String(self.ticket, serializer);
     sse_encode_String(self.endpointId, serializer);
+    sse_encode_bool(self.overUsb, serializer);
   }
 
   @protected

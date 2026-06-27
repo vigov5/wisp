@@ -41,7 +41,8 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
   }) : _pairingStreamFactory =
            pairingStreamFactory ?? rust_receiver.watchReceiverPairing,
        _transferStreamFactory =
-           transferStreamFactory ?? rust_receiver.startReceiverTransferListener {
+           transferStreamFactory ??
+           rust_receiver.startReceiverTransferListener {
     final seeded = pairingCache?.loadIfFresh(
       identity: PairingCacheRepository.buildIdentity(
         deviceName: deviceName,
@@ -262,6 +263,7 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
             code: peer.code,
             ticket: peer.ticket,
             endpointId: peer.endpointId,
+            overUsb: peer.overUsb,
           ),
         )
         .toList(growable: false);

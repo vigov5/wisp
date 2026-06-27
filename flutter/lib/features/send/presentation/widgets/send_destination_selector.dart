@@ -712,74 +712,103 @@ class _NearbyDeviceTile extends ConsumerWidget {
                   : kBorder,
             ),
           ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+          child: Stack(
+            clipBehavior: Clip.none,
             children: [
-              Icon(icon, size: 22, color: isSelected ? kAccentCyan : kMuted),
-              const SizedBox(height: 8),
-              Text(
-                name.primary,
-                style: wispSans(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  color: kInk,
-                  height: 1.18,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-              ),
-              if (name.broadcast != null) ...[
-                const SizedBox(height: 2),
-                Text(
-                  name.broadcast!,
-                  style: wispSans(
-                    fontSize: 9.5,
-                    fontWeight: FontWeight.w400,
-                    color: kMuted,
-                    height: 1.1,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                ),
-              ],
-              if (receiver.endpointId.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Tooltip(
-                  message:
-                      'Identity badge (from public key) — same color = same device.',
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: colorFromPubkey(
-                        receiver.endpointId,
-                      ).withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: colorFromPubkey(
-                          receiver.endpointId,
-                        ).withValues(alpha: 0.45),
-                        width: 0.8,
+              if (receiver.overUsb)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  child: Tooltip(
+                    message: 'Reachable over the USB cable',
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: kAccentDirect.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.usb_rounded,
+                        size: 13,
+                        color: kAccentDirect,
                       ),
                     ),
-                    child: Text(
-                      shortPubkey(receiver.endpointId),
+                  ),
+                ),
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    icon,
+                    size: 22,
+                    color: isSelected ? kAccentCyan : kMuted,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    name.primary,
+                    style: wispSans(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: kInk,
+                      height: 1.18,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                  ),
+                  if (name.broadcast != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      name.broadcast!,
                       style: wispSans(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: HSLColor.fromColor(
-                          colorFromPubkey(receiver.endpointId),
-                        ).withLightness(0.32).toColor(),
-                        letterSpacing: 0.4,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w400,
+                        color: kMuted,
+                        height: 1.1,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                  if (receiver.endpointId.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Tooltip(
+                      message:
+                          'Identity badge (from public key) — same color = same device.',
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colorFromPubkey(
+                            receiver.endpointId,
+                          ).withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: colorFromPubkey(
+                              receiver.endpointId,
+                            ).withValues(alpha: 0.45),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: Text(
+                          shortPubkey(receiver.endpointId),
+                          style: wispSans(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: HSLColor.fromColor(
+                              colorFromPubkey(receiver.endpointId),
+                            ).withLightness(0.32).toColor(),
+                            letterSpacing: 0.4,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
-              ],
+                  ],
+                ],
+              ),
             ],
           ),
         ),

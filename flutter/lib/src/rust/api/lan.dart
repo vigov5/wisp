@@ -58,6 +58,10 @@ class NearbyReceiverInfo {
   final String ticket;
   final String endpointId;
 
+  /// True when the receiver advertises a USB-cable address (AOA tunnel or
+  /// USB-tether), so the send UI can badge its nearby tile as a cable peer.
+  final bool overUsb;
+
   const NearbyReceiverInfo({
     required this.fullname,
     required this.label,
@@ -65,6 +69,7 @@ class NearbyReceiverInfo {
     required this.code,
     required this.ticket,
     required this.endpointId,
+    required this.overUsb,
   });
 
   @override
@@ -74,7 +79,8 @@ class NearbyReceiverInfo {
       deviceType.hashCode ^
       code.hashCode ^
       ticket.hashCode ^
-      endpointId.hashCode;
+      endpointId.hashCode ^
+      overUsb.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -86,7 +92,8 @@ class NearbyReceiverInfo {
           deviceType == other.deviceType &&
           code == other.code &&
           ticket == other.ticket &&
-          endpointId == other.endpointId;
+          endpointId == other.endpointId &&
+          overUsb == other.overUsb;
 }
 
 /// Heuristic info about a detected USB-tethering (IP-over-USB) link, surfaced

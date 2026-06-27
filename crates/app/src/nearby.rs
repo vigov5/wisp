@@ -18,8 +18,11 @@ pub async fn scan_nearby_receivers(timeout_secs: u64) -> AppResult<Vec<NearbyRec
         // Best effort: extract EndpointId from the ticket so the UI can show a
         // pubkey-derived color/badge. A malformed ticket leaves it empty —
         // dial would have failed anyway, so the empty pubkey is informational.
-        let endpoint_id = match wisp_core::util::decode_ticket(&receiver.ticket) {
-            Ok(addr) => addr.id.to_string(),
+        let (endpoint_id, over_usb) = match wisp_core::util::decode_ticket(&receiver.ticket) {
+            Ok(addr) => (
+                addr.id.to_string(),
+                wisp_core::lan::addr_uses_usb_cable(&addr),
+            ),
             Err(err) => {
                 tracing::debug!(
                     target: "wisp_app::nearby",
@@ -27,7 +30,7 @@ pub async fn scan_nearby_receivers(timeout_secs: u64) -> AppResult<Vec<NearbyRec
                     error = %err,
                     "decode_ticket failed for nearby receiver — pubkey badge will be empty"
                 );
-                String::new()
+                (String::new(), false)
             }
         };
         by_fullname.insert(
@@ -42,6 +45,7 @@ pub async fn scan_nearby_receivers(timeout_secs: u64) -> AppResult<Vec<NearbyRec
                 code: receiver.code,
                 ticket: receiver.ticket,
                 endpoint_id,
+                over_usb,
             },
         );
     }
