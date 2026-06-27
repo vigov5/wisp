@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../application/controller.dart';
+import '../application/manifest.dart';
+import '../application/received_file_opener.dart';
 import '../application/saved_folder_opener.dart';
 import '../application/service.dart';
 import '../application/result_view_data.dart';
@@ -58,6 +60,28 @@ class TransfersFeature extends ConsumerWidget {
             onDone: () => ref
                 .read(transfersServiceProvider.notifier)
                 .dismissTransferResult(),
+            onOpenFile: (item) async {
+              final messenger = ScaffoldMessenger.of(context);
+              final status = await openReceivedFile(
+                relativePath: item.path,
+                downloadRoot: settings.downloadRoot,
+                source: ref.read(transfersServiceSourceProvider),
+              );
+              final message = switch (status) {
+                ReceivedFileOpenStatus.opened => null,
+                ReceivedFileOpenStatus.notReady =>
+                  'Still saving this file — try again in a moment.',
+                ReceivedFileOpenStatus.notFound => "Couldn't find this file.",
+                ReceivedFileOpenStatus.noHandler =>
+                  'No app on this device can open this file type.',
+                ReceivedFileOpenStatus.unsupported =>
+                  "Opening files isn't supported here.",
+                ReceivedFileOpenStatus.error => "Couldn't open this file.",
+              };
+              if (message != null) {
+                messenger.showSnackBar(SnackBar(content: Text(message)));
+              }
+            },
             onOpenSavedFolder:
                 state.phase == TransferSessionPhase.completed &&
                     canOpenSavedFolderAction
@@ -87,11 +111,13 @@ Widget _buildTransferResultCard({
   required VoidCallback onDone,
   required VoidCallback? onOpenSavedFolder,
   required String? openSavedFolderLabel,
+  required void Function(TransferManifestItem item) onOpenFile,
 }) {
   return TransferResultCard(
     viewData: viewData,
     onPrimary: onDone,
     onSecondary: onOpenSavedFolder,
     secondaryLabel: openSavedFolderLabel,
+    onOpenFile: onOpenFile,
   );
 }

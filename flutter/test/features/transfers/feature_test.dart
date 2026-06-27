@@ -593,6 +593,74 @@ void main() {
     expect(openedPaths, equals(<String>[testAppSettings.downloadRoot]));
   });
 
+  testWidgets('successful receive shows a per-file open button on every file', (
+    tester,
+  ) async {
+    final source = FakeReceiverServiceSource();
+    final router = _buildReceiveFeatureRouter(size: const Size(440, 560));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          transferReviewAnimationProvider.overrideWithValue(false),
+          initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          receiverServiceSourceProvider.overrideWithValue(source),
+          transfersServiceSourceProvider.overrideWithValue(source),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+
+    source.emitIncomingOffer(senderName: 'Maya');
+    await tester.pumpAndSettle();
+    await _waitForReceiveTransferRoute(tester, router);
+
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    await tester.pump();
+
+    source.emitCompletedTransfer(senderName: 'Maya', saveRootLabel: 'Downloads');
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+
+    // The default offer carries two files, and the result manifest is expanded,
+    // so there's one open button per file row.
+    expect(find.byIcon(Icons.open_in_new_rounded), findsNWidgets(2));
+  });
+
+  testWidgets('cancelled receive shows no per-file open buttons', (
+    tester,
+  ) async {
+    final source = FakeReceiverServiceSource();
+    final router = _buildReceiveFeatureRouter(size: const Size(440, 560));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          transferReviewAnimationProvider.overrideWithValue(false),
+          initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          receiverServiceSourceProvider.overrideWithValue(source),
+          transfersServiceSourceProvider.overrideWithValue(source),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+
+    source.emitIncomingOffer(senderName: 'Maya');
+    await tester.pumpAndSettle();
+    await _waitForReceiveTransferRoute(tester, router);
+
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    await tester.pump();
+
+    source.emitCancelledTransfer(senderName: 'Maya');
+    await tester.pumpAndSettle();
+
+    // Not all files made it to disk, so opening individual files is disallowed.
+    expect(find.byIcon(Icons.open_in_new_rounded), findsNothing);
+  });
+
   testWidgets('done on a completed transfer returns to idle', (tester) async {
     final source = FakeReceiverServiceSource();
     final router = _buildReceiveFeatureRouter(size: const Size(440, 560));

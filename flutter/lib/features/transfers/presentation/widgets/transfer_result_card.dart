@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:app/theme/wisp_theme.dart';
 import 'package:app/features/send/presentation/widgets/recipient_avatar.dart';
+import 'package:app/features/transfers/application/manifest.dart';
 import 'package:app/features/transfers/application/result_view_data.dart';
 import 'package:app/features/transfers/presentation/widgets/transfer_manifest_panel.dart';
 import 'sending_connection_strip.dart';
@@ -15,12 +16,17 @@ class TransferResultCard extends StatelessWidget {
     this.onPrimary,
     this.onSecondary,
     this.secondaryLabel,
+    this.onOpenFile,
   });
 
   final TransferResultViewData viewData;
   final VoidCallback? onPrimary;
   final VoidCallback? onSecondary;
   final String? secondaryLabel;
+
+  /// Per-file "open" callback for the manifest list. Non-null only on a
+  /// successful receive, where every file is on disk and can be opened.
+  final void Function(TransferManifestItem item)? onOpenFile;
 
   @override
   Widget build(BuildContext context) {
@@ -53,8 +59,11 @@ class TransferResultCard extends StatelessWidget {
                 // On a successful receive every file is saved — show the same
                 // success ticks the sender shows. Cancelled/failed keep the
                 // neutral file icons (not all files made it).
-                allComplete:
-                    viewData.outcome == TransferResultOutcome.success,
+                allComplete: viewData.outcome == TransferResultOutcome.success,
+                // Only a successful receive has every file on disk to open.
+                onOpenFile: viewData.outcome == TransferResultOutcome.success
+                    ? onOpenFile
+                    : null,
               ),
         footer: Row(
           children: [

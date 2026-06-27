@@ -111,7 +111,7 @@ class AndroidMediaStore {
     String relativeFilePath,
   ) async {
     if (!Platform.isAndroid) return null;
-    final mimeType = _guessMimeType(relativeFilePath);
+    final mimeType = guessMimeType(relativeFilePath);
     try {
       final result = await _channel.invokeMethod<String>('saveToDownloads', {
         'srcPath': srcAbsPath,
@@ -145,6 +145,27 @@ class AndroidMediaStore {
     }
   }
 
+  /// Opens a single received file at [uri] (a `content://` document /
+  /// MediaStore URI returned by [saveToSafUri] / [saveToDownloads]) with the
+  /// device's default app via `ACTION_VIEW`.
+  ///
+  /// Returns `true` if an activity was launched, `false` if no installed app
+  /// can handle [mimeType] (or on a non-Android platform). Other failures throw
+  /// on the native side and surface here as `false`.
+  static Future<bool> openFileUri(String uri, String mimeType) async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final ok = await _channel.invokeMethod<bool>('openFileUri', {
+        'uri': uri,
+        'mime': mimeType,
+      });
+      return ok ?? false;
+    } on PlatformException catch (e) {
+      debugPrint('[AndroidMediaStore] openFileUri failed: ${e.message}');
+      return false;
+    }
+  }
+
   /// Deletes the temp receive cache directory at [cacheRoot].
   /// Errors are silently ignored (best-effort cleanup).
   static Future<void> cleanupReceiveCache(String cacheRoot) async {
@@ -159,7 +180,7 @@ class AndroidMediaStore {
   }
 
   /// Returns a basic MIME type based on the file extension.
-  static String _guessMimeType(String filePath) {
+  static String guessMimeType(String filePath) {
     final ext = filePath.split('.').last.toLowerCase();
     return _mimeMap[ext] ?? 'application/octet-stream';
   }

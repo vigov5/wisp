@@ -16,6 +16,7 @@ import android.os.PowerManager
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.documentfile.provider.DocumentFile
@@ -46,6 +47,7 @@ class MainActivity : FlutterFragmentActivity() {
         private const val REQUEST_CODE_PICK_FOLDER = 2002
         private const val REQUEST_CODE_PICK_SAVE_FOLDER = 2003
         private const val REQUEST_CODE_POST_NOTIF = 4801
+        private const val OPEN_TAG = "WispOpenFolder"
     }
 
     private var pendingResult: MethodChannel.Result? = null
@@ -195,6 +197,7 @@ class MainActivity : FlutterFragmentActivity() {
                 }
                 "saveToSafUri" -> saveToSafUri(call, result)
                 "openSavedFolder" -> openSavedFolder(call, result)
+                "openFileUri" -> openFileUri(call, result)
                 else -> result.notImplemented()
             }
         }
@@ -683,32 +686,145 @@ class MainActivity : FlutterFragmentActivity() {
     // user still ends up looking at where their files landed.
     private fun openSavedFolder(call: MethodCall, result: MethodChannel.Result) {
         val path = call.argument<String>("path").orEmpty()
+        Log.i(OPEN_TAG, "openSavedFolder path=$path")
         try {
-            val intent: Intent = if (path.startsWith("content://")) {
+            val opened: Boolean = if (path.startsWith("content://")) {
+                // The user picked a SAF folder — open *that* folder. We hold a
+                // persisted permission for it, so we can pass the URI grant.
                 val treeUri = Uri.parse(path)
                 val docId = android.provider.DocumentsContract.getTreeDocumentId(treeUri)
                 val docUri = android.provider.DocumentsContract
                     .buildDocumentUriUsingTree(treeUri, docId)
-                Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(
-                        docUri,
-                        android.provider.DocumentsContract.Document.MIME_TYPE_DIR,
-                    )
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
+                openFolderInDocumentsUi(docUri, treeUri, grant = true)
             } else {
-                Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS)
+                // No SAF folder chosen: the stored path is the app-private dir,
+                // but files actually land in the PUBLIC Download/Wisp via
+                // MediaStore. Open that exact folder (not the generic Downloads
+                // root) by addressing it through the external-storage documents
+                // provider.
+                val publicDir = android.provider.DocumentsContract.buildDocumentUri(
+                    "com.android.externalstorage.documents",
+                    "primary:Download/Wisp",
+                )
+                Log.i(OPEN_TAG, "non-SAF path; opening public Download/Wisp = $publicDir")
+                // We don't hold a permission for this public document URI, so
+                // we must NOT add the URI grant flags — doing so makes
+                // startActivity throw SecurityException. DocumentsUI opens it
+                // with its own storage access.
+                openFolderInDocumentsUi(publicDir, null, grant = false)
             }
-
-            try {
-                startActivity(intent)
-            } catch (_: ActivityNotFoundException) {
-                // Some Files apps reject the directory MIME type; fall back
-                // to the generic Downloads view so the button never silently
-                // fails on the user.
+            if (!opened) {
+                // No handler navigated to the folder — the generic Downloads
+                // view is the least-wrong last resort.
+                Log.w(OPEN_TAG, "no folder handler; falling back to Downloads view")
                 startActivity(Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS))
             }
             result.success(null)
+        } catch (e: Exception) {
+            Log.e(OPEN_TAG, "openSavedFolder failed", e)
+            result.error("OPEN_FAILED", e.message, null)
+        }
+    }
+
+    // Opens a folder ([docUri], optional [treeUri] for SAF) in the device's file
+    // browser. Different Files apps register for different shapes of this intent,
+    // so we try several. Order matters: pin DocumentsUI (the system file
+    // browser) FIRST — the generic, un-pinned ACTION_VIEW dir resolves to the
+    // *Downloads viewer* on some devices, which ignores our URI and just shows
+    // Downloads. Returns true if an activity was launched.
+    private fun openFolderInDocumentsUi(docUri: Uri, treeUri: Uri?, grant: Boolean): Boolean {
+        val dirMime = android.provider.DocumentsContract.Document.MIME_TYPE_DIR
+        // `docsUi` is whichever app handled the folder picker — i.e. the device's
+        // real DocumentsUI, even on OEMs that rename it off the AOSP/Google
+        // package names.
+        val docsUi = resolveDocumentsUiPackage()
+        Log.i(OPEN_TAG, "documentsUi package=$docsUi docUri=$docUri tree=$treeUri grant=$grant")
+        return (docsUi != null && tryViewFolder(docUri, dirMime, docsUi, grant)) ||
+            (treeUri != null && docsUi != null && tryViewFolder(treeUri, dirMime, docsUi, grant)) ||
+            tryViewFolder(docUri, dirMime, "com.google.android.documentsui", grant) ||
+            tryViewFolder(docUri, dirMime, "com.android.documentsui", grant) ||
+            tryViewFolder(docUri, dirMime, null, grant) ||
+            (treeUri != null && tryViewFolder(treeUri, dirMime, null, grant)) ||
+            tryViewFolder(docUri, "resource/folder", null, grant) ||
+            tryViewFolder(docUri, null, null, grant)
+    }
+
+    // The package of the device's DocumentsUI — i.e. whatever app handles the
+    // folder picker (ACTION_OPEN_DOCUMENT_TREE). That same app's file browser is
+    // the right target for re-opening a SAF folder, including on OEMs that don't
+    // use the AOSP/Google `documentsui` package names. Null if none resolves.
+    private fun resolveDocumentsUiPackage(): String? {
+        return Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            .resolveActivity(packageManager)
+            ?.packageName
+    }
+
+    // Tries to open a SAF *folder* via ACTION_VIEW. [pkg] optionally pins a
+    // specific Files/Documents app. Returns true only if an activity was
+    // actually launched (false on ActivityNotFoundException so the caller falls
+    // through to the next strategy). We do NOT gate on resolveActivity() — on
+    // Android 11+ it can return null for a perfectly launchable intent due to
+    // package-visibility rules; its result is logged for diagnostics only.
+    private fun tryViewFolder(uri: Uri, mime: String?, pkg: String?, grant: Boolean): Boolean {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            if (mime != null) setDataAndType(uri, mime) else data = uri
+            if (pkg != null) setPackage(pkg)
+            // Only grant when we actually hold a permission for [uri] (SAF). For
+            // public document URIs we don't own, granting throws SecurityException.
+            if (grant) {
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+        }
+        val resolved = intent.resolveActivity(packageManager)
+        return try {
+            startActivity(intent)
+            Log.i(OPEN_TAG, "opened folder uri=$uri mime=$mime pkg=$pkg resolved=$resolved")
+            true
+        } catch (e: Exception) {
+            // ActivityNotFoundException (no handler) or SecurityException
+            // (target activity not exported for a pinned package) — either way,
+            // fall through to the next strategy rather than aborting the chain.
+            Log.i(OPEN_TAG, "no handler uri=$uri mime=$mime pkg=$pkg resolved=$resolved (${e.javaClass.simpleName})")
+            false
+        }
+    }
+
+    // Fires an ACTION_VIEW for a single file [uri] (with optional [mime]),
+    // granting read access. Returns true if an activity was launched, false if
+    // no app handles it — so callers can fall through to an alternative intent.
+    private fun tryViewIntent(uri: Uri, mime: String?): Boolean {
+        return try {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                if (mime != null) setDataAndType(uri, mime) else data = uri
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+            startActivity(intent)
+            true
+        } catch (_: ActivityNotFoundException) {
+            false
+        }
+    }
+
+    // Opens a single received file at [uri] (a content:// document/MediaStore
+    // URI) with the device's default app. Returns true if launched, false if
+    // no installed app can handle the file's MIME type.
+    private fun openFileUri(call: MethodCall, result: MethodChannel.Result) {
+        val uriStr = call.argument<String>("uri")
+            ?: return result.error("INVALID", "uri required", null)
+        val mime = call.argument<String>("mime") ?: "*/*"
+        try {
+            val uri = Uri.parse(uriStr)
+            // Try the precise MIME first, then a wildcard so a chooser can still
+            // appear for types the guesser got wrong / didn't know.
+            val opened = tryViewIntent(uri, mime) ||
+                (mime != "*/*" && tryViewIntent(uri, "*/*"))
+            result.success(opened)
         } catch (e: Exception) {
             result.error("OPEN_FAILED", e.message, null)
         }

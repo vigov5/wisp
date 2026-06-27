@@ -15,6 +15,7 @@ class TransferManifestPanel extends StatelessWidget {
     this.progress,
     this.initiallyExpanded = false,
     this.allComplete = false,
+    this.onOpenFile,
   });
 
   final TransferManifestPanelMode mode;
@@ -25,6 +26,11 @@ class TransferManifestPanel extends StatelessWidget {
   /// Forwarded to [ActiveTransferFileList] (liveList mode) to show success
   /// ticks on every file when there's no live progress stream.
   final bool allComplete;
+
+  /// Forwarded to [ActiveTransferFileList] (liveList mode): per-file "open"
+  /// buttons on the receive finish screen. `null` (no buttons) in previewTree
+  /// mode and everywhere off the receive finish screen.
+  final void Function(TransferManifestItem item)? onOpenFile;
 
   @override
   Widget build(BuildContext context) {
@@ -38,6 +44,7 @@ class TransferManifestPanel extends StatelessWidget {
         progress: progress,
         initiallyExpanded: initiallyExpanded,
         allComplete: allComplete,
+        onOpenFile: onOpenFile,
       ),
     };
   }

@@ -11,6 +11,7 @@ class ActiveTransferFileList extends StatefulWidget {
     this.progress,
     this.initiallyExpanded = false,
     this.allComplete = false,
+    this.onOpenFile,
   });
 
   final List<TransferManifestItem> items;
@@ -21,6 +22,12 @@ class ActiveTransferFileList extends StatefulWidget {
   /// stream. Used on the result card after a successful transfer so the file
   /// list shows the same success ticks the sender shows.
   final bool allComplete;
+
+  /// When non-null, every file row (incl. files nested in folders) and the
+  /// single-file header show a trailing "open" button that invokes this with
+  /// the tapped item. Only wired on the receive finish screen — `null`
+  /// everywhere else (send side, in-progress receive) so no button appears.
+  final void Function(TransferManifestItem item)? onOpenFile;
 
   @override
   State<ActiveTransferFileList> createState() => _ActiveTransferFileListState();
@@ -136,6 +143,10 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                       ],
                     ),
                   ),
+                  if (isSingleFile && widget.onOpenFile != null)
+                    _OpenFileButton(
+                      onPressed: () => widget.onOpenFile!(widget.items.first),
+                    ),
                   if (!isSingleFile)
                     Icon(
                       _isExpanded
@@ -232,6 +243,10 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                             color: kMuted,
                           ),
                         ),
+                        if (widget.onOpenFile != null)
+                          _OpenFileButton(
+                            onPressed: () => widget.onOpenFile!(item),
+                          ),
                       ],
                     ),
                   );
@@ -240,6 +255,29 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _OpenFileButton extends StatelessWidget {
+  const _OpenFileButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: IconButton(
+        onPressed: onPressed,
+        icon: const Icon(Icons.open_in_new_rounded, size: 18),
+        color: kAccentCyan,
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        tooltip: 'Open',
+        splashRadius: 20,
       ),
     );
   }

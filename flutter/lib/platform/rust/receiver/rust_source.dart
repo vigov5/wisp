@@ -80,6 +80,20 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
   /// default `Downloads/Wisp/` via MediaStore.
   String? androidSaveUri;
 
+  /// Android only: per-file `content://` URIs from the most recent transfer's
+  /// post-download save step, keyed by the transfer-relative path (forward
+  /// slashes). Populated by [_saveFilesToMediaStore] as each file lands; read
+  /// by [savedReceivedFileUri] so the finish screen can open an individual file
+  /// at its exact final URI (immune to MediaStore collision renames).
+  final Map<String, String> _savedReceivedUris = {};
+
+  /// The `content://` URI a received file was saved to, or `null` if it hasn't
+  /// finished saving yet (the Android save runs in the background after the
+  /// `completed` event) or wasn't part of the last transfer. [relativePath] is
+  /// the transfer-relative path; separators are normalised to forward slashes.
+  String? savedReceivedFileUri(String relativePath) =>
+      _savedReceivedUris[relativePath.replaceAll('\\', '/')];
+
   final ReceiverPairingStreamFactory _pairingStreamFactory;
   final ReceiverTransferStreamFactory _transferStreamFactory;
   final StreamController<ReceiverServiceState> _stateController =
@@ -455,6 +469,9 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
     final safUri = androidSaveUri;
     // The completed event has files: [] but plan.files has all paths.
     final planFiles = event.plan?.files ?? [];
+    // Fresh transfer — drop any URIs cached from a previous one so the finish
+    // screen's open buttons can't resolve to a stale file.
+    _savedReceivedUris.clear();
     debugPrint(
       '[receiver] Android post-transfer: saving ${planFiles.length} file(s) '
       '${safUri != null ? "to SAF folder" : "to MediaStore Downloads/Wisp"}',
@@ -473,6 +490,9 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
         saved = await AndroidMediaStore.saveToDownloads(srcPath, relativePath);
       }
       if (saved != null) {
+        // Record the exact final URI so an individual file can be opened from
+        // the finish screen without re-deriving (and possibly mis-guessing) it.
+        _savedReceivedUris[relativePath] = saved;
         debugPrint('[receiver] Android saved: $relativePath → $saved');
       } else {
         debugPrint('[receiver] Android save failed for: $relativePath');
