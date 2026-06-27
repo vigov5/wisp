@@ -686,7 +686,6 @@ class MainActivity : FlutterFragmentActivity() {
     // user still ends up looking at where their files landed.
     private fun openSavedFolder(call: MethodCall, result: MethodChannel.Result) {
         val path = call.argument<String>("path").orEmpty()
-        Log.i(OPEN_TAG, "openSavedFolder path=$path")
         try {
             val opened: Boolean = if (path.startsWith("content://")) {
                 // The user picked a SAF folder — open *that* folder. We hold a
@@ -706,7 +705,6 @@ class MainActivity : FlutterFragmentActivity() {
                     "com.android.externalstorage.documents",
                     "primary:Download/Wisp",
                 )
-                Log.i(OPEN_TAG, "non-SAF path; opening public Download/Wisp = $publicDir")
                 // We don't hold a permission for this public document URI, so
                 // we must NOT add the URI grant flags — doing so makes
                 // startActivity throw SecurityException. DocumentsUI opens it
@@ -716,7 +714,6 @@ class MainActivity : FlutterFragmentActivity() {
             if (!opened) {
                 // No handler navigated to the folder — the generic Downloads
                 // view is the least-wrong last resort.
-                Log.w(OPEN_TAG, "no folder handler; falling back to Downloads view")
                 startActivity(Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS))
             }
             result.success(null)
@@ -738,7 +735,6 @@ class MainActivity : FlutterFragmentActivity() {
         // real DocumentsUI, even on OEMs that rename it off the AOSP/Google
         // package names.
         val docsUi = resolveDocumentsUiPackage()
-        Log.i(OPEN_TAG, "documentsUi package=$docsUi docUri=$docUri tree=$treeUri grant=$grant")
         return (docsUi != null && tryViewFolder(docUri, dirMime, docsUi, grant)) ||
             (treeUri != null && docsUi != null && tryViewFolder(treeUri, dirMime, docsUi, grant)) ||
             tryViewFolder(docUri, dirMime, "com.google.android.documentsui", grant) ||
@@ -778,16 +774,13 @@ class MainActivity : FlutterFragmentActivity() {
                 )
             }
         }
-        val resolved = intent.resolveActivity(packageManager)
         return try {
             startActivity(intent)
-            Log.i(OPEN_TAG, "opened folder uri=$uri mime=$mime pkg=$pkg resolved=$resolved")
             true
         } catch (e: Exception) {
             // ActivityNotFoundException (no handler) or SecurityException
             // (target activity not exported for a pinned package) — either way,
             // fall through to the next strategy rather than aborting the chain.
-            Log.i(OPEN_TAG, "no handler uri=$uri mime=$mime pkg=$pkg resolved=$resolved (${e.javaClass.simpleName})")
             false
         }
     }
