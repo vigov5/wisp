@@ -197,6 +197,9 @@ void main() {
 
       expect(find.byType(ManifestTreeCard), findsOneWidget);
       expect(find.byType(ActiveTransferFileList), findsNothing);
+      // While connecting, the footer offers Back (return to draft) next to
+      // Cancel.
+      expect(find.text('Back'), findsOneWidget);
 
       fakeSource.emit(
         SendTransferUpdate(
@@ -242,6 +245,8 @@ void main() {
 
       expect(find.byType(ManifestTreeCard), findsNothing);
       expect(find.byType(ActiveTransferFileList), findsOneWidget);
+      // Once bytes are flowing, Back is gone — only Cancel remains.
+      expect(find.text('Back'), findsNothing);
     },
   );
 
@@ -527,6 +532,67 @@ void main() {
       expect((restored as SendStateDrafting).items, hasLength(1));
 
       // Router landed on the draft stub.
+      expect(find.text('draft stub'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'back button while connecting cancels and returns to the draft',
+    (WidgetTester tester) async {
+      // While still connecting (no bytes sent), the user can bail out of the
+      // attempt without going all the way home: Back cancels the connect, rolls
+      // the transfer back into a draft with the same file, and lands on
+      // /send/draft so they can pick a different connect method.
+      final fakeSource = FakeSendTransferSource();
+      final container = _buildContainer(fakeSource);
+      addTearDown(container.dispose);
+      addTearDown(fakeSource.close);
+
+      final controller = container.read(sendControllerProvider.notifier);
+      controller.beginDraft([
+        SendPickedFile(
+          path: '/tmp/report.pdf',
+          name: 'report.pdf',
+          sizeBytes: BigInt.from(1024),
+        ),
+      ]);
+      controller.updateDestinationCode('ABC123');
+      final request = controller.buildSendRequest()!;
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: _buildRouter(request)),
+        ),
+      );
+      await _pumpRoute(tester);
+
+      fakeSource.emit(
+        SendTransferUpdate(
+          phase: SendTransferUpdatePhase.connecting,
+          destinationLabel: 'Laptop',
+          statusMessage: 'Preparing offer.',
+          itemCount: BigInt.one,
+          totalSize: BigInt.from(1024),
+          bytesSent: BigInt.zero,
+          totalBytes: BigInt.from(1024),
+          plan: _buildPlan(),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump();
+
+      expect(find.text('Back'), findsOneWidget);
+      expect(find.text('Cancel transfer'), findsOneWidget);
+
+      await tester.tap(find.text('Back'));
+      await tester.pumpAndSettle();
+
+      // Connect aborted, state rolled back to a draft with the same file, and
+      // the router landed on the draft screen.
+      final restored = container.read(sendControllerProvider);
+      expect(restored, isA<SendStateDrafting>());
+      expect((restored as SendStateDrafting).items, hasLength(1));
       expect(find.text('draft stub'), findsOneWidget);
     },
   );

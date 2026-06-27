@@ -93,6 +93,19 @@ class _SendTransferRoutePageState extends ConsumerState<SendTransferRoutePage> {
       context.goSendDraft(files: const []);
     }
 
+    // "Back" path — shown alongside Cancel only while still connecting (no data
+    // sent yet). Aborts the in-flight connect and rolls the transfer back into
+    // the draft (cancelTransfer already does that state transition), then
+    // returns to the draft screen so the user can pick a different connect
+    // method or change the files. Empty `files` => reuse the restored draft.
+    void backToDraft() {
+      if (!mounted) {
+        return;
+      }
+      ref.read(sendControllerProvider.notifier).cancelTransfer();
+      context.goSendDraft(files: const []);
+    }
+
     return PopScope(
       canPop: _allowPop,
       onPopInvokedWithResult: (didPop, _) {
@@ -124,6 +137,7 @@ class _SendTransferRoutePageState extends ConsumerState<SendTransferRoutePage> {
                 viewData: viewData,
                 onExit: exitRoute,
                 onRetry: retryFromResult,
+                onBack: backToDraft,
               ),
             ),
           ),
@@ -140,12 +154,14 @@ class _TransferStateCard extends StatelessWidget {
     required this.viewData,
     required this.onExit,
     required this.onRetry,
+    required this.onBack,
   });
 
   final SendState state;
   final SendTransferPageData viewData;
   final VoidCallback onExit;
   final VoidCallback onRetry;
+  final VoidCallback onBack;
 
   @override
   Widget build(BuildContext context) {
@@ -232,6 +248,7 @@ class _TransferStateCard extends StatelessWidget {
         accent: accent,
         onExit: onExit,
         onRetry: onRetry,
+        onBack: onBack,
       ),
     );
   }
@@ -256,33 +273,58 @@ Widget _buildFooter({
   required Color accent,
   required VoidCallback onExit,
   required VoidCallback onRetry,
+  required VoidCallback onBack,
 }) {
   if (!showFooterButton) {
     return const SizedBox.shrink();
   }
 
   if (state is SendStateTransferring) {
-    return Row(
-      children: [
-        Expanded(
-          child: TextButton(
-            onPressed: onExit,
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFFB34A4A),
-              backgroundColor: const Color(0xFFB34A4A).withValues(alpha: 0.08),
-              minimumSize: const Size(0, 48),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(
-                  color: const Color(0xFFB34A4A).withValues(alpha: 0.15),
-                ),
-              ),
-            ),
-            child: const Text('Cancel transfer'),
+    final cancelButton = TextButton(
+      onPressed: onExit,
+      style: TextButton.styleFrom(
+        foregroundColor: const Color(0xFFB34A4A),
+        backgroundColor: const Color(0xFFB34A4A).withValues(alpha: 0.08),
+        minimumSize: const Size(0, 48),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(
+            color: const Color(0xFFB34A4A).withValues(alpha: 0.15),
           ),
         ),
-      ],
+      ),
+      child: const Text('Cancel transfer'),
     );
+
+    // Still connecting (no bytes sent yet): offer a lighter "Back" alongside
+    // Cancel so the user can return to the draft and pick a different connect
+    // method / files instead of aborting to home. Back takes 1/3, Cancel keeps
+    // the dominant 2/3 as the definitive escape.
+    if (state.transfer.phase == SendTransferPhase.connecting) {
+      return Row(
+        children: [
+          Expanded(
+            flex: 1,
+            child: OutlinedButton(
+              onPressed: onBack,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: kInk,
+                minimumSize: const Size(0, 48),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                side: BorderSide(color: kBorder),
+              ),
+              child: const Text('Back'),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(flex: 2, child: cancelButton),
+        ],
+      );
+    }
+
+    return Row(children: [Expanded(child: cancelButton)]);
   }
 
   if (state is! SendStateResult) {
