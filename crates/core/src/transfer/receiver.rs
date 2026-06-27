@@ -11,6 +11,7 @@ use iroh_blobs::{
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncRead;
@@ -554,11 +555,26 @@ async fn run_session(
 
     tracker.mark_finalizing(std::time::Instant::now());
     let finalizing_snapshot = tracker.snapshot(std::time::Instant::now());
+    // Cumulative bytes written out by the export step, shared with the
+    // heartbeat below so the receiver's own UI can animate a "saving to
+    // disk" bar (0 → total) during Phase 5 instead of sitting frozen at
+    // 100% for the whole export.  The wire frames keep reporting the
+    // canonical finalizing snapshot (bytes == total) purely as a QUIC
+    // keepalive — the sender already showed 100% and shouldn't see the
+    // bar walk backwards.
+    let exported_bytes = AtomicU64::new(0);
+    // Local event: the save just started, so the receiver bar resets to 0
+    // and climbs as files land.  Skipped entirely on the fast path
+    // (`ExportMode::TryReference` reflink/hardlink finishes before the
+    // first heartbeat tick), so there's no visible reset in practice.
     emit_receiver_event(
         &event_tx,
         ReceiverEvent::TransferProgress {
             session_id: session_id.clone(),
-            snapshot: finalizing_snapshot.clone(),
+            snapshot: TransferSnapshot {
+                bytes_transferred: 0,
+                ..finalizing_snapshot.clone()
+            },
         },
     );
     let _ = protocol_wire::write_receiver_message(
@@ -592,6 +608,7 @@ async fn run_session(
             &expected_transfer_files,
             &mut record,
             &record_dir,
+            &exported_bytes,
         );
         match run_with_progress_heartbeat(
             export_fut,
@@ -600,6 +617,8 @@ async fn run_session(
             &mut tracker,
             &mut cancel_rx,
             EXPORT_HEARTBEAT_INTERVAL,
+            &event_tx,
+            &exported_bytes,
         )
         .await
         {
@@ -868,14 +887,22 @@ pub async fn export_downloaded_collection(
     expected_files: &[ExpectedTransferFile],
     record: &mut TransferRecord,
     record_dir: &std::path::Path,
+    // Cumulative bytes exported so far.  Bumped after each file (and for
+    // already-exported files on a resume) so the caller's progress
+    // heartbeat can animate the finalize bar.  Pass a throwaway
+    // `&AtomicU64::new(0)` when progress isn't observed.
+    exported_bytes: &AtomicU64,
 ) -> Result<()> {
     let collection = Collection::load(root_hash, store.as_ref())
         .await
         .map_err(|source| TransferError::other("loading downloaded collection", source))?;
     let hashes: BTreeMap<_, _> = collection.into_iter().collect();
+    let mut exported_total = 0_u64;
     for exp in expected_files {
         if record.exported_files.contains(&exp.path) {
             info!("skipping already exported file: {}", exp.path);
+            exported_total = exported_total.saturating_add(exp.size);
+            exported_bytes.store(exported_total, Ordering::Relaxed);
             continue;
         }
 
@@ -895,7 +922,21 @@ pub async fn export_downloaded_collection(
             .export_with_opts(ExportOptions {
                 hash,
                 target: exp.destination.clone(),
-                mode: ExportMode::Copy,
+                // `TryReference` moves the blob out of the store and
+                // references it from the DB instead of copying every byte a
+                // second time (`Copy` was the bulk of the receiver's
+                // post-download lag — each byte hit the disk twice: once
+                // into `<out>/.wisp/transfers/<hash>/store`, then again to
+                // the destination).  The store lives on the same volume as
+                // the destination, so this is a reflink/hardlink/rename and
+                // finishes near-instantly.  iroh is free to fall back to a
+                // copy for tiny/inline blobs or stores that can't reference,
+                // so correctness is unchanged — only the common large-file
+                // path gets faster.  Safe against the post-completion record
+                // dir cleanup: the data already lives at the destination, so
+                // deleting the store afterwards just drops the now-redundant
+                // reference.
+                mode: ExportMode::TryReference,
             })
             .finish()
             .await
@@ -905,6 +946,8 @@ pub async fn export_downloaded_collection(
         record
             .save(record_dir)
             .map_err(|e| TransferError::other("saving record during export", e))?;
+        exported_total = exported_total.saturating_add(exp.size);
+        exported_bytes.store(exported_total, Ordering::Relaxed);
     }
     Ok(())
 }
@@ -1095,15 +1138,22 @@ mod tests {
         let (mut sender_recv, mut receiver_send) = duplex(8192);
         let (_cancel_tx, mut cancel_rx) = watch::channel(false);
 
-        // Fake export that takes ~250 ms.  At a 50 ms heartbeat that
+        // Fake export that takes ~250 ms and reports half its bytes
+        // exported partway through, so we can assert the local frames carry
+        // the climbing exported-byte count.  At a 50 ms heartbeat that
         // gives us at least 4 ticks (with set_missed_tick_behavior::Skip
         // we'll see fewer if the runtime stalls — pin the assertion at
         // ≥2 to keep CI green on slow runners).
+        let exported_bytes = AtomicU64::new(0);
         let slow_export = async {
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            exported_bytes.store(50, Ordering::Relaxed);
+            tokio::time::sleep(Duration::from_millis(130)).await;
+            exported_bytes.store(100, Ordering::Relaxed);
             Result::Ok(())
         };
 
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let outcome = run_with_progress_heartbeat(
             slow_export,
             &mut receiver_send,
@@ -1111,6 +1161,8 @@ mod tests {
             &mut tracker,
             &mut cancel_rx,
             Duration::from_millis(50),
+            &Some(event_tx),
+            &exported_bytes,
         )
         .await;
 
@@ -1140,6 +1192,29 @@ mod tests {
         assert!(
             heartbeats >= 2,
             "expected at least 2 heartbeat frames during the 250 ms export, got {heartbeats}",
+        );
+
+        // Local frames must mirror the climbing exported-byte count so the
+        // receiver's save bar animates instead of freezing.  The wire frames
+        // above stay pinned at the canonical snapshot (keepalive), but the
+        // local ones track `exported_bytes`.
+        let mut local_bytes = Vec::new();
+        while let Ok(event) = event_rx.try_recv() {
+            match event {
+                ReceiverEvent::TransferProgress { snapshot, .. } => {
+                    assert_eq!(snapshot.phase, TransferPhase::Finalizing);
+                    local_bytes.push(snapshot.bytes_transferred);
+                }
+                other => panic!("expected only local TransferProgress, got {other:?}"),
+            }
+        }
+        assert!(
+            local_bytes.iter().any(|&b| b > 0),
+            "expected at least one local frame with exported bytes > 0, got {local_bytes:?}",
+        );
+        assert!(
+            local_bytes.windows(2).all(|w| w[0] <= w[1]),
+            "local exported-byte count must be monotonic, got {local_bytes:?}",
         );
     }
 
@@ -1332,6 +1407,7 @@ mod tests {
             &expected,
             &mut record,
             &record_dir,
+            &AtomicU64::new(0),
         )
         .await
         .unwrap_err();
@@ -1525,6 +1601,7 @@ pub(super) enum HeartbeatOutcome {
 /// Heartbeat writes use `let _ = ...` semantics — a dropped frame is
 /// purely a missed keepalive backup; the actual completion outcome is
 /// still determined by `fut`.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_with_progress_heartbeat<F, W>(
     fut: F,
     progress_send: &mut W,
@@ -1532,6 +1609,13 @@ pub(super) async fn run_with_progress_heartbeat<F, W>(
     tracker: &mut ProgressTracker,
     cancel_rx: &mut watch::Receiver<bool>,
     interval: Duration,
+    // Local receiver-event sink: each tick also emits a `TransferProgress`
+    // carrying `exported_bytes` so the receiver's own UI animates the
+    // finalize/save bar instead of freezing at 100% during the export.
+    event_tx: &Option<mpsc::UnboundedSender<ReceiverEvent>>,
+    // Cumulative bytes exported by the wrapped future so far (see
+    // `export_downloaded_collection`).
+    exported_bytes: &AtomicU64,
 ) -> HeartbeatOutcome
 where
     F: std::future::Future<Output = Result<()>>,
@@ -1558,6 +1642,9 @@ where
             }
             _ = heartbeat.tick() => {
                 let snapshot = tracker.snapshot(std::time::Instant::now());
+                // Wire frame: canonical finalizing snapshot (bytes == total)
+                // — purely a QUIC keepalive backup for the sender, which
+                // already shows 100% and must not see the bar walk backwards.
                 let _ = protocol_wire::write_receiver_message(
                     progress_send,
                     &protocol_message::ReceiverMessage::TransferProgress(
@@ -1568,6 +1655,19 @@ where
                     ),
                 )
                 .await;
+                // Local frame: animate the receiver's save-to-disk bar with
+                // the real exported-byte count.
+                let exported = exported_bytes.load(Ordering::Relaxed);
+                emit_receiver_event(
+                    event_tx,
+                    ReceiverEvent::TransferProgress {
+                        session_id: session_id.to_owned(),
+                        snapshot: TransferSnapshot {
+                            bytes_transferred: exported.min(snapshot.total_bytes),
+                            ..snapshot
+                        },
+                    },
+                );
             }
         }
     }
