@@ -3,7 +3,10 @@ import 'package:app/features/receive/presentation/widgets/idle_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../support/test_overrides.dart';
 
 ReceiverIdleViewState _idleState() {
   return const ReceiverIdleViewState(
@@ -31,8 +34,11 @@ void main() {
     final semantics = tester.ensureSemantics();
     try {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(body: ReceiveIdleCard(state: _idleState())),
+        ProviderScope(
+          overrides: usbTestOverrides.cast(),
+          child: MaterialApp(
+            home: Scaffold(body: ReceiveIdleCard(state: _idleState())),
+          ),
         ),
       );
       await tester.pump();
@@ -59,8 +65,11 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(body: ReceiveIdleCard(state: _idleState())),
+      ProviderScope(
+        overrides: usbTestOverrides.cast(),
+        child: MaterialApp(
+          home: Scaffold(body: ReceiveIdleCard(state: _idleState())),
+        ),
       ),
     );
     await tester.pump();

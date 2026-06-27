@@ -24,6 +24,7 @@ import 'package:app/theme/wisp_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../support/fake_send_selection_picker.dart';
 import '../../../support/settings_test_overrides.dart';
+import '../../../support/test_overrides.dart';
 
 class FakeSendTransferSource implements SendTransferSource {
   final StreamController<SendTransferUpdate> _updates =
@@ -81,6 +82,7 @@ Future<ProviderContainer> _buildContainer({
       savedDevicesRepositoryProvider.overrideWithValue(
         SavedDevicesRepository(prefs: prefs),
       ),
+      ...usbTestOverrides,
       ...overrides,
     ],
   );

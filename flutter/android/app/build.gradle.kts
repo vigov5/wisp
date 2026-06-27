@@ -70,6 +70,23 @@ android {
                 signingConfigs.getByName("debug")
             }
         }
+        getByName("debug") {
+            // Debug APKs build only the ABIs listed here, which also restricts
+            // which Rust targets Cargokit compiles — a fat debug build (3 ABIs)
+            // is slow and huge. Defaults to arm64-v8a (the physical test device).
+            // To also build the x86_64 emulator ABI for a debug run, pass:
+            //   flutter build apk --debug -PdebugAbis=arm64-v8a,x86_64
+            // Release builds are unaffected and still ship every ABI.
+            val debugAbis = (project.findProperty("debugAbis") as String?)
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?: listOf("arm64-v8a")
+            ndk {
+                abiFilters.clear()
+                abiFilters.addAll(debugAbis)
+            }
+        }
     }
 }
 

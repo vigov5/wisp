@@ -134,12 +134,24 @@ class CargoKitPlugin implements Plugin<Project> {
 
             def platforms = com.flutter.gradle.FlutterPluginUtils.getTargetPlatforms(project).collect()
 
-            // Same thing addFlutterDependencies does in flutter.gradle.
-            // We only target 64-bit ABIs (aarch64 from the device + x86_64 for
-            // emulators), so the 32-bit android-x86 (i686) build is dropped to
-            // save disk + build time.
+            // For debug builds, compile only the Rust ABIs requested via the
+            // `debugAbis` gradle property (default arm64-v8a — the physical test
+            // device), mirroring app/build.gradle.kts's debug `abiFilters`. This
+            // keeps a debug build from compiling the armv7 + x86_64 Rust targets
+            // every time (slow). Override with e.g.
+            //   flutter build apk --debug -PdebugAbis=arm64-v8a,x86_64
+            // Release is untouched and keeps Flutter's full target-platform set.
+            // 32-bit android-x86 (i686) is never built.
             if (buildType == "debug") {
-                platforms.add("android-x64")
+                def abiToPlatform = [
+                    "arm64-v8a"  : "android-arm64",
+                    "armeabi-v7a": "android-arm",
+                    "x86_64"     : "android-x64",
+                ]
+                def debugAbis = (project.hasProperty("debugAbis")
+                    ? project.property("debugAbis")
+                    : "arm64-v8a").toString().split(",").collect { it.trim() }.findAll { it }
+                platforms = debugAbis.collect { abiToPlatform[it] }.findAll { it != null }
             }
 
             // The task name depends on plugin properties, which are not available

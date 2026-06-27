@@ -76,6 +76,27 @@ flutter pub run build_runner build --delete-conflicting-outputs
 
 - **Widget & Unit Tests:** `flutter test`
 
+### Building APKs (Android)
+
+Both the APK's bundled ABIs **and** which Rust targets Cargokit compiles are driven by the
+Gradle ABI config. A fat debug APK builds all three ABIs (~371 MB) and compiles three Rust
+targets — slow. The `debug` build type in `android/app/build.gradle.kts` restricts this via
+the `debugAbis` Gradle property (default `arm64-v8a`).
+
+| Goal | Command |
+| --- | --- |
+| Debug, fastest — physical arm64 device only (default) | `flutter build apk --debug` |
+| Debug + x86_64 emulator | `flutter build apk --debug -PdebugAbis=arm64-v8a,x86_64` |
+| Debug, x86_64 emulator only | `flutter build apk --debug -PdebugAbis=x86_64` |
+| Release, one APK per ABI | `flutter build apk --release --split-per-abi` |
+
+Notes:
+- `-PdebugAbis=<csv>` is debug-only; **release builds are unaffected** and still ship every ABI.
+- Do **not** use `--target-platform android-arm64` to slim a debug build — it does not restrict
+  the ABIs here (Cargokit still builds the other Rust targets).
+- Valid ABI values: `arm64-v8a`, `armeabi-v7a`, `x86_64`. The project never ships 32-bit x86 (i686).
+- Outputs land in `build/app/outputs/flutter-apk/`.
+
 ### Build Cache Cleanup
 
 Flutter + Rust bridge builds can consume a lot of disk space due to generated build artifacts.
