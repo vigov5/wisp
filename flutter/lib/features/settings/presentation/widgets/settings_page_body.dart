@@ -467,44 +467,6 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                           ),
                         ),
                         const SizedBox(height: 18),
-                        if (Platform.isAndroid) ...[
-                          SettingsSectionField(
-                            label: 'USB cable spike (dev)',
-                            child: InkWell(
-                              onTap: () => context.pushUsbSpike(),
-                              borderRadius: BorderRadius.circular(12),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 12,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: kSurface,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: kBorder),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        'Test direct phone-to-phone USB (AOA) link',
-                                        style: wispSans(
-                                          fontSize: 13,
-                                          color: kInk,
-                                        ),
-                                      ),
-                                    ),
-                                    const Icon(
-                                      Icons.chevron_right_rounded,
-                                      color: kMuted,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                        ],
                         SettingsSectionField(
                           label: 'Saved devices',
                           child: InkWell(

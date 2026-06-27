@@ -175,8 +175,6 @@ class UsbCableController extends Notifier<UsbCableState> {
         }
       case UsbAoaClosed():
         _reset();
-      case UsbAoaData():
-        break; // raw bytes only used by the dev spike
     }
   }
 

@@ -24,12 +24,6 @@ class UsbAoaClosed extends UsbAoaEvent {
   const UsbAoaClosed();
 }
 
-/// Raw bytes received over the cable (used by the Phase-1 spike round-trip).
-class UsbAoaData extends UsbAoaEvent {
-  const UsbAoaData(this.bytes);
-  final Uint8List bytes;
-}
-
 /// The IP-over-AOA tunnel came up; [ip] is this device's tunnel address.
 class UsbAoaTunnelUp extends UsbAoaEvent {
   const UsbAoaTunnelUp(this.ip);
@@ -43,13 +37,10 @@ class UsbAoaTunnelClosed extends UsbAoaEvent {
 
 /// Android-only bridge to the direct phone-to-phone USB (Android Open
 /// Accessory) link. The *sending* phone connects as USB host and drives the
-/// *receiving* phone into accessory mode; both then exchange bytes over the
-/// cable. No-op on every other platform.
-///
-/// Phase 1 surfaces the raw link (connect + byte round-trip) so it can be
-/// validated on hardware before the IP-over-AOA tunnel (path A) is built on
-/// top of it. Once that lands, the byte pump moves into native code and Dart
-/// only drives connection setup + status.
+/// *receiving* phone into accessory mode; the IP-over-AOA tunnel (path A) is
+/// then built on top so iroh can run over the cable. The byte pump lives in
+/// native code; Dart only drives connection setup + status. No-op on every
+/// other platform.
 class UsbAoa {
   static const _method = MethodChannel('dev.vigov5.wisp/usb_aoa');
   static const _events = EventChannel('dev.vigov5.wisp/usb_aoa/events');
@@ -57,21 +48,20 @@ class UsbAoa {
   static bool get isSupported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
-  // Cached so multiple listeners (the cable controller + the dev spike page)
-  // share ONE native EventChannel subscription. Two separate
-  // receiveBroadcastStream() calls would each register with the channel and the
-  // native side keeps only the last sink, silently starving the other listener.
+  // Cached so the stream is shared rather than re-subscribed: each
+  // receiveBroadcastStream() call registers with the channel and the native
+  // side keeps only the last sink, so a second subscription would silently
+  // starve the first.
   static Stream<UsbAoaEvent>? _eventStream;
 
-  /// Connection + data events from the native link. Emits [UsbAoaConnected],
-  /// [UsbAoaData], [UsbAoaTunnelUp], [UsbAoaTunnelClosed], and [UsbAoaClosed].
+  /// Connection events from the native link. Emits [UsbAoaConnected],
+  /// [UsbAoaTunnelUp], [UsbAoaTunnelClosed], and [UsbAoaClosed].
   static Stream<UsbAoaEvent> events() {
     if (!isSupported) return const Stream.empty();
     return _eventStream ??= _events.receiveBroadcastStream().map(_decodeEvent);
   }
 
   static UsbAoaEvent _decodeEvent(dynamic raw) {
-    if (raw is Uint8List) return UsbAoaData(raw);
     if (raw is Map) {
       switch (raw['event']) {
         case 'connected':
@@ -135,16 +125,6 @@ class UsbAoa {
     } on PlatformException {
       return false;
     } on MissingPluginException {
-      return false;
-    }
-  }
-
-  /// Spike helper: send [bytes] over the live link.
-  static Future<bool> send(Uint8List bytes) async {
-    if (!isSupported) return false;
-    try {
-      return await _method.invokeMethod<bool>('send', bytes) ?? false;
-    } on PlatformException {
       return false;
     }
   }

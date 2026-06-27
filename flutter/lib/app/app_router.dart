@@ -2,7 +2,6 @@ import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/about/presentation/about_page.dart';
-import '../features/dev/usb_aoa_spike_page.dart';
 import '../features/diagnostics/presentation/connection_test_page.dart';
 import '../features/identity/presentation/identity_backup_page.dart';
 import '../features/identity/presentation/identity_import_page.dart';
@@ -21,7 +20,6 @@ abstract final class AppRoutePaths {
   static const String settings = '/settings';
   static const String savedDevices = '/settings/saved-devices';
   static const String connectionTest = '/settings/connection-test';
-  static const String usbSpike = '/settings/usb-spike';
   static const String usbSetup = '/usb';
   static const String identityBackup = '/settings/identity-backup';
   static const String identityImport = '/settings/identity-import';
@@ -34,7 +32,6 @@ abstract final class AppRoutePaths {
   static const String settingsSegment = 'settings';
   static const String savedDevicesSegment = 'saved-devices';
   static const String connectionTestSegment = 'connection-test';
-  static const String usbSpikeSegment = 'usb-spike';
   static const String usbSetupSegment = 'usb';
   static const String identityBackupSegment = 'identity-backup';
   static const String identityImportSegment = 'identity-import';
@@ -52,8 +49,6 @@ extension AppRouteNavigation on BuildContext {
   void pushSavedDevices() => push(AppRoutePaths.savedDevices);
 
   void pushConnectionTest() => push(AppRoutePaths.connectionTest);
-
-  void pushUsbSpike() => push(AppRoutePaths.usbSpike);
 
   void pushUsbSetup() => push(AppRoutePaths.usbSetup);
 
@@ -95,11 +90,6 @@ GoRouter buildAppRouter({List<NavigatorObserver> observers = const []}) {
                 path: AppRoutePaths.connectionTestSegment,
                 builder: (context, state) =>
                     const TitleBarShell(child: ConnectionTestPage()),
-              ),
-              GoRoute(
-                path: AppRoutePaths.usbSpikeSegment,
-                builder: (context, state) =>
-                    const TitleBarShell(child: UsbAoaSpikePage()),
               ),
               GoRoute(
                 path: AppRoutePaths.identityBackupSegment,
