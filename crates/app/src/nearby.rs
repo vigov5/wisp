@@ -13,6 +13,7 @@ pub async fn scan_nearby_receivers(timeout_secs: u64) -> AppResult<Vec<NearbyRec
     .map_err(|_| AppError::DiscoveryFailed)?
     .map_err(|_| AppError::DiscoveryFailed)?;
 
+    let cable_nets = wisp_core::lan::local_usb_cable_nets();
     let mut by_fullname = BTreeMap::new();
     for receiver in receivers {
         // Best effort: extract EndpointId from the ticket so the UI can show a
@@ -21,7 +22,7 @@ pub async fn scan_nearby_receivers(timeout_secs: u64) -> AppResult<Vec<NearbyRec
         let (endpoint_id, over_usb) = match wisp_core::util::decode_ticket(&receiver.ticket) {
             Ok(addr) => (
                 addr.id.to_string(),
-                wisp_core::lan::addr_uses_usb_cable(&addr),
+                wisp_core::lan::addr_uses_usb_cable(&addr, &cable_nets),
             ),
             Err(err) => {
                 tracing::debug!(

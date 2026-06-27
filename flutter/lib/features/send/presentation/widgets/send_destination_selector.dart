@@ -697,45 +697,25 @@ class _NearbyDeviceTile extends ConsumerWidget {
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          width: 116,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFFF4F8FA) : kSurface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: isSelected
-                  ? const Color(0xFF8DBED4)
-                  : isStale
-                  ? kBorder.withValues(alpha: 0.5)
-                  : kBorder,
-            ),
-          ),
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              if (receiver.overUsb)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  child: Tooltip(
-                    message: 'Reachable over the USB cable',
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: kAccentDirect.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(
-                        Icons.usb_rounded,
-                        size: 13,
-                        color: kAccentDirect,
-                      ),
-                    ),
-                  ),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 116,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: BoxDecoration(
+                color: isSelected ? const Color(0xFFF4F8FA) : kSurface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: isSelected
+                      ? const Color(0xFF8DBED4)
+                      : isStale
+                      ? kBorder.withValues(alpha: 0.5)
+                      : kBorder,
                 ),
-              Column(
+              ),
+              child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
@@ -809,8 +789,28 @@ class _NearbyDeviceTile extends ConsumerWidget {
                   ],
                 ],
               ),
-            ],
-          ),
+            ),
+            if (receiver.overUsb)
+              Positioned(
+                top: 6,
+                left: 6,
+                child: Tooltip(
+                  message: 'Reachable over the USB cable',
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: kAccentDirect.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(
+                      Icons.usb_rounded,
+                      size: 13,
+                      color: kAccentDirect,
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );

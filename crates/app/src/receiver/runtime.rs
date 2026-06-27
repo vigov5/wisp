@@ -29,6 +29,12 @@ pub(super) struct ReceiverRuntime {
     registration: Option<ReceiverRegistration>,
     pub(super) discoverable_requested: bool,
     advertising: Option<LanReceiveAdvertisement>,
+    /// The offline ticket string backing the live [`advertising`] handle. Lets
+    /// [`reconcile_advertising`] detect when the local addresses changed (e.g.
+    /// the USB-cable tunnel came up, adding a `10.42.0.x` address) and re-publish
+    /// so peers can discover the new path — without a needless mDNS gap when the
+    /// addresses are unchanged.
+    advertised_ticket: Option<String>,
     offer_state: OfferState,
 }
 
@@ -62,6 +68,7 @@ impl ReceiverRuntime {
             registration: None,
             discoverable_requested: false,
             advertising: None,
+            advertised_ticket: None,
             offer_state: OfferState::Idle,
         }
     }
@@ -78,6 +85,7 @@ impl ReceiverRuntime {
             registration: None,
             discoverable_requested: false,
             advertising: None,
+            advertised_ticket: None,
             offer_state: OfferState::Idle,
         }
     }
@@ -125,6 +133,7 @@ impl ReceiverRuntime {
 
     pub(super) fn clear_advertising(&mut self) {
         self.advertising.take();
+        self.advertised_ticket = None;
     }
 
     pub(super) async fn close_endpoint(&self) {
@@ -472,18 +481,12 @@ impl ReceiverRuntime {
         }
     }
 
-    async fn reconcile_advertising(&mut self) {
+    pub(super) async fn reconcile_advertising(&mut self) {
         if !should_advertise(self.discoverable_requested, self.registration.is_some()) {
             self.clear_advertising();
             return;
         }
 
-        // Already advertising — keep the existing advertisement alive instead of
-        // tearing it down and re-creating it (which causes a gap in mDNS coverage
-        // and triggers repeated `lan_advertisement.starting` log entries).
-        if self.advertising.is_some() {
-            return;
-        }
         // Build the advertised ticket WITHOUT `endpoint.online().await`: that
         // pends until a relay handshake completes and never resolves on an
         // offline link (USB cable / isolated LAN), which would leave this
@@ -502,6 +505,18 @@ impl ReceiverRuntime {
             }
         };
 
+        // Already advertising the exact same ticket — keep it alive instead of
+        // tearing it down and re-creating it (which causes a gap in mDNS coverage
+        // and triggers repeated `lan_advertisement.starting` log entries). When
+        // the ticket differs the local addresses changed (e.g. the USB-cable
+        // tunnel just came up, adding a `10.42.0.x` address) so we MUST
+        // re-publish — otherwise peers keep seeing the stale pre-cable ticket and
+        // never learn the cable path.
+        if self.advertising.is_some() && self.advertised_ticket.as_deref() == Some(ticket.as_str())
+        {
+            return;
+        }
+
         let device_type = match parse_device_type(&self.config.device_type) {
             Ok(device_type) => device_type,
             Err(error) => {
@@ -514,9 +529,13 @@ impl ReceiverRuntime {
             }
         };
 
+        // Drop the old advertisement (if any) before starting the refreshed one.
+        self.clear_advertising();
+
         match LanReceiveAdvertisement::start(&ticket, &self.config.device_name, device_type) {
             Ok(Some(advertising)) => {
                 self.advertising = Some(advertising);
+                self.advertised_ticket = Some(ticket);
             }
             Ok(None) => {
                 warn!(

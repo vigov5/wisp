@@ -65,8 +65,20 @@ pub(super) async fn run_receiver_actor(
     maintenance.set_missed_tick_behavior(MissedTickBehavior::Delay);
     maintenance.tick().await;
 
+    // Separate, faster cadence purely for re-publishing the LAN advertisement
+    // when our local addresses change (e.g. the USB-cable tunnel coming up adds a
+    // 10.42.0.x address). Kept off the 15s `maintenance` tick so the rendezvous
+    // HTTP poll there stays infrequent — reconcile_advertising is a cheap no-op
+    // (interface scan + ticket-string compare) when nothing changed.
+    let mut advert_reconcile = interval(Duration::from_secs(5));
+    advert_reconcile.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    advert_reconcile.tick().await;
+
     loop {
         tokio::select! {
+            _ = advert_reconcile.tick() => {
+                runtime.reconcile_advertising().await;
+            }
             _ = maintenance.tick() => {
                 if runtime.maintain_registration(&pairing_tx, &event_tx).await.is_err() {
                     let _ = pairing_tx.send(PairingCodeState::Unavailable);

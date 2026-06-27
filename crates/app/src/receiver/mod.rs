@@ -35,10 +35,17 @@ const STALE_TRANSFER_RECORD_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60
 
 /// Maps a core LAN scan hit to the app-facing [`NearbyReceiver`], decoding the
 /// endpoint id from the ticket (best-effort; empty when the ticket won't parse).
-fn map_core_nearby_receiver(receiver: wisp_core::lan::NearbyReceiver) -> NearbyReceiver {
-    let (endpoint_id, over_usb) = wisp_core::util::decode_ticket(&receiver.ticket)
-        .map(|a| (a.id.to_string(), wisp_core::lan::addr_uses_usb_cable(&a)))
-        .unwrap_or_default();
+fn map_core_nearby_receiver(
+    receiver: wisp_core::lan::NearbyReceiver,
+    cable_nets: &[[u8; 3]],
+) -> NearbyReceiver {
+    let (endpoint_id, over_usb) = match wisp_core::util::decode_ticket(&receiver.ticket) {
+        Ok(addr) => (
+            addr.id.to_string(),
+            wisp_core::lan::addr_uses_usb_cable(&addr, cable_nets),
+        ),
+        Err(_) => (String::new(), false),
+    };
     NearbyReceiver {
         fullname: receiver.fullname,
         label: receiver.label,
@@ -359,9 +366,12 @@ impl ReceiverService {
             message: format!("nearby scan error: {e}"),
         })?;
 
+        // Computed once per scan: which subnets count as "over USB" from this
+        // device right now (AOA tunnel + any detected tether/RNDIS subnet).
+        let cable_nets = wisp_core::lan::local_usb_cable_nets();
         Ok(receivers
             .into_iter()
-            .map(map_core_nearby_receiver)
+            .map(|r| map_core_nearby_receiver(r, &cable_nets))
             .collect())
     }
 

@@ -191,15 +191,33 @@ fn in_usb_tether_subnet(ip: Ipv4Addr) -> bool {
     o[0] == 192 && o[1] == 168 && o[2] == 42
 }
 
-/// True when `addr` carries a direct address reachable over a USB cable — either
-/// the Android↔Android AOA tunnel (`10.42.0.0/30`) or a phone↔computer USB-tether
-/// segment (`192.168.42.0/24`). Drives the "over USB" badge on nearby-device
-/// tiles so the sender can tell at a glance that a discovered receiver is
-/// reachable across the cable rather than only over Wi-Fi.
-pub fn addr_uses_usb_cable(addr: &EndpointAddr) -> bool {
+/// Subnets (first three octets) reachable over a USB cable from THIS device.
+/// Always includes the Android↔Android AOA point-to-point tunnel (`10.42.0.0/30`);
+/// additionally includes the `/24` of any locally detected USB interface
+/// (tether/RNDIS). The tether subnet is NOT fixed — Android's default is
+/// `192.168.42.0/24` but Windows ICS / reverse-tether can pick another (e.g.
+/// `192.168.220.0/24`), so it must be discovered at runtime rather than hardcoded.
+pub fn local_usb_cable_nets() -> Vec<[u8; 3]> {
+    let mut nets = vec![[10, 42, 0]];
+    if let Some(link) = detect_usb_link() {
+        let o = link.local_ip.octets();
+        let net = [o[0], o[1], o[2]];
+        if !nets.contains(&net) {
+            nets.push(net);
+        }
+    }
+    nets
+}
+
+/// True when `addr` carries a direct address inside one of `cable_nets` — i.e.
+/// the peer is reachable across this device's USB cable rather than only over
+/// Wi-Fi. Drives the "over USB" badge on nearby-device tiles. Pass the result of
+/// [`local_usb_cable_nets`] (computed once per scan).
+pub fn addr_uses_usb_cable(addr: &EndpointAddr, cable_nets: &[[u8; 3]]) -> bool {
     addr.addrs.iter().any(|t| match t {
         TransportAddr::Ip(SocketAddr::V4(v4)) => {
-            in_usb_tunnel_subnet(*v4.ip()) || in_usb_tether_subnet(*v4.ip())
+            let o = v4.ip().octets();
+            cable_nets.contains(&[o[0], o[1], o[2]])
         }
         _ => false,
     })
@@ -1415,28 +1433,42 @@ mod tests {
     }
 
     #[test]
-    fn addr_uses_usb_cable_matches_tunnel_and_tether() {
+    fn addr_uses_usb_cable_matches_cable_nets() {
         use iroh::SecretKey;
 
         let node_id = SecretKey::from_bytes(&[7u8; 32]).public();
         let aoa: SocketAddr = "10.42.0.2:47474".parse().unwrap();
         let tether: SocketAddr = "192.168.42.129:47474".parse().unwrap();
+        // A non-default tether subnet (e.g. Windows ICS) must still match once
+        // it's in the runtime-discovered cable-net list.
+        let other_tether: SocketAddr = "192.168.220.61:47474".parse().unwrap();
         let wifi: SocketAddr = "192.168.1.50:47474".parse().unwrap();
 
-        // AOA tunnel address → cable.
-        assert!(addr_uses_usb_cable(&EndpointAddr::new(node_id).with_addrs(
-            vec![TransportAddr::Ip(wifi), TransportAddr::Ip(aoa)]
-        )));
-        // USB-tether address → cable.
+        // AOA tunnel is always a cable net.
+        let aoa_only = [[10u8, 42, 0]];
         assert!(addr_uses_usb_cable(
-            &EndpointAddr::new(node_id).with_addrs(vec![TransportAddr::Ip(tether)])
+            &EndpointAddr::new(node_id)
+                .with_addrs(vec![TransportAddr::Ip(wifi), TransportAddr::Ip(aoa)]),
+            &aoa_only,
         ));
-        // Wi-Fi only → not a cable peer.
+
+        // Discovered tether subnets (Android default + Windows ICS) match;
+        // plain Wi-Fi does not.
+        let nets = [[10u8, 42, 0], [192, 168, 42], [192, 168, 220]];
+        assert!(addr_uses_usb_cable(
+            &EndpointAddr::new(node_id).with_addrs(vec![TransportAddr::Ip(tether)]),
+            &nets,
+        ));
+        assert!(addr_uses_usb_cable(
+            &EndpointAddr::new(node_id).with_addrs(vec![TransportAddr::Ip(other_tether)]),
+            &nets,
+        ));
         assert!(!addr_uses_usb_cable(
-            &EndpointAddr::new(node_id).with_addrs(vec![TransportAddr::Ip(wifi)])
+            &EndpointAddr::new(node_id).with_addrs(vec![TransportAddr::Ip(wifi)]),
+            &nets,
         ));
         // No direct addresses (relay-only) → not a cable peer.
-        assert!(!addr_uses_usb_cable(&EndpointAddr::new(node_id)));
+        assert!(!addr_uses_usb_cable(&EndpointAddr::new(node_id), &nets));
     }
 
     #[test]
