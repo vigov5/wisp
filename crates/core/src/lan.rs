@@ -437,6 +437,34 @@ pub async fn filter_endpoint_addr_by_presence_on_port(
     presence_port: u16,
     timeout: Duration,
 ) -> EndpointAddr {
+    // Fast path for a USB-cable peer. If any candidate is a point-to-point
+    // tunnel address (10.42.0.0/30), the peer sits at the other end of the
+    // cable and is reachable *only* over it. Everything else the peer
+    // advertised — its Wi-Fi / cellular / VPN IPv4+IPv6 addresses and its relay
+    // URL — is unreachable across the isolated VpnService TUN. Handing those to
+    // iroh makes QUIC burn seconds on path validation (with 1s→2s→4s… backoff)
+    // and relay handshakes before it finally falls back to the cable: that's
+    // the "shows in Nearby but takes 15-20s / won't connect" symptom. So when a
+    // tunnel address is present, dial *only* it — connect is then direct and
+    // immediate. We also skip presence pinging entirely here: a ping over the
+    // TUN is itself unreliable, and the tunnel address is the answer regardless.
+    let has_tunnel = addr.addrs.iter().any(
+        |t| matches!(t, TransportAddr::Ip(SocketAddr::V4(v4)) if in_usb_tunnel_subnet(*v4.ip())),
+    );
+    if has_tunnel {
+        let before = addr.addrs.len();
+        addr.addrs.retain(
+            |t| matches!(t, TransportAddr::Ip(SocketAddr::V4(v4)) if in_usb_tunnel_subnet(*v4.ip())),
+        );
+        debug!(
+            id = %addr.id,
+            before,
+            after = addr.addrs.len(),
+            "presence_filter.usb_tunnel_only",
+        );
+        return addr;
+    }
+
     let mut v4_candidates: Vec<Ipv4Addr> = addr
         .addrs
         .iter()
@@ -1325,6 +1353,43 @@ mod tests {
 
         let kept: std::collections::BTreeSet<_> = preserved.addrs.iter().cloned().collect();
         assert_eq!(kept, original_addrs, "safety net preserves original addrs");
+    }
+
+    #[tokio::test]
+    async fn filter_endpoint_addr_by_presence_restricts_to_usb_tunnel() {
+        use iroh::SecretKey;
+
+        // When a USB-cable tunnel address (10.42.0.x) is among the candidates,
+        // the peer is reachable *only* over the cable: every other advertised
+        // address is unreachable across the isolated TUN and must be dropped so
+        // iroh dials the tunnel directly (no 15-20s wasted on dead Wi-Fi/relay
+        // paths). No responder is bound — the short-circuit must restrict to the
+        // tunnel address without any presence pinging. (If it didn't trigger,
+        // the all-silent safety net would instead preserve every address and
+        // this assertion would fail.)
+        let node_id = SecretKey::from_bytes(&[9u8; 32]).public();
+        let tunnel: SocketAddr = "10.42.0.2:47474".parse().unwrap();
+        let wifi: SocketAddr = "192.168.1.50:47474".parse().unwrap();
+        let other: SocketAddr = "192.0.2.9:47474".parse().unwrap();
+        let addr = EndpointAddr::new(node_id).with_addrs(vec![
+            TransportAddr::Ip(wifi),
+            TransportAddr::Ip(tunnel),
+            TransportAddr::Ip(other),
+        ]);
+
+        let filtered =
+            filter_endpoint_addr_by_presence_on_port(addr, 47_474, Duration::from_millis(200))
+                .await;
+
+        let kept: Vec<SocketAddr> = filtered
+            .addrs
+            .iter()
+            .filter_map(|t| match t {
+                TransportAddr::Ip(s) => Some(*s),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kept, vec![tunnel], "only the USB tunnel address is dialed");
     }
 
     #[test]

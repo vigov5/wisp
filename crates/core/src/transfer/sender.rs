@@ -40,6 +40,18 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// the receiver reported "connection closed before receiver decision".
 const DECISION_WAIT: Duration = Duration::from_secs(130);
 
+/// The peer dial is retried a few times. Over a freshly-established link — most
+/// notably the USB tunnel, where iroh needs a moment to bind and advertise the
+/// new `10.42.0.x` interface after the VPN comes up — the first attempt can
+/// race ahead of the peer being reachable. A bounded retry lets that transient
+/// miss self-heal instead of surfacing as a connect failure the user has to
+/// manually retry. Each attempt is capped so a genuinely dead address fails
+/// fast (and frees the next attempt) rather than hanging on iroh's own timeout;
+/// the whole loop honours cancellation between and during attempts.
+const CONNECT_ATTEMPTS: usize = 4;
+const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(6);
+const CONNECT_RETRY_DELAY: Duration = Duration::from_millis(400);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendRequest {
     pub peer_endpoint_addr: EndpointAddr,
@@ -296,11 +308,16 @@ impl SenderSession {
             peer_endpoint_id: self.request.peer_endpoint_id,
             prepared_plan: prepared_plan.clone(),
         });
-        let connection = self
-            .endpoint
-            .connect(self.request.peer_endpoint_addr.clone(), ALPN)
-            .await
-            .map_err(|source| TransferError::other("connecting to peer", source))?;
+        let connection = match self.connect_with_retry(&mut cancel_rx).await? {
+            Some(conn) => conn,
+            // Cancelled while dialing — no connection was ever opened.
+            None => {
+                return Ok(TransferOutcome::local_cancel(
+                    protocol_message::TransferRole::Sender,
+                    protocol_message::CancelPhase::WaitingForDecision,
+                ));
+            }
+        };
 
         // --- Handshake ---
         let handshake_res = do_handshake(
@@ -410,6 +427,40 @@ impl SenderSession {
 
         let _ = registration.shutdown().await;
         Ok(outcome)
+    }
+
+    /// Dial the peer with a bounded retry (see [`CONNECT_ATTEMPTS`]). Returns
+    /// `Ok(None)` if the user cancelled mid-dial, so the caller can finish as a
+    /// clean local cancel rather than a connect error.
+    async fn connect_with_retry(
+        &self,
+        cancel_rx: &mut watch::Receiver<bool>,
+    ) -> Result<Option<Connection>> {
+        let mut last_err: Option<TransferError> = None;
+        for attempt in 0..CONNECT_ATTEMPTS {
+            let connect = self
+                .endpoint
+                .connect(self.request.peer_endpoint_addr.clone(), ALPN);
+            tokio::select! {
+                res = tokio::time::timeout(CONNECT_ATTEMPT_TIMEOUT, connect) => match res {
+                    Ok(Ok(conn)) => return Ok(Some(conn)),
+                    Ok(Err(source)) => {
+                        last_err = Some(TransferError::other("connecting to peer", source));
+                    }
+                    Err(_elapsed) => {
+                        last_err = Some(TransferError::timeout("connecting to peer"));
+                    }
+                },
+                _ = wait_for_cancel(cancel_rx) => return Ok(None),
+            }
+            if attempt + 1 < CONNECT_ATTEMPTS {
+                tokio::select! {
+                    _ = tokio::time::sleep(CONNECT_RETRY_DELAY) => {}
+                    _ = wait_for_cancel(cancel_rx) => return Ok(None),
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| TransferError::timeout("connecting to peer")))
     }
 
     /// Finish a text-only (inline) send.  By this point the receiver has the

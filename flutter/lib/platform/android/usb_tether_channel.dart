@@ -32,4 +32,20 @@ class UsbTether {
       return false;
     }
   }
+
+  /// Whether a USB cable is physically attached, regardless of whether
+  /// tethering is on yet. Reads the platform's sticky USB-state broadcast so
+  /// the tether checklist can tick "cable connected" before the user enables
+  /// tethering (which is what actually brings the network link up).
+  static Future<bool> isCableConnected() async {
+    if (!_supported) return false;
+    try {
+      final on = await _channel.invokeMethod<bool>('isCableConnected');
+      return on ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
 }

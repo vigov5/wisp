@@ -47,9 +47,11 @@ class _UsbSetupPageState extends ConsumerState<UsbSetupPage> {
     final tether = ref.watch(usbTetherLinkProvider).value;
     final tetherUp = isTetherLink(tether);
 
-    // Default the selection to the direct link where it's supported (the
-    // headline feature); otherwise the tether checklist.
-    final selected = _selected ?? (cable.supported ? _UsbMode.phoneToPhone : _UsbMode.tether);
+    // Default the selection to whichever transport is actually live so that
+    // tapping a "tether active" status entry lands on the tether card (not the
+    // phone-to-phone one). Falls back to the headline phone↔phone link where
+    // it's supported, else the tether checklist.
+    final selected = _selected ?? _defaultMode(cable, tetherUp);
 
     return Scaffold(
       backgroundColor: kBg,
@@ -67,18 +69,18 @@ class _UsbSetupPageState extends ConsumerState<UsbSetupPage> {
           children: [
             Text(
               'Move files over a USB cable — a direct, encrypted link with no '
-              'shared Wi-Fi. Plug both phones in, pick a role on each '
-              '(Accessory on the phone that controls USB, Host on the other), '
-              'then Start VPN on both. Then head to Send or share your receive '
-              'code as usual.',
+              'shared Wi-Fi. Pick how you\'re connected below, follow the steps '
+              'on each end, then head to Send to share your files.',
               style: wispSans(fontSize: 13, color: kMuted, height: 1.45),
             ),
+            const SizedBox(height: 14),
+            const _NearbyTipNote(),
             const SizedBox(height: 18),
             if (cable.supported)
               _ModeCard(
                 icon: Icons.smartphone_rounded,
                 title: 'Phone to phone',
-                subtitle: 'One cable between two phones — pick a role on each.',
+                subtitle: 'One cable between two phones — roles set automatically.',
                 connected: cable.tunnelUp,
                 selected: selected == _UsbMode.phoneToPhone,
                 onTap: () => setState(() => _selected = _UsbMode.phoneToPhone),
@@ -101,6 +103,18 @@ class _UsbSetupPageState extends ConsumerState<UsbSetupPage> {
         ),
       ),
     );
+  }
+
+  /// The transport to land on when the user hasn't tapped a card yet: whichever
+  /// link is currently live, else the phone↔phone link where supported.
+  _UsbMode _defaultMode(UsbCableState cable, bool tetherUp) {
+    final phoneActive =
+        cable.tunnelUp ||
+        cable.phase == UsbCablePhase.connecting ||
+        cable.phase == UsbCablePhase.linkUp ||
+        cable.phase == UsbCablePhase.detected;
+    if (tetherUp && !phoneActive) return _UsbMode.tether;
+    return cable.supported ? _UsbMode.phoneToPhone : _UsbMode.tether;
   }
 }
 
@@ -248,8 +262,16 @@ class _PhoneToPhonePanel extends ConsumerWidget {
     // tunnel step rather than dropping to the error phase.
     final vpnFailed = state.linkUp && !state.tunnelUp && err != null;
 
-    // Step 1 — cable present (informational; roles are chosen manually).
-    final s1 = phase == UsbCablePhase.idle ? _StepState.pending : _StepState.done;
+    // Step 1 — cable present (informational; roles are chosen manually). The
+    // host side sees the peer as an enumerated USB device (phase leaves idle);
+    // the accessory side ("USB controlled by this device") never enumerates
+    // anything, so it relies on the same sticky-broadcast cable check the tether
+    // mode uses — otherwise this step would stay pending on the very phone that
+    // controls the cable.
+    final cablePlugged = ref.watch(usbCablePluggedProvider).value ?? false;
+    final s1 = (phase != UsbCablePhase.idle || cablePlugged)
+        ? _StepState.done
+        : _StepState.pending;
 
     // Step 2 — AOA link established.
     final _StepState s2;
@@ -284,13 +306,28 @@ class _PhoneToPhonePanel extends ConsumerWidget {
 
     return _StepPanel(
       title: 'Phone-to-phone setup',
-      steps: [
+      steps: _steps(s1, s2, s3, role, roleWord, detectedWord, err, state),
+      footer: _PhoneToPhoneAction(state: state),
+    );
+  }
+
+  List<_StepData> _steps(
+    _StepState s1,
+    _StepState s2,
+    _StepState s3,
+    String? role,
+    String? roleWord,
+    String detectedWord,
+    String? err,
+    UsbCableState state,
+  ) {
+    return [
         _StepData(
           state: s1,
-          title: 'Cable connected',
+          title: 'Connect the cable',
           detail: s1 == _StepState.done
               ? 'USB cable detected.'
-              : 'Plug one USB-C cable into both phones.',
+              : 'Plug one USB cable into both phones.',
         ),
         _StepData(
           state: s2,
@@ -322,9 +359,7 @@ class _PhoneToPhonePanel extends ConsumerWidget {
             _StepState.pending => '③ Tap Start VPN on both phones.',
           },
         ),
-      ],
-      footer: _PhoneToPhoneAction(state: state),
-    );
+      ];
   }
 }
 
@@ -379,8 +414,9 @@ class _PhoneToPhoneAction extends ConsumerWidget {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _filled(
-            label: retry ? '③ Retry VPN' : '③ Start VPN',
+          _stepButton(
+            step: 3,
+            label: retry ? 'Retry VPN' : 'Start VPN',
             icon: Icons.vpn_lock_rounded,
             onPressed: () => unawaited(notifier.startVpn()),
           ),
@@ -399,34 +435,57 @@ class _PhoneToPhoneAction extends ConsumerWidget {
     }
 
     // Idle / detected / link-failed → connect in this phone's detected role.
-    // The role is auto-assigned from the USB bus; a secondary action covers the
-    // rare case where detection is off.
+    // The role is auto-assigned from the USB bus (which end controls USB), so
+    // there's no manual override — picking the wrong role just fails unless the
+    // cable's USB-host orientation is actually flipped.
     final isHost = state.detectedRole == 'host';
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return _stepButton(
+      step: isHost ? 2 : 1,
+      label: isHost ? 'Connect as host' : 'Connect as accessory',
+      icon: isHost ? Icons.usb_rounded : Icons.cable_rounded,
+      onPressed: () => unawaited(
+        isHost ? notifier.connectAsHost() : notifier.connectAsAccessory(),
+      ),
+    );
+  }
+
+  /// A primary action prefixed with its step number, so the press order across
+  /// both phones is unmistakable: "Step 1: Connect as accessory", "Step 2:
+  /// Connect as host", "Step 3: Start VPN".
+  Widget _stepButton({
+    required int step,
+    required String label,
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) => FilledButton(
+    onPressed: onPressed,
+    style: FilledButton.styleFrom(
+      backgroundColor: kAccentCyanStrong,
+      foregroundColor: Colors.white,
+      minimumSize: const Size.fromHeight(48),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        _filled(
-          label: isHost ? '② Connect as host' : '① Connect as accessory',
-          icon: isHost ? Icons.usb_rounded : Icons.cable_rounded,
-          onPressed: () => unawaited(
-            isHost ? notifier.connectAsHost() : notifier.connectAsAccessory(),
-          ),
+        Text(
+          'Step $step:',
+          style: wispSans(fontSize: 14.5, fontWeight: FontWeight.w800, color: Colors.white),
         ),
-        const SizedBox(height: 8),
-        Center(
-          child: TextButton(
-            onPressed: () => unawaited(
-              isHost ? notifier.connectAsAccessory() : notifier.connectAsHost(),
-            ),
-            child: Text(
-              isHost ? "I'm the accessory instead" : "I'm the host instead",
-              style: wispSans(fontSize: 12.5, color: kMuted),
-            ),
+        const SizedBox(width: 10),
+        Icon(icon, size: 18),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: wispSans(fontSize: 14.5, fontWeight: FontWeight.w700, color: Colors.white),
           ),
         ),
       ],
-    );
-  }
+    ),
+  );
 
   Widget _filled({
     required String label,
@@ -462,31 +521,86 @@ class _PhoneToPhoneAction extends ConsumerWidget {
   );
 }
 
-/// Steps for the phone↔computer USB-tether checklist, derived from the detected
-/// link. Manual flow, so completed steps show a check and the rest stay as
-/// numbered placeholders (no misleading spinners).
-class _TetherPanel extends StatelessWidget {
+/// Non-blocking heads-up mirroring [RelayTipNote]'s look: on the Send screen the
+/// peer appears under "Nearby", and that's the entry to pick.
+class _NearbyTipNote extends StatelessWidget {
+  const _NearbyTipNote();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: kAccentCyan.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kAccentCyan.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline_rounded, size: 16, color: kAccentCyanStrong),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text.rich(
+              TextSpan(
+                children: const [
+                  TextSpan(
+                    text: 'Tip: ',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  TextSpan(
+                    text:
+                        'The device shows under "Nearby" on the Send screen — '
+                        'pick it from there.',
+                  ),
+                ],
+              ),
+              style: wispSans(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: kInk.withValues(alpha: 0.75),
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Steps for the phone↔computer USB-tether checklist. Step 1 (cable plugged) is
+/// detected on its own via [usbCablePluggedProvider] so it ticks before
+/// tethering is enabled; steps 2–3 derive from the actual tether link. Manual
+/// flow, so completed steps show a check and the rest stay as numbered
+/// placeholders (no misleading spinners).
+class _TetherPanel extends ConsumerWidget {
   const _TetherPanel({required this.link});
 
   final rust_lan.UsbLinkData? link;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final on = isTetherLink(link);
-    final done = on ? _StepState.done : _StepState.pending;
+    final cablePlugged = ref.watch(usbCablePluggedProvider).value ?? false;
+    // Tethering implies the cable is in even if the sticky broadcast lags.
+    final cableState = (on || cablePlugged)
+        ? _StepState.done
+        : _StepState.pending;
+    final linkState = on ? _StepState.done : _StepState.pending;
 
     return _StepPanel(
       title: 'Phone-to-computer setup',
       steps: [
         _StepData(
-          state: done,
+          state: cableState,
           title: 'Connect the cable',
-          detail: on
-              ? 'Cable detected.'
+          detail: cableState == _StepState.done
+              ? 'USB cable detected.'
               : 'Plug the phone into the computer with a USB cable.',
         ),
         _StepData(
-          state: done,
+          state: linkState,
           title: 'Turn on USB tethering',
           detail: on
               ? 'USB tethering is on.'
@@ -496,7 +610,7 @@ class _TetherPanel extends StatelessWidget {
               : _TetherSettingsButton(),
         ),
         _StepData(
-          state: done,
+          state: linkState,
           title: 'Cable link active',
           detail: on
               ? 'Connected · ${link!.localIp}. The other device shows under '
@@ -504,6 +618,23 @@ class _TetherPanel extends StatelessWidget {
               : 'Once tethering is on, the link comes up automatically.',
         ),
       ],
+      // Once the tether link is live, mirror the phone↔phone panel's Done so the
+      // user can head back home and go send.
+      footer: on
+          ? FilledButton.icon(
+              onPressed: () => Navigator.of(context).maybePop(),
+              icon: const Icon(Icons.check_rounded, size: 18),
+              label: const Text('Done'),
+              style: FilledButton.styleFrom(
+                backgroundColor: kAccentCyanStrong,
+                foregroundColor: Colors.white,
+                minimumSize: const Size.fromHeight(46),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            )
+          : null,
     );
   }
 }

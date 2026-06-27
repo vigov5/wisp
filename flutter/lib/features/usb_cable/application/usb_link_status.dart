@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../platform/android/usb_tether_channel.dart';
 import '../../../src/rust/api/lan.dart' as rust_lan;
 import 'usb_cable_controller.dart';
 
@@ -32,6 +33,17 @@ final usbTetherLinkProvider = StreamProvider<rust_lan.UsbLinkData?>((ref) async*
     const Duration(seconds: 2),
     (_) => detectUsbTetherLink(),
   );
+});
+
+/// Whether a USB cable is physically plugged in, independent of tethering.
+/// Lets the tether checklist tick "Connect the cable" before the user turns
+/// tethering on. Emits immediately, then polls every 2s. False off-Android.
+final usbCablePluggedProvider = StreamProvider<bool>((ref) async* {
+  yield await UsbTether.isCableConnected();
+  yield* Stream<Future<bool>>.periodic(
+    const Duration(seconds: 2),
+    (_) => UsbTether.isCableConnected(),
+  ).asyncMap((f) => f);
 });
 
 /// Whether *any* USB link is up — either the direct phone↔phone AOA tunnel or a

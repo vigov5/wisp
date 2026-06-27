@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/app_router.dart';
+import '../../../src/rust/api/lan.dart' as rust_lan;
 import '../../../theme/wisp_theme.dart';
 import '../application/usb_cable_controller.dart';
 import '../application/usb_link_status.dart';
@@ -17,12 +18,13 @@ class UsbStatusEntry extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cable = ref.watch(usbCableControllerProvider);
-    final tetherUp = isTetherLink(ref.watch(usbTetherLinkProvider).value);
+    final tether = ref.watch(usbTetherLinkProvider).value;
+    final tetherUp = isTetherLink(tether);
 
     // Nothing to show on platforms without the direct link and no tether.
     if (!cable.supported && !tetherUp) return const SizedBox.shrink();
 
-    final (icon, title, subtitle, color) = _describe(cable, tetherUp);
+    final (icon, title, subtitle, color) = _describe(cable, tether, tetherUp);
 
     return InkWell(
       onTap: () => context.pushUsbSetup(),
@@ -69,12 +71,16 @@ class UsbStatusEntry extends ConsumerWidget {
     );
   }
 
-  (IconData, String, String, Color) _describe(UsbCableState cable, bool tetherUp) {
+  (IconData, String, String, Color) _describe(
+    UsbCableState cable,
+    rust_lan.UsbLinkData? tether,
+    bool tetherUp,
+  ) {
     if (cable.tunnelUp) {
       return (
         Icons.usb_rounded,
         'USB cable connected',
-        'Phone-to-phone link is up${cable.localIp != null ? ' · ${cable.localIp}' : ''}.',
+        'Phone-to-phone link is up${cable.localIp != null ? ' · ${cable.localIp}' : ''}',
         kAccentDirect,
       );
     }
@@ -98,8 +104,8 @@ class UsbStatusEntry extends ConsumerWidget {
     if (tetherUp) {
       return (
         Icons.laptop_mac_rounded,
-        'USB tether active',
-        'Linked to a computer over the cable.',
+        'USB cable connected',
+        'USB tethering active${tether != null ? ' · ${tether.localIp}' : ''}',
         kAccentDirect,
       );
     }

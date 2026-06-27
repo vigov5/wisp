@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -209,6 +210,7 @@ class MainActivity : FlutterFragmentActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "openTetherSettings" -> openTetherSettings(result)
+                "isCableConnected" -> result.success(isUsbCableConnected())
                 else -> result.notImplemented()
             }
         }
@@ -336,6 +338,25 @@ class MainActivity : FlutterFragmentActivity() {
     // tethering (Android has no public API to toggle it programmatically).
     // The dedicated TetherSettings screen isn't a documented component, so we
     // fall back through progressively-broader settings panels per device.
+    // Raw "is a USB cable physically attached" check, independent of whether
+    // tethering is on yet. The platform keeps ACTION_USB_STATE as a sticky
+    // broadcast, so a null-receiver register returns the last value without
+    // actually subscribing; its `connected` extra is true whenever a cable is
+    // plugged. Lets the tether checklist tick "Connect the cable" before the
+    // user flips tethering on (which is the only thing that creates the
+    // 192.168.42.x interface detect_usb_link keys off).
+    private fun isUsbCableConnected(): Boolean {
+        return try {
+            val sticky = registerReceiver(
+                null,
+                IntentFilter("android.hardware.usb.action.USB_STATE"),
+            )
+            sticky?.getBooleanExtra("connected", false) ?: false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun openTetherSettings(result: MethodChannel.Result) {
         val intents = listOf(
             Intent().setClassName(
