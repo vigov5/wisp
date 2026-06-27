@@ -34,11 +34,26 @@ It is designed to feel as simple as AirDrop, but without being limited to Apple 
 - **Offline pairing via QR**
   No internet? Scan a QR code shown on the receiver to pair over the same Wi-Fi without going through the rendezvous server.
 
+- **Direct transfer over a USB cable (Android)**
+  Plug two Android phones together with a USB cable and send files directly over it — no Wi-Fi, no network, and no rendezvous server. Great when there's no shared network or you want a fast, fully offline path.
+
+- **Send text and links, not just files**
+  Share a snippet of text or a link straight across. The receiver can copy it to the clipboard or open the link in one tap.
+
 - **Saved devices**
-  After a successful transfer, the other device shows up in a "Recent" list so you can pick it again without re-scanning or re-typing a code. (Auto-approve / trusted-device flow is on the roadmap.)
+  After a successful transfer, the other device shows up in a "Recent" list so you can pick it again without re-scanning or re-typing a code. Give saved devices your own nicknames (pinned to their key). (Auto-approve / trusted-device flow is on the roadmap.)
+
+- **Back up your identity**
+  Export and restore your device's secret key, so you can move your Wisp identity to a new device or keep your saved-device relationships after a reinstall.
 
 - **Resumable transfers**
   Connection died mid-transfer? Send the same files again and Wisp will resume from where the transfer stopped instead of starting over.
+
+- **Open received files in one tap**
+  When a transfer finishes, open any received file straight from the result screen, or jump to the exact folder it landed in — including a custom save folder you picked.
+
+- **Change your mind while connecting**
+  Still waiting to connect? Step back from the connecting screen to your draft to pick a different device or connection method, without re-selecting your files.
 
 - **Cross-platform**
   Wisp currently provides builds for macOS, Windows, Linux, and Android. iOS support is planned.
@@ -80,8 +95,9 @@ See [`flutter/README.md`](flutter/README.md) for build instructions.
 1. Choose or drop the files you want to send.
 2. Pick a recipient — one of:
    - a nearby device discovered on your LAN,
-   - the 6-character pairing code shown on the receiving device, or
-   - the QR code shown on the receiving device (scan it from the sender to pair offline, no internet needed).
+   - the 6-character pairing code shown on the receiving device,
+   - the QR code shown on the receiving device (scan it from the sender to pair offline, no internet needed), or
+   - another Android phone connected to yours with a USB cable.
 3. The receiver reviews the files and accepts the transfer.
 4. Wisp sends the files directly to the other device.
 
