@@ -139,7 +139,7 @@ const USB_TETHER_HOST: Ipv4Addr = Ipv4Addr::new(192, 168, 42, 129);
 const USB_TUNNEL_HOST: Ipv4Addr = Ipv4Addr::new(10, 42, 0, 1);
 const USB_TUNNEL_ACCESSORY: Ipv4Addr = Ipv4Addr::new(10, 42, 0, 2);
 
-fn in_usb_tunnel_subnet(ip: Ipv4Addr) -> bool {
+pub(crate) fn in_usb_tunnel_subnet(ip: Ipv4Addr) -> bool {
     let o = ip.octets();
     o[0] == 10 && o[1] == 42 && o[2] == 0
 }
