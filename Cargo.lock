@@ -4976,6 +4976,7 @@ dependencies = [
  "iroh-blobs",
  "mdns-sd",
  "netdev",
+ "noq-proto",
  "rand 0.8.5",
  "reqwest",
  "thiserror 2.0.18",
