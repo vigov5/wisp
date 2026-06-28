@@ -12,7 +12,7 @@ use wisp_core::transfer::{
     ReceiverStart as CoreReceiverStart, TransferOutcome as CoreTransferOutcome, TransferPhase,
     TransferPlan, TransferPlanFile, TransferSnapshot,
 };
-use wisp_core::util::{human_size, snapshot_connection_path};
+use wisp_core::util::{connection_path_from_info, human_size};
 
 use crate::error::{UserFacingError, UserFacingErrorKind, format_error_chain};
 use crate::types::{
@@ -94,9 +94,14 @@ impl ReceiverSession {
 
         let remote_id = connection.remote_id();
         let remote_id_str = remote_id.to_string();
-        let initial_path = snapshot_connection_path(&endpoint, remote_id).await;
+        // Weak handle to the live connection — used to read the *selected* path
+        // (authoritative), not the endpoint address book (which can report a
+        // stale direct candidate as Active). Captured before `session.start()`
+        // consumes `connection`; it stays valid as long as the core session
+        // keeps the connection alive.
+        let conn_info = connection.to_info();
+        let initial_path = connection_path_from_info(&conn_info);
         let current_path = Arc::new(Mutex::new(initial_path));
-        let watcher_endpoint = endpoint.clone();
         // Kept past `session.start()` (which consumes `endpoint`) so we can look
         // up the peer's relay URL when synthesizing the send-back ticket, even
         // when the active path is direct. Without a relay in that ticket, a
@@ -321,8 +326,7 @@ impl ReceiverSession {
 
         let (path_shutdown_tx, path_shutdown_rx) = oneshot::channel::<()>();
         let path_watcher = spawn_connection_path_watcher(
-            watcher_endpoint,
-            remote_id,
+            conn_info,
             offer_id,
             cmd_tx.clone(),
             Arc::clone(&current_path),
@@ -627,8 +631,7 @@ impl ReceiverSession {
 }
 
 fn spawn_connection_path_watcher(
-    endpoint: Endpoint,
-    remote_id: iroh::EndpointId,
+    conn_info: iroh::endpoint::ConnectionInfo,
     offer_id: u64,
     cmd_tx: mpsc::Sender<ReceiverCommand>,
     current_path: Arc<Mutex<ConnectionPath>>,
@@ -644,7 +647,10 @@ fn spawn_connection_path_watcher(
             tokio::select! {
                 _ = &mut shutdown_rx => break,
                 _ = interval.tick() => {
-                    let snapshot = snapshot_connection_path(&endpoint, remote_id).await;
+                    // Authoritative: the connection's selected path, not the
+                    // endpoint address book (which can report a stale direct
+                    // candidate as Active).
+                    let snapshot = connection_path_from_info(&conn_info);
                     let changed = {
                         let mut guard = current_path.lock().unwrap();
                         // Don't downgrade a known Direct/Relay path to Unknown — that

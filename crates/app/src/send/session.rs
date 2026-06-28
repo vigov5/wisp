@@ -11,7 +11,7 @@ use wisp_core::transfer::{
     SendRequest, Sender, SenderEvent as CoreSenderEvent, TransferOutcome as CoreTransferOutcome,
     TransferPlan, TransferSnapshot,
 };
-use wisp_core::util::{snapshot_connection_candidates, snapshot_connection_path};
+use wisp_core::util::{connection_path_from_info, snapshot_connection_candidates};
 
 use crate::error::{AppError, AppResult, UserFacingError, UserFacingErrorKind};
 use crate::types::{CandidatePath, ConnectionPath, SendEvent, SendPhase};
@@ -226,8 +226,10 @@ impl SendSession {
         };
         let watcher_endpoint = endpoint.clone();
         let peer_endpoint_id = resolved.peer_endpoint_id;
-        let initial_path = snapshot_connection_path(&watcher_endpoint, peer_endpoint_id).await;
-        let current_path: Arc<StdMutex<ConnectionPath>> = Arc::new(StdMutex::new(initial_path));
+        // No connection yet, so no selected path — the watcher fills this in
+        // from the connection's selected path once `conn_info_rx` resolves.
+        let current_path: Arc<StdMutex<ConnectionPath>> =
+            Arc::new(StdMutex::new(ConnectionPath::unknown()));
         let initial_candidates =
             snapshot_connection_candidates(&watcher_endpoint, peer_endpoint_id).await;
         let current_candidates: Arc<StdMutex<Vec<CandidatePath>>> =
@@ -252,7 +254,7 @@ impl SendSession {
         .with_blob_strategy(blob_strategy);
 
         let sender_run = sender.run_with_events();
-        let (mut core_events, cancel_tx, outcome_rx) = sender_run.into_parts();
+        let (mut core_events, cancel_tx, outcome_rx, conn_info_rx) = sender_run.into_parts();
         {
             let mut slot = cancel_tx_slot.lock().await;
             *slot = Some(cancel_tx);
@@ -268,6 +270,7 @@ impl SendSession {
         let path_watcher = spawn_send_path_watcher(
             watcher_endpoint,
             peer_endpoint_id,
+            conn_info_rx,
             event_tx.clone(),
             Arc::clone(&current_path),
             Arc::clone(&current_candidates),
@@ -448,6 +451,7 @@ fn maybe_demote_pre_handshake_failure(
 fn spawn_send_path_watcher(
     endpoint: Endpoint,
     peer_endpoint_id: iroh::EndpointId,
+    mut conn_info_rx: oneshot::Receiver<iroh::endpoint::ConnectionInfo>,
     event_tx: mpsc::UnboundedSender<SendEvent>,
     current_path: Arc<StdMutex<ConnectionPath>>,
     current_candidates: Arc<StdMutex<Vec<CandidatePath>>>,
@@ -457,6 +461,10 @@ fn spawn_send_path_watcher(
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(CONNECTION_PATH_POLL_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Weak handle to the live connection, delivered once the dial succeeds.
+        // The selected-path badge stays Unknown until then; candidate rows
+        // (from the endpoint address book) populate during connecting either way.
+        let mut conn_info: Option<iroh::endpoint::ConnectionInfo> = None;
         // Poll immediately on the first tick: the caller's initial snapshot was
         // taken before `connect()` had registered the peer's addresses, so iroh
         // usually has no candidates yet. Polling right away (and comparing
@@ -467,7 +475,18 @@ fn spawn_send_path_watcher(
             tokio::select! {
                 _ = &mut shutdown_rx => break,
                 _ = interval.tick() => {
-                    let snapshot = snapshot_connection_path(&endpoint, peer_endpoint_id).await;
+                    if conn_info.is_none() {
+                        if let Ok(info) = conn_info_rx.try_recv() {
+                            conn_info = Some(info);
+                        }
+                    }
+                    // Badge = the connection's *selected* path (authoritative),
+                    // not the endpoint address book (which can keep a stale
+                    // direct candidate marked Active after a network change).
+                    let snapshot = conn_info
+                        .as_ref()
+                        .map(connection_path_from_info)
+                        .unwrap_or_else(ConnectionPath::unknown);
                     let candidates =
                         snapshot_connection_candidates(&endpoint, peer_endpoint_id).await;
                     let path_changed = {

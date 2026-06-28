@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
-use iroh::{Endpoint, EndpointAddr, EndpointId, endpoint::Connection};
+use iroh::{
+    Endpoint, EndpointAddr, EndpointId,
+    endpoint::{Connection, ConnectionInfo},
+};
 use rand::random;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -116,6 +119,11 @@ pub struct SenderRun {
     pub events: SenderEventStream,
     pub cancel_tx: watch::Sender<bool>,
     pub outcome_rx: oneshot::Receiver<TransferResult<TransferOutcome>>,
+    /// Resolves once the outbound connection is established, with a weak handle
+    /// for reading the *selected* connection path (authoritative, vs the
+    /// endpoint address book). Never resolves if the dial is cancelled/fails
+    /// before connecting — callers should treat that as "no path info".
+    pub conn_info_rx: oneshot::Receiver<ConnectionInfo>,
 }
 
 impl SenderRun {
@@ -125,8 +133,14 @@ impl SenderRun {
         SenderEventStream,
         watch::Sender<bool>,
         oneshot::Receiver<TransferResult<TransferOutcome>>,
+        oneshot::Receiver<ConnectionInfo>,
     ) {
-        (self.events, self.cancel_tx, self.outcome_rx)
+        (
+            self.events,
+            self.cancel_tx,
+            self.outcome_rx,
+            self.conn_info_rx,
+        )
     }
 }
 
@@ -197,6 +211,7 @@ impl Sender {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (outcome_tx, outcome_rx) = oneshot::channel();
         let (cancel_tx, cancel_rx) = watch::channel(false);
+        let (conn_info_tx, conn_info_rx) = oneshot::channel();
         let events = SenderEventSink::new(self.session_id.clone(), Some(event_tx));
 
         let Sender {
@@ -215,6 +230,7 @@ impl Sender {
                 request,
                 events: events.clone(),
                 blob_strategy,
+                conn_info_tx: Some(conn_info_tx),
             };
             let outcome = session.run(cancel_rx).await;
             let _ = outcome_tx.send(outcome);
@@ -224,6 +240,7 @@ impl Sender {
             events: UnboundedReceiverStream::new(event_rx),
             cancel_tx,
             outcome_rx,
+            conn_info_rx,
         }
     }
 }
@@ -235,11 +252,12 @@ struct SenderSession {
     request: SendRequest,
     events: SenderEventSink,
     blob_strategy: BlobServingStrategy,
+    conn_info_tx: Option<oneshot::Sender<ConnectionInfo>>,
 }
 
 impl SenderSession {
     #[instrument(skip_all, fields(session_id = %self.session_id, peer = %self.request.peer_endpoint_id))]
-    async fn run(self, mut cancel_rx: watch::Receiver<bool>) -> Result<TransferOutcome> {
+    async fn run(mut self, mut cancel_rx: watch::Receiver<bool>) -> Result<TransferOutcome> {
         let scratch = ScratchDir::new("wisp-send", &self.session_id).await?;
 
         // Decide how the payload travels.  Short text rides inline on the
@@ -318,6 +336,12 @@ impl SenderSession {
                 ));
             }
         };
+
+        // Hand the app a weak handle to read the *selected* connection path
+        // (the authoritative carrying path) for the connection-path badge.
+        if let Some(tx) = self.conn_info_tx.take() {
+            let _ = tx.send(connection.to_info());
+        }
 
         // --- Handshake ---
         let handshake_res = do_handshake(

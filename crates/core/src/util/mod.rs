@@ -283,6 +283,48 @@ pub async fn classify_connection_path(
     snapshot_connection_path(endpoint, remote_id).await.kind
 }
 
+/// Snapshot the **actually selected** connection path from a live connection
+/// handle.
+///
+/// [`snapshot_connection_path`] scans the endpoint's address book and reports
+/// the first `Active` candidate, preferring direct over relay. That heuristic
+/// is wrong when iroh keeps a *stale* direct candidate marked `Active` — e.g.
+/// a LAN `192.168.x` address left over from when the peer was on Wi-Fi — even
+/// though traffic has migrated to the relay after the peer moved to mobile
+/// data. iroh 0.97 exposes only `Active`/`Inactive` per candidate (no
+/// recency), so the address book alone can't tell the stale candidate from the
+/// real one.
+///
+/// The connection's [`ConnectionInfo::selected_path`] is authoritative: it's
+/// the path QUIC has actually selected to carry traffic. Use this for the
+/// connection-path badge. Returns `Unknown` when no path is selected yet (or
+/// the connection has been dropped).
+pub fn connection_path_from_info(info: &iroh::endpoint::ConnectionInfo) -> ConnectionPath {
+    match info.selected_path() {
+        Some(path) => connection_path_from_transport_addr(path.remote_addr()),
+        None => ConnectionPath::unknown(),
+    }
+}
+
+/// Pure mapping of a single selected [`TransportAddr`] to a [`ConnectionPath`].
+/// Extracted so the Direct/Relay classification is unit-testable without a live
+/// iroh connection (which [`connection_path_from_info`] requires).
+fn connection_path_from_transport_addr(addr: &TransportAddr) -> ConnectionPath {
+    match addr {
+        TransportAddr::Ip(socket) => ConnectionPath {
+            kind: ConnectionPathKind::Direct,
+            relay_url: None,
+            direct_addr: Some(socket.to_string()),
+        },
+        TransportAddr::Relay(url) => ConnectionPath {
+            kind: ConnectionPathKind::Relay,
+            relay_url: Some(url.to_string()),
+            direct_addr: None,
+        },
+        _ => ConnectionPath::unknown(),
+    }
+}
+
 /// Return the peer's relay URL if iroh knows one, **regardless of whether the
 /// relay is the actively-used path**.
 ///
@@ -751,6 +793,24 @@ mod connection_path_tests {
         assert_eq!(default.kind, ConnectionPathKind::Unknown);
         assert!(default.relay_url.is_none());
         assert!(default.direct_addr.is_none());
+    }
+
+    #[test]
+    fn selected_ip_addr_maps_to_direct() {
+        // The selected-path mapping behind `connection_path_from_info`: an IP
+        // path is Direct and carries the socket, never a relay url.
+        let path = connection_path_from_transport_addr(&ip_addr());
+        assert_eq!(path.kind, ConnectionPathKind::Direct);
+        assert_eq!(path.direct_addr.as_deref(), Some("127.0.0.1:0"));
+        assert!(path.relay_url.is_none());
+    }
+
+    #[test]
+    fn selected_relay_addr_maps_to_relay() {
+        let path = connection_path_from_transport_addr(&relay_addr("https://relay.example/"));
+        assert_eq!(path.kind, ConnectionPathKind::Relay);
+        assert_eq!(path.relay_url.as_deref(), Some("https://relay.example/"));
+        assert!(path.direct_addr.is_none());
     }
 }
 
