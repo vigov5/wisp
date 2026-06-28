@@ -1233,6 +1233,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<SendConnectionCandidate> dco_decode_list_send_connection_candidate(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_send_connection_candidate)
+        .toList();
+  }
+
+  @protected
   List<TransferPlanFileData> dco_decode_list_transfer_plan_file_data(
     dynamic raw,
   ) {
@@ -1476,6 +1486,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SendConnectionCandidate dco_decode_send_connection_candidate(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return SendConnectionCandidate(
+      addr: dco_decode_String(arr[0]),
+      kind: dco_decode_String(arr[1]),
+      active: dco_decode_bool(arr[2]),
+    );
+  }
+
+  @protected
   SendConnectionPath dco_decode_send_connection_path(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -1492,8 +1515,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SendTransferEvent dco_decode_send_transfer_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 13)
-      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
+    if (arr.length != 14)
+      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
     return SendTransferEvent(
       phase: dco_decode_send_transfer_phase(arr[0]),
       destinationLabel: dco_decode_String(arr[1]),
@@ -1507,7 +1530,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       remoteEndpointId: dco_decode_opt_String(arr[9]),
       remoteTicket: dco_decode_opt_String(arr[10]),
       connectionPath: dco_decode_opt_box_autoadd_send_connection_path(arr[11]),
-      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[12]),
+      connectionCandidates: dco_decode_list_send_connection_candidate(arr[12]),
+      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[13]),
     );
   }
 
@@ -1941,6 +1965,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<SendConnectionCandidate> sse_decode_list_send_connection_candidate(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <SendConnectionCandidate>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_send_connection_candidate(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<TransferPlanFileData> sse_decode_list_transfer_plan_file_data(
     SseDeserializer deserializer,
   ) {
@@ -2264,6 +2302,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SendConnectionCandidate sse_decode_send_connection_candidate(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_addr = sse_decode_String(deserializer);
+    var var_kind = sse_decode_String(deserializer);
+    var var_active = sse_decode_bool(deserializer);
+    return SendConnectionCandidate(
+      addr: var_addr,
+      kind: var_kind,
+      active: var_active,
+    );
+  }
+
+  @protected
   SendConnectionPath sse_decode_send_connection_path(
     SseDeserializer deserializer,
   ) {
@@ -2299,6 +2352,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_connectionPath = sse_decode_opt_box_autoadd_send_connection_path(
       deserializer,
     );
+    var var_connectionCandidates = sse_decode_list_send_connection_candidate(
+      deserializer,
+    );
     var var_error = sse_decode_opt_box_autoadd_user_facing_error_data(
       deserializer,
     );
@@ -2315,6 +2371,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       remoteEndpointId: var_remoteEndpointId,
       remoteTicket: var_remoteTicket,
       connectionPath: var_connectionPath,
+      connectionCandidates: var_connectionCandidates,
       error: var_error,
     );
   }
@@ -2801,6 +2858,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_send_connection_candidate(
+    List<SendConnectionCandidate> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_send_connection_candidate(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_transfer_plan_file_data(
     List<TransferPlanFileData> self,
     SseSerializer serializer,
@@ -3076,6 +3145,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_send_connection_candidate(
+    SendConnectionCandidate self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.addr, serializer);
+    sse_encode_String(self.kind, serializer);
+    sse_encode_bool(self.active, serializer);
+  }
+
+  @protected
   void sse_encode_send_connection_path(
     SendConnectionPath self,
     SseSerializer serializer,
@@ -3108,6 +3188,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.remoteTicket, serializer);
     sse_encode_opt_box_autoadd_send_connection_path(
       self.connectionPath,
+      serializer,
+    );
+    sse_encode_list_send_connection_candidate(
+      self.connectionCandidates,
       serializer,
     );
     sse_encode_opt_box_autoadd_user_facing_error_data(self.error, serializer);

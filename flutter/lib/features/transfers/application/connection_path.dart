@@ -105,3 +105,70 @@ class ConnectionPathInfo {
   @override
   int get hashCode => Object.hash(kind, relayUrl, directAddr);
 }
+
+/// One candidate transport address iroh is attempting for the peer, surfaced
+/// to the connecting screen so the user can see which IPs/relays are being
+/// tried in parallel. iroh only exposes active/idle per candidate (no
+/// per-path latency or failure state), so [isActive] is the sole liveness bit.
+@immutable
+class ConnectionCandidateInfo {
+  const ConnectionCandidateInfo({
+    required this.addr,
+    required this.kind,
+    required this.isActive,
+  });
+
+  /// "ip:port" for direct candidates, relay URL for relay candidates.
+  final String addr;
+  final ConnectionPathKind kind;
+
+  /// True when iroh reports this candidate as the actively-used path.
+  final bool isActive;
+
+  bool get isDirect => kind == ConnectionPathKind.direct;
+  bool get isRelay => kind == ConnectionPathKind.relay;
+
+  /// Host part of [addr] for direct candidates (strips ":port", handles IPv6
+  /// "[::1]:567"); falls back to the raw [addr] when unparseable.
+  String get displayHost {
+    if (kind != ConnectionPathKind.direct) {
+      return addr;
+    }
+    if (addr.startsWith('[')) {
+      final end = addr.indexOf(']');
+      return end > 1 ? addr.substring(1, end) : addr;
+    }
+    final colon = addr.lastIndexOf(':');
+    return colon > 0 ? addr.substring(0, colon) : addr;
+  }
+
+  static ConnectionCandidateInfo fromSender(
+    rust_sender.SendConnectionCandidate candidate,
+  ) {
+    return ConnectionCandidateInfo(
+      addr: candidate.addr,
+      kind: ConnectionPathInfo._parseKind(candidate.kind),
+      isActive: candidate.active,
+    );
+  }
+
+  static List<ConnectionCandidateInfo> listFromSender(
+    List<rust_sender.SendConnectionCandidate> candidates,
+  ) {
+    return candidates
+        .map(ConnectionCandidateInfo.fromSender)
+        .toList(growable: false);
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ConnectionCandidateInfo &&
+          runtimeType == other.runtimeType &&
+          addr == other.addr &&
+          kind == other.kind &&
+          isActive == other.isActive;
+
+  @override
+  int get hashCode => Object.hash(addr, kind, isActive);
+}

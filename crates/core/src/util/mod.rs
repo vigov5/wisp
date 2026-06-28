@@ -75,6 +75,27 @@ pub struct ConnectionPath {
     pub direct_addr: Option<String>,
 }
 
+/// A single candidate transport address iroh is aware of for the peer, plus
+/// whether iroh is *actively* using it right now.
+///
+/// Unlike [`ConnectionPath`] (which collapses everything down to the single
+/// active path), this preserves every candidate so the connecting UI can show
+/// the full set of IPs/relays being attempted in parallel. iroh 0.97 only
+/// exposes `Active`/`Inactive` per address — there is no per-candidate
+/// "probing/failed/latency" signal — so `active` is the only liveness bit we
+/// can surface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidatePath {
+    /// Socket address ("ip:port") for direct candidates, or the relay URL for
+    /// relay candidates.
+    pub addr: String,
+    /// `Direct` for an IP candidate, `Relay` for a relay candidate. Never
+    /// `Unknown` (we drop addresses that aren't IP or relay).
+    pub kind: ConnectionPathKind,
+    /// True when iroh reports this candidate's usage as `Active`.
+    pub active: bool,
+}
+
 impl ConnectionPath {
     pub fn unknown() -> Self {
         Self {
@@ -284,6 +305,42 @@ pub async fn peer_relay_url(
         TransportAddr::Relay(url) => Some(url.to_string()),
         _ => None,
     })
+}
+
+/// Snapshot *every* candidate transport address iroh currently knows about for
+/// `remote_id`, each tagged with whether it's the active path. Used by the
+/// connecting UI to show the full set of IPs/relays being attempted in
+/// parallel (see [`CandidatePath`]).
+///
+/// Returns an empty vec when iroh has no record of the peer yet (e.g. the dial
+/// hasn't been registered). Addresses that are neither IP nor relay are
+/// dropped — iroh's `TransportAddr` is `#[non_exhaustive]`.
+pub async fn snapshot_connection_candidates(
+    endpoint: &iroh::Endpoint,
+    remote_id: iroh::EndpointId,
+) -> Vec<CandidatePath> {
+    let Some(info) = endpoint.remote_info(remote_id).await else {
+        return Vec::new();
+    };
+
+    info.addrs()
+        .filter_map(|addr| {
+            let active = matches!(addr.usage(), TransportAddrUsage::Active);
+            match addr.addr() {
+                TransportAddr::Ip(socket) => Some(CandidatePath {
+                    addr: socket.to_string(),
+                    kind: ConnectionPathKind::Direct,
+                    active,
+                }),
+                TransportAddr::Relay(url) => Some(CandidatePath {
+                    addr: url.to_string(),
+                    kind: ConnectionPathKind::Relay,
+                    active,
+                }),
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 pub fn confirm_accept() -> std::result::Result<bool, ConfirmAcceptError> {

@@ -448,6 +448,7 @@ class SendController extends _$SendController {
       remoteTicket: update.remoteTicket ?? currentState.transfer.remoteTicket,
       connectionPath:
           update.connectionPath ?? currentState.transfer.connectionPath,
+      connectionCandidates: update.connectionCandidates,
       error: update.error ?? currentState.transfer.error,
     );
 

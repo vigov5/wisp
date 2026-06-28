@@ -1207,6 +1207,20 @@ impl SseDecode for Vec<crate::api::preview::SelectionItem> {
     }
 }
 
+impl SseDecode for Vec<crate::api::sender::SendConnectionCandidate> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::sender::SendConnectionCandidate>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::transfer::TransferPlanFileData> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1540,6 +1554,20 @@ impl SseDecode for crate::api::preview::SelectionPreview {
     }
 }
 
+impl SseDecode for crate::api::sender::SendConnectionCandidate {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_addr = <String>::sse_decode(deserializer);
+        let mut var_kind = <String>::sse_decode(deserializer);
+        let mut var_active = <bool>::sse_decode(deserializer);
+        return crate::api::sender::SendConnectionCandidate {
+            addr: var_addr,
+            kind: var_kind,
+            active: var_active,
+        };
+    }
+}
+
 impl SseDecode for crate::api::sender::SendConnectionPath {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1572,6 +1600,8 @@ impl SseDecode for crate::api::sender::SendTransferEvent {
         let mut var_remoteTicket = <Option<String>>::sse_decode(deserializer);
         let mut var_connectionPath =
             <Option<crate::api::sender::SendConnectionPath>>::sse_decode(deserializer);
+        let mut var_connectionCandidates =
+            <Vec<crate::api::sender::SendConnectionCandidate>>::sse_decode(deserializer);
         let mut var_error =
             <Option<crate::api::error::UserFacingErrorData>>::sse_decode(deserializer);
         return crate::api::sender::SendTransferEvent {
@@ -1587,6 +1617,7 @@ impl SseDecode for crate::api::sender::SendTransferEvent {
             remote_endpoint_id: var_remoteEndpointId,
             remote_ticket: var_remoteTicket,
             connection_path: var_connectionPath,
+            connection_candidates: var_connectionCandidates,
             error: var_error,
         };
     }
@@ -2289,6 +2320,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::preview::SelectionPreview>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::sender::SendConnectionCandidate {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.addr.into_into_dart().into_dart(),
+            self.kind.into_into_dart().into_dart(),
+            self.active.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::sender::SendConnectionCandidate
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::sender::SendConnectionCandidate>
+    for crate::api::sender::SendConnectionCandidate
+{
+    fn into_into_dart(self) -> crate::api::sender::SendConnectionCandidate {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::sender::SendConnectionPath {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -2326,6 +2379,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::sender::SendTransferEvent {
             self.remote_endpoint_id.into_into_dart().into_dart(),
             self.remote_ticket.into_into_dart().into_dart(),
             self.connection_path.into_into_dart().into_dart(),
+            self.connection_candidates.into_into_dart().into_dart(),
             self.error.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -2789,6 +2843,16 @@ impl SseEncode for Vec<crate::api::preview::SelectionItem> {
     }
 }
 
+impl SseEncode for Vec<crate::api::sender::SendConnectionCandidate> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::sender::SendConnectionCandidate>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::transfer::TransferPlanFileData> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3032,6 +3096,15 @@ impl SseEncode for crate::api::preview::SelectionPreview {
     }
 }
 
+impl SseEncode for crate::api::sender::SendConnectionCandidate {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.addr, serializer);
+        <String>::sse_encode(self.kind, serializer);
+        <bool>::sse_encode(self.active, serializer);
+    }
+}
+
 impl SseEncode for crate::api::sender::SendConnectionPath {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3057,6 +3130,10 @@ impl SseEncode for crate::api::sender::SendTransferEvent {
         <Option<String>>::sse_encode(self.remote_ticket, serializer);
         <Option<crate::api::sender::SendConnectionPath>>::sse_encode(
             self.connection_path,
+            serializer,
+        );
+        <Vec<crate::api::sender::SendConnectionCandidate>>::sse_encode(
+            self.connection_candidates,
             serializer,
         );
         <Option<crate::api::error::UserFacingErrorData>>::sse_encode(self.error, serializer);

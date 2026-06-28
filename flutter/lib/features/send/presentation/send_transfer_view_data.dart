@@ -77,6 +77,7 @@ class SendTransferPageData {
     this.averageSpeedLabel,
     this.totalSizeLabel,
     this.connectionPath,
+    this.connectionCandidates = const [],
     this.countdownDuration,
   });
 
@@ -96,6 +97,9 @@ class SendTransferPageData {
   final String? averageSpeedLabel;
   final String? totalSizeLabel;
   final ConnectionPathInfo? connectionPath;
+
+  /// Candidate paths iroh is attempting, for the live connecting rows.
+  final List<ConnectionCandidateInfo> connectionCandidates;
   final Duration? countdownDuration;
 }
 
@@ -152,6 +156,7 @@ SendTransferPageData buildSendTransferPageData({
           ? formatBytes(transfer.totalSize)
           : null,
       connectionPath: transfer.connectionPath,
+      connectionCandidates: transfer.connectionCandidates,
       countdownDuration: state is SendStateTransferring
           ? _countdownDurationFor(transfer)
           : null,

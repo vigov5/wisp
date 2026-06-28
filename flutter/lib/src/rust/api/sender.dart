@@ -8,8 +8,8 @@ import 'error.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'transfer.dart';
 
-// These functions are ignored because they are not marked as `pub`: `cancel_send_session`, `fallback_destination_label`, `format_code_label`, `map_connection_path`, `map_event`, `map_phase`, `map_plan_file`, `map_plan`, `map_snapshot`, `terminal_event_for_app_error`, `terminal_internal_failure_event`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `cancel_send_session`, `fallback_destination_label`, `format_code_label`, `map_connection_candidate`, `map_connection_path`, `map_event`, `map_phase`, `map_plan_file`, `map_plan`, `map_snapshot`, `terminal_event_for_app_error`, `terminal_internal_failure_event`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 Stream<SendTransferEvent> startSendTransfer({
   required SendTransferRequest request,
@@ -17,6 +17,33 @@ Stream<SendTransferEvent> startSendTransfer({
 
 Future<void> cancelActiveSendTransfer() =>
     RustLib.instance.api.crateApiSenderCancelActiveSendTransfer();
+
+/// One candidate transport address iroh is attempting for the peer, surfaced
+/// to Dart so the connecting screen can list every IP/relay being tried.
+/// `kind` uses the same `"p2p"`/`"relay"` labels as [`SendConnectionPath`].
+class SendConnectionCandidate {
+  final String addr;
+  final String kind;
+  final bool active;
+
+  const SendConnectionCandidate({
+    required this.addr,
+    required this.kind,
+    required this.active,
+  });
+
+  @override
+  int get hashCode => addr.hashCode ^ kind.hashCode ^ active.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SendConnectionCandidate &&
+          runtimeType == other.runtimeType &&
+          addr == other.addr &&
+          kind == other.kind &&
+          active == other.active;
+}
 
 class SendConnectionPath {
   final String kind;
@@ -60,6 +87,11 @@ class SendTransferEvent {
   /// sends — otherwise Recent tile shows "no cached connection info".
   final String? remoteTicket;
   final SendConnectionPath? connectionPath;
+
+  /// Every candidate path iroh is attempting, tagged active/idle. Drives the
+  /// per-candidate rows on the connecting screen. Empty outside Connecting /
+  /// when iroh has no candidates yet.
+  final List<SendConnectionCandidate> connectionCandidates;
   final UserFacingErrorData? error;
 
   const SendTransferEvent({
@@ -75,6 +107,7 @@ class SendTransferEvent {
     this.remoteEndpointId,
     this.remoteTicket,
     this.connectionPath,
+    required this.connectionCandidates,
     this.error,
   });
 
@@ -92,6 +125,7 @@ class SendTransferEvent {
       remoteEndpointId.hashCode ^
       remoteTicket.hashCode ^
       connectionPath.hashCode ^
+      connectionCandidates.hashCode ^
       error.hashCode;
 
   @override
@@ -111,6 +145,7 @@ class SendTransferEvent {
           remoteEndpointId == other.remoteEndpointId &&
           remoteTicket == other.remoteTicket &&
           connectionPath == other.connectionPath &&
+          connectionCandidates == other.connectionCandidates &&
           error == other.error;
 }
 

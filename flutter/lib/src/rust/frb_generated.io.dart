@@ -136,6 +136,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SelectionItem> dco_decode_list_selection_item(dynamic raw);
 
   @protected
+  List<SendConnectionCandidate> dco_decode_list_send_connection_candidate(
+    dynamic raw,
+  );
+
+  @protected
   List<TransferPlanFileData> dco_decode_list_transfer_plan_file_data(
     dynamic raw,
   );
@@ -214,6 +219,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SelectionPreview dco_decode_selection_preview(dynamic raw);
+
+  @protected
+  SendConnectionCandidate dco_decode_send_connection_candidate(dynamic raw);
 
   @protected
   SendConnectionPath dco_decode_send_connection_path(dynamic raw);
@@ -400,6 +408,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<SendConnectionCandidate> sse_decode_list_send_connection_candidate(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<TransferPlanFileData> sse_decode_list_transfer_plan_file_data(
     SseDeserializer deserializer,
   );
@@ -498,6 +511,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SelectionPreview sse_decode_selection_preview(SseDeserializer deserializer);
+
+  @protected
+  SendConnectionCandidate sse_decode_send_connection_candidate(
+    SseDeserializer deserializer,
+  );
 
   @protected
   SendConnectionPath sse_decode_send_connection_path(
@@ -728,6 +746,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_send_connection_candidate(
+    List<SendConnectionCandidate> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_transfer_plan_file_data(
     List<TransferPlanFileData> self,
     SseSerializer serializer,
@@ -844,6 +868,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_selection_preview(
     SelectionPreview self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_send_connection_candidate(
+    SendConnectionCandidate self,
     SseSerializer serializer,
   );
 

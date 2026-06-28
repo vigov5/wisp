@@ -32,6 +32,7 @@ class SendTransferState {
     this.remoteEndpointId,
     this.remoteTicket,
     this.connectionPath,
+    this.connectionCandidates = const [],
     this.error,
   });
 
@@ -66,6 +67,10 @@ class SendTransferState {
   /// `_completeTransfer` can persist it to saved devices as `lastTicket`.
   final String? remoteTicket;
   final ConnectionPathInfo? connectionPath;
+
+  /// Candidate paths iroh is attempting, shown live as per-candidate rows on
+  /// the connecting screen. Empty once connected or for terminal states.
+  final List<ConnectionCandidateInfo> connectionCandidates;
   final SendTransferErrorData? error;
 
   bool get isTerminal =>
@@ -88,6 +93,7 @@ class SendTransferState {
     String? remoteEndpointId,
     String? remoteTicket,
     ConnectionPathInfo? connectionPath,
+    List<ConnectionCandidateInfo>? connectionCandidates,
     SendTransferErrorData? error,
   }) {
     return SendTransferState(
@@ -104,6 +110,7 @@ class SendTransferState {
       remoteEndpointId: remoteEndpointId ?? this.remoteEndpointId,
       remoteTicket: remoteTicket ?? this.remoteTicket,
       connectionPath: connectionPath ?? this.connectionPath,
+      connectionCandidates: connectionCandidates ?? this.connectionCandidates,
       error: error ?? this.error,
     );
   }

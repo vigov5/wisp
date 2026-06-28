@@ -66,6 +66,7 @@ class SendTransferUpdate {
     this.remoteEndpointId,
     this.remoteTicket,
     this.connectionPath,
+    this.connectionCandidates = const [],
     this.error,
   });
 
@@ -182,6 +183,10 @@ class SendTransferUpdate {
   /// so the controller can persist it via saved-devices `lastTicket`.
   final String? remoteTicket;
   final ConnectionPathInfo? connectionPath;
+
+  /// Candidate paths iroh is attempting, surfaced live during Connecting.
+  /// Empty for the named terminal constructors (completed/declined/…).
+  final List<ConnectionCandidateInfo> connectionCandidates;
   final SendTransferErrorData? error;
 }
 
@@ -283,6 +288,9 @@ class LocalSendTransferSource implements SendTransferSource {
       remoteEndpointId: event.remoteEndpointId,
       remoteTicket: event.remoteTicket,
       connectionPath: ConnectionPathInfo.fromSender(event.connectionPath),
+      connectionCandidates: ConnectionCandidateInfo.listFromSender(
+        event.connectionCandidates,
+      ),
       error: _mapError(event.error),
     );
   }

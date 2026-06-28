@@ -3,7 +3,8 @@ use std::sync::{LazyLock, Mutex};
 
 use futures_lite::StreamExt;
 use wisp_app::{
-    send::SendCancelHandle, AppError, ConnectionPath as AppConnectionPath, SendConfig,
+    send::SendCancelHandle, AppError, CandidatePath as AppCandidatePath,
+    ConnectionPath as AppConnectionPath, ConnectionPathKind as AppConnectionPathKind, SendConfig,
     SendDestination, SendDraft, SendEvent as AppSendEvent, SendPhase as AppSendPhase, SendSession,
     SendSessionOutcome,
 };
@@ -54,6 +55,16 @@ pub struct SendConnectionPath {
     pub direct_addr: Option<String>,
 }
 
+/// One candidate transport address iroh is attempting for the peer, surfaced
+/// to Dart so the connecting screen can list every IP/relay being tried.
+/// `kind` uses the same `"p2p"`/`"relay"` labels as [`SendConnectionPath`].
+#[derive(Debug, Clone)]
+pub struct SendConnectionCandidate {
+    pub addr: String,
+    pub kind: String,
+    pub active: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct SendTransferEvent {
     pub phase: SendTransferPhase,
@@ -72,6 +83,10 @@ pub struct SendTransferEvent {
     /// sends — otherwise Recent tile shows "no cached connection info".
     pub remote_ticket: Option<String>,
     pub connection_path: Option<SendConnectionPath>,
+    /// Every candidate path iroh is attempting, tagged active/idle. Drives the
+    /// per-candidate rows on the connecting screen. Empty outside Connecting /
+    /// when iroh has no candidates yet.
+    pub connection_candidates: Vec<SendConnectionCandidate>,
     pub error: Option<crate::api::error::UserFacingErrorData>,
 }
 
@@ -274,6 +289,7 @@ fn terminal_event_for_app_error(destination_label: String, error: AppError) -> S
         remote_endpoint_id: None,
         remote_ticket: None,
         connection_path: None,
+        connection_candidates: Vec::new(),
         error: Some(internal_user_facing_error(title, error.to_string())),
     }
 }
@@ -292,6 +308,7 @@ fn terminal_internal_failure_event(destination_label: String, detail: String) ->
         remote_endpoint_id: None,
         remote_ticket: None,
         connection_path: None,
+        connection_candidates: Vec::new(),
         error: Some(internal_user_facing_error("Send runtime crashed", detail)),
     }
 }
@@ -341,6 +358,11 @@ fn map_event(event: AppSendEvent) -> SendTransferEvent {
         remote_endpoint_id: event.remote_endpoint_id,
         remote_ticket: event.remote_ticket,
         connection_path: event.connection_path.map(map_connection_path),
+        connection_candidates: event
+            .connection_candidates
+            .into_iter()
+            .map(map_connection_candidate)
+            .collect(),
         error: map_optional_user_facing_error(event.error),
     }
 }
@@ -350,6 +372,22 @@ fn map_connection_path(path: AppConnectionPath) -> SendConnectionPath {
         kind: path.label().to_owned(),
         relay_url: path.relay_url,
         direct_addr: path.direct_addr,
+    }
+}
+
+fn map_connection_candidate(candidate: AppCandidatePath) -> SendConnectionCandidate {
+    // Reuse the `"p2p"`/`"relay"` labels that `ConnectionPath::label()` emits so
+    // the Dart side parses candidate kinds through the same switch as the
+    // connection-path badge. Candidates are only ever Direct or Relay.
+    let kind = match candidate.kind {
+        AppConnectionPathKind::Direct => "p2p",
+        AppConnectionPathKind::Relay => "relay",
+        AppConnectionPathKind::Unknown => "unknown",
+    };
+    SendConnectionCandidate {
+        addr: candidate.addr,
+        kind: kind.to_owned(),
+        active: candidate.active,
     }
 }
 

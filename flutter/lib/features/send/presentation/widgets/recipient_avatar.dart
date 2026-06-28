@@ -17,6 +17,7 @@ class RecipientAvatar extends StatefulWidget {
     required this.mode,
     this.animate = true,
     this.connectionPath,
+    this.connectionCandidates = const [],
     this.countdownDuration,
   });
 
@@ -26,6 +27,11 @@ class RecipientAvatar extends StatefulWidget {
   final SendingStripMode mode;
   final bool animate;
   final ConnectionPathInfo? connectionPath;
+
+  /// Candidate paths iroh is attempting, rendered as live active/idle rows
+  /// under the device name while connecting. Empty (or ignored) once a path
+  /// is established and the [connectionPath] badge takes over.
+  final List<ConnectionCandidateInfo> connectionCandidates;
 
   /// When non-null, draws a thin red ring around the avatar that drains over
   /// [countdownDuration] starting the moment this duration first appears (or
@@ -275,14 +281,28 @@ class _RecipientAvatarState extends State<RecipientAvatar>
             letterSpacing: -0.4,
           ),
         ),
-        if (widget.connectionPath != null &&
-            widget.connectionPath!.kind != ConnectionPathKind.unknown) ...[
+        if (_showConnectionBadge) ...[
           const SizedBox(height: 10),
           ConnectionPathBadge(path: widget.connectionPath, dense: false),
+        ] else if (_showCandidateRows) ...[
+          const SizedBox(height: 12),
+          _CandidatePathList(candidates: widget.connectionCandidates),
         ],
       ],
     );
   }
+
+  /// The resolved-path badge wins once iroh has settled on a direct/relay
+  /// path; until then we show the live candidate rows instead.
+  bool get _showConnectionBadge =>
+      widget.connectionPath != null &&
+      widget.connectionPath!.kind != ConnectionPathKind.unknown;
+
+  /// Only show the "trying these paths" rows while connecting (the looping
+  /// mode) and only once iroh has surfaced at least one candidate.
+  bool get _showCandidateRows =>
+      widget.mode == SendingStripMode.looping &&
+      widget.connectionCandidates.isNotEmpty;
 
   Widget _buildRipple(double t) {
     // Starts at avatar edge (90) and expands to edge of footprint (112)
@@ -299,6 +319,106 @@ class _RecipientAvatarState extends State<RecipientAvatar>
           width: 1.5,
         ),
       ),
+    );
+  }
+}
+
+/// Live list of the transport paths iroh is attempting during Connecting.
+///
+/// iroh probes every candidate in parallel and only exposes active/idle (no
+/// per-path failure or latency), so each row is just a dot + address: a filled
+/// cyan dot for the active path, a hollow muted dot for the idle candidates.
+/// The active candidate is hoisted to the top so a winning path is obvious.
+class _CandidatePathList extends StatelessWidget {
+  const _CandidatePathList({required this.candidates});
+
+  final List<ConnectionCandidateInfo> candidates;
+
+  @override
+  Widget build(BuildContext context) {
+    // Active first, then a stable order so rows don't jitter as iroh re-snapshots.
+    final ordered = [...candidates]
+      ..sort((a, b) {
+        if (a.isActive != b.isActive) {
+          return a.isActive ? -1 : 1;
+        }
+        return a.addr.compareTo(b.addr);
+      });
+    final activeCount = ordered.where((c) => c.isActive).length;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          activeCount > 0
+              ? 'Connected via 1 of ${ordered.length} paths'
+              : 'Trying ${ordered.length} '
+                    '${ordered.length == 1 ? 'path' : 'paths'}…',
+          style: wispSans(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: kMuted,
+          ),
+        ),
+        const SizedBox(height: 8),
+        for (final candidate in ordered) ...[
+          _CandidatePathRow(candidate: candidate),
+          const SizedBox(height: 4),
+        ],
+      ],
+    );
+  }
+}
+
+class _CandidatePathRow extends StatelessWidget {
+  const _CandidatePathRow({required this.candidate});
+
+  final ConnectionCandidateInfo candidate;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = candidate.isActive;
+    final kindLabel = candidate.isRelay ? 'relay' : 'direct';
+    final color = active ? kInk : kMuted;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Active → filled cyan dot; idle → hollow muted ring.
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: active ? kAccentCyanStrong : Colors.transparent,
+            border: active
+                ? null
+                : Border.all(color: kMuted.withValues(alpha: 0.6), width: 1.2),
+          ),
+        ),
+        const SizedBox(width: 8),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 220),
+          child: Text(
+            candidate.displayHost,
+            overflow: TextOverflow.ellipsis,
+            style: wispMono(
+              fontSize: 12,
+              fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+              color: color,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          '($kindLabel)',
+          style: wispSans(
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+            color: kMuted.withValues(alpha: 0.8),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -11,13 +11,18 @@ use wisp_core::transfer::{
     SendRequest, Sender, SenderEvent as CoreSenderEvent, TransferOutcome as CoreTransferOutcome,
     TransferPlan, TransferSnapshot,
 };
-use wisp_core::util::snapshot_connection_path;
+use wisp_core::util::{snapshot_connection_candidates, snapshot_connection_path};
 
 use crate::error::{AppError, AppResult, UserFacingError, UserFacingErrorKind};
-use crate::types::{ConnectionPath, SendEvent, SendPhase};
+use crate::types::{CandidatePath, ConnectionPath, SendEvent, SendPhase};
 
-/// Interval between connection-path re-snapshots while a send session is active.
-const CONNECTION_PATH_POLL_INTERVAL: Duration = Duration::from_millis(1500);
+/// Interval between connection-path re-snapshots while a send session is
+/// active. Kept short (rather than the original 1.5 s) because the connecting
+/// phase is often well under a second on a LAN, and the candidate-path rows
+/// have to appear *during* connecting to be useful — a slow poll would miss
+/// the whole window. `endpoint.remote_info()` is a cheap in-memory read, so
+/// polling a few times a second costs nothing meaningful.
+const CONNECTION_PATH_POLL_INTERVAL: Duration = Duration::from_millis(400);
 
 type StdMutex<T> = std::sync::Mutex<T>;
 
@@ -142,6 +147,7 @@ impl SendSession {
                 remote_endpoint_id: None,
                 remote_ticket: None,
                 connection_path: None,
+                connection_candidates: Vec::new(),
                 error: None,
             },
         );
@@ -222,6 +228,10 @@ impl SendSession {
         let peer_endpoint_id = resolved.peer_endpoint_id;
         let initial_path = snapshot_connection_path(&watcher_endpoint, peer_endpoint_id).await;
         let current_path: Arc<StdMutex<ConnectionPath>> = Arc::new(StdMutex::new(initial_path));
+        let initial_candidates =
+            snapshot_connection_candidates(&watcher_endpoint, peer_endpoint_id).await;
+        let current_candidates: Arc<StdMutex<Vec<CandidatePath>>> =
+            Arc::new(StdMutex::new(initial_candidates));
         let last_event: Arc<StdMutex<Option<SendEvent>>> = Arc::new(StdMutex::new(None));
         // Re-encode the resolved peer addr so emitted events carry a ticket
         // Dart can persist as `lastTicket`.  Encoding errors fall back to
@@ -260,6 +270,7 @@ impl SendSession {
             peer_endpoint_id,
             event_tx.clone(),
             Arc::clone(&current_path),
+            Arc::clone(&current_candidates),
             Arc::clone(&last_event),
             path_shutdown_rx,
         );
@@ -274,7 +285,13 @@ impl SendSession {
             );
             mapped.remote_ticket = remote_ticket.clone();
             let mapped = maybe_demote_pre_handshake_failure(&last_event, mapped);
-            emit_send_event_stamped(&event_tx, &current_path, &last_event, mapped);
+            emit_send_event_stamped(
+                &event_tx,
+                &current_path,
+                &current_candidates,
+                &last_event,
+                mapped,
+            );
         }
 
         let _ = path_shutdown_tx.send(());
@@ -369,10 +386,12 @@ pub(crate) fn emit_send_event(event_tx: &mpsc::UnboundedSender<SendEvent>, event
 fn emit_send_event_stamped(
     event_tx: &mpsc::UnboundedSender<SendEvent>,
     current_path: &Arc<StdMutex<ConnectionPath>>,
+    current_candidates: &Arc<StdMutex<Vec<CandidatePath>>>,
     last_event: &Arc<StdMutex<Option<SendEvent>>>,
     mut event: SendEvent,
 ) {
     event.connection_path = Some(current_path.lock().unwrap().clone());
+    event.connection_candidates = current_candidates.lock().unwrap().clone();
     *last_event.lock().unwrap() = Some(event.clone());
     let _ = event_tx.send(event);
 }
@@ -431,21 +450,27 @@ fn spawn_send_path_watcher(
     peer_endpoint_id: iroh::EndpointId,
     event_tx: mpsc::UnboundedSender<SendEvent>,
     current_path: Arc<StdMutex<ConnectionPath>>,
+    current_candidates: Arc<StdMutex<Vec<CandidatePath>>>,
     last_event: Arc<StdMutex<Option<SendEvent>>>,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(CONNECTION_PATH_POLL_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        // Skip the first immediate tick: the initial path was already snapshotted
-        // by the caller before this watcher was spawned.
-        interval.tick().await;
+        // Poll immediately on the first tick: the caller's initial snapshot was
+        // taken before `connect()` had registered the peer's addresses, so iroh
+        // usually has no candidates yet. Polling right away (and comparing
+        // against the slots) surfaces the candidate rows as soon as the dial
+        // registers them, instead of waiting a full interval. A redundant first
+        // poll is harmless — an unchanged snapshot simply emits nothing.
         loop {
             tokio::select! {
                 _ = &mut shutdown_rx => break,
                 _ = interval.tick() => {
                     let snapshot = snapshot_connection_path(&endpoint, peer_endpoint_id).await;
-                    let changed = {
+                    let candidates =
+                        snapshot_connection_candidates(&endpoint, peer_endpoint_id).await;
+                    let path_changed = {
                         let mut guard = current_path.lock().unwrap();
                         // Don't downgrade a known Direct/Relay path to Unknown — that
                         // happens when iroh momentarily has no Active address (NAT
@@ -465,12 +490,27 @@ fn spawn_send_path_watcher(
                             false
                         }
                     };
-                    if !changed {
+                    // The candidate set grows as iroh discovers addresses (relay,
+                    // pkarr, mDNS, STUN) and flips active/idle as a path wins, so
+                    // emit on any change — this is what drives the live
+                    // "trying these paths" rows during Connecting, before any
+                    // active path exists.
+                    let candidates_changed = {
+                        let mut guard = current_candidates.lock().unwrap();
+                        if *guard != candidates {
+                            *guard = candidates;
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if !path_changed && !candidates_changed {
                         continue;
                     }
                     let last = last_event.lock().unwrap().clone();
                     if let Some(mut event) = last {
-                        event.connection_path = Some(snapshot);
+                        event.connection_path = Some(current_path.lock().unwrap().clone());
+                        event.connection_candidates = current_candidates.lock().unwrap().clone();
                         *last_event.lock().unwrap() = Some(event.clone());
                         if event_tx.send(event).is_err() {
                             break;
@@ -515,6 +555,7 @@ pub(crate) fn failed_event_from_error(
         remote_endpoint_id: None,
         remote_ticket: None,
         connection_path: None,
+        connection_candidates: Vec::new(),
         error: Some(error),
     }
 }
@@ -540,6 +581,7 @@ fn map_sender_event(
             remote_endpoint_id: None,
             remote_ticket: None,
             connection_path: None,
+            connection_candidates: Vec::new(),
             error: None,
         },
         CoreSenderEvent::WaitingForDecision {
@@ -563,6 +605,7 @@ fn map_sender_event(
                 remote_endpoint_id: Some(receiver_endpoint_id.to_string()),
                 remote_ticket: None,
                 connection_path: None,
+                connection_candidates: Vec::new(),
                 error: None,
             }
         }
@@ -587,6 +630,7 @@ fn map_sender_event(
                 remote_endpoint_id: Some(receiver_endpoint_id.to_string()),
                 remote_ticket: None,
                 connection_path: None,
+                connection_candidates: Vec::new(),
                 error: None,
             }
         }
@@ -607,6 +651,7 @@ fn map_sender_event(
             remote_endpoint_id: None,
             remote_ticket: None,
             connection_path: None,
+            connection_candidates: Vec::new(),
             error: Some(UserFacingError::new(
                 UserFacingErrorKind::PeerDeclined,
                 "Transfer declined",
@@ -638,6 +683,7 @@ fn map_sender_event(
                 remote_endpoint_id: None,
                 remote_ticket: None,
                 connection_path: None,
+                connection_candidates: Vec::new(),
                 error: Some(UserFacingError::from(error)),
             }
         }
@@ -656,6 +702,7 @@ fn map_sender_event(
                 remote_endpoint_id: None,
                 remote_ticket: None,
                 connection_path: None,
+                connection_candidates: Vec::new(),
                 error: None,
             }
         }
@@ -683,6 +730,7 @@ fn map_sender_event(
             remote_endpoint_id: None,
             remote_ticket: None,
             connection_path: None,
+            connection_candidates: Vec::new(),
             error: None,
         },
         CoreSenderEvent::TransferCompleted { snapshot, .. } => SendEvent {
@@ -704,6 +752,7 @@ fn map_sender_event(
             remote_endpoint_id: None,
             remote_ticket: None,
             connection_path: None,
+            connection_candidates: Vec::new(),
             error: None,
         },
     }
@@ -737,6 +786,7 @@ mod tests {
             remote_endpoint_id: None,
             remote_ticket: None,
             connection_path: None,
+            connection_candidates: Vec::new(),
             error: None,
         }
     }

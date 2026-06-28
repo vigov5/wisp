@@ -5,7 +5,7 @@ use crate::error::UserFacingError;
 use iroh::SecretKey;
 pub use wisp_core::fs_plan::ConflictPolicy;
 pub use wisp_core::transfer::{TransferPlan, TransferSnapshot};
-pub use wisp_core::util::{ConnectionPath, ConnectionPathKind};
+pub use wisp_core::util::{CandidatePath, ConnectionPath, ConnectionPathKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendPhase {
@@ -44,6 +44,11 @@ pub struct SendEvent {
     /// `None` until the destination resolves, or when re-encoding fails.
     pub remote_ticket: Option<String>,
     pub connection_path: Option<ConnectionPath>,
+    /// Every candidate transport address iroh is attempting for the peer,
+    /// tagged active/idle. Populated by the path watcher during Connecting so
+    /// the UI can show which IPs/relays are being tried. Empty when iroh has
+    /// no candidates yet (or for terminal events built outside the watcher).
+    pub connection_candidates: Vec<CandidatePath>,
     pub error: Option<UserFacingError>,
 }
 
