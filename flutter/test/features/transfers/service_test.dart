@@ -34,6 +34,36 @@ void main() {
     expect(updated.offer?.manifest.totalSizeBytes, BigInt.from(3072));
   });
 
+  test('transfers service shows a connecting state before the offer', () async {
+    final source = FakeReceiverServiceSource();
+    final container = ProviderContainer(
+      overrides: [transfersServiceSourceProvider.overrideWithValue(source)],
+    );
+    addTearDown(container.dispose);
+
+    // Read first so the service subscribes before any event is emitted.
+    expect(container.read(transfersServiceProvider).offer, isNull);
+
+    // A pre-offer "connecting" event switches the UI to a connecting screen
+    // built from the sender identity, with no manifest yet.
+    source.emitConnecting(senderName: 'Maya');
+    await Future<void>.delayed(Duration.zero);
+
+    final connecting = container.read(transfersServiceProvider);
+    expect(connecting.phase, TransferSessionPhase.connecting);
+    expect(connecting.offer?.displaySenderName, 'Maya');
+    expect(connecting.offer?.manifest.itemCount, 0);
+
+    // The real offer then upgrades the same screen to the confirm (pending)
+    // state with the full manifest.
+    source.emitIncomingOffer(senderName: 'Maya');
+    await Future<void>.delayed(Duration.zero);
+
+    final pending = container.read(transfersServiceProvider);
+    expect(pending.phase, TransferSessionPhase.offerPending);
+    expect(pending.offer?.manifest.itemCount, 2);
+  });
+
   test(
     'transfers service marks incoming offers with resume progress',
     () async {

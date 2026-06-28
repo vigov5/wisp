@@ -112,62 +112,91 @@ impl ReceiverSession {
         let start = session.start(endpoint, connection);
         let CoreReceiverStart {
             mut events,
-            offer_rx,
+            mut offer_rx,
             outcome_rx,
             control,
         } = start;
 
-        let offer = match offer_rx.await {
-            Ok(Ok(offer)) => offer,
-            Ok(Err(error)) => {
-                let _ = cmd_tx
-                    .send(ReceiverCommand::OfferFinished {
-                        offer_id,
-                        // Offer never arrived — no plan / item counts /
-                        // path context to preserve, defensive zeros.
-                        final_event: failed_offer_event(
-                            save_root_label.clone(),
-                            String::new(),
-                            device_type,
-                            "Transfer failed.".to_owned(),
-                            UserFacingError::from(error),
-                            0,
-                            0,
-                            0,
-                            None,
-                            None,
-                            None,
-                            None,
-                            None,
-                            Vec::new(),
-                        ),
-                    })
-                    .await;
-                return;
-            }
-            Err(error) => {
-                let _ = cmd_tx
-                    .send(ReceiverCommand::OfferFinished {
-                        offer_id,
-                        final_event: failed_offer_event(
-                            save_root_label.clone(),
-                            String::new(),
-                            device_type,
-                            "Transfer failed.".to_owned(),
-                            UserFacingError::internal("Transfer failed", format!("{error}")),
-                            0,
-                            0,
-                            0,
-                            None,
-                            None,
-                            None,
-                            None,
-                            None,
-                            Vec::new(),
-                        ),
-                    })
-                    .await;
-                return;
+        // While the Offer is in flight, drain the core event stream so we can
+        // surface the sender the instant its Hello lands (`SenderConnected`):
+        // the UI leaves the idle/QR screen for a "connecting from <X>" screen
+        // instead of sitting silent. We also remember the sender's identity so
+        // a pre-offer failure (offer never arrives / stalls) is attributable
+        // — `failed_offer_event` with a non-empty sender_name surfaces in the
+        // UI, whereas the old empty-name path was suppressed as a bogus
+        // "unknown sender" card.
+        let mut connecting_sender: Option<(String, DeviceType, String)> = None;
+        let mut events_done = false;
+        let offer = loop {
+            // `biased`: drain pending events before resolving the offer so the
+            // `SenderConnected` that precedes a (fast) offer still surfaces.
+            tokio::select! {
+                biased;
+                maybe_event = events.next(), if !events_done => {
+                    match maybe_event {
+                        Some(CoreReceiverEvent::SenderConnected {
+                            sender_device_name,
+                            sender_device_type,
+                            sender_endpoint_id,
+                            ..
+                        }) => {
+                            let sender_label = display_sender_label(&sender_device_name);
+                            let endpoint_id_str = sender_endpoint_id.to_string();
+                            connecting_sender = Some((
+                                sender_label.clone(),
+                                sender_device_type,
+                                endpoint_id_str.clone(),
+                            ));
+                            let _ = cmd_tx
+                                .send(ReceiverCommand::OfferConnecting {
+                                    event: connecting_offer_event(
+                                        save_root_label.clone(),
+                                        sender_label,
+                                        sender_device_type,
+                                        endpoint_id_str,
+                                    ),
+                                })
+                                .await;
+                        }
+                        // Any other pre-offer event (e.g. Listening) is not
+                        // relevant until the offer arrives; the post-offer loop
+                        // below handles the rest.
+                        Some(_) => {}
+                        None => events_done = true,
+                    }
+                }
+                offer_result = &mut offer_rx => {
+                    match offer_result {
+                        Ok(Ok(offer)) => break offer,
+                        Ok(Err(error)) => {
+                            send_pre_offer_failure(
+                                &cmd_tx,
+                                offer_id,
+                                &save_root_label,
+                                device_type,
+                                connecting_sender.as_ref(),
+                                UserFacingError::from(error),
+                            )
+                            .await;
+                            return;
+                        }
+                        Err(error) => {
+                            send_pre_offer_failure(
+                                &cmd_tx,
+                                offer_id,
+                                &save_root_label,
+                                device_type,
+                                connecting_sender.as_ref(),
+                                UserFacingError::internal(
+                                    "Transfer failed",
+                                    format!("{error}"),
+                                ),
+                            )
+                            .await;
+                            return;
+                        }
+                    }
+                }
             }
         };
 
@@ -434,6 +463,9 @@ impl ReceiverSession {
                     return;
                 }
                 CoreReceiverEvent::OfferReceived { .. } => {}
+                // Surfaced pre-offer in the select loop above; once we're
+                // tracking an offer it carries no new information.
+                CoreReceiverEvent::SenderConnected { .. } => {}
             }
         }
 
@@ -806,16 +838,175 @@ fn failed_offer_event(
     }
 }
 
+/// Builds the `Connecting` offer event surfaced the moment a sender's Hello is
+/// read (before its Offer arrives). Carries the sender identity but no
+/// manifest — the UI renders a "connecting from <X>" screen with no
+/// accept/decline yet.
+fn connecting_offer_event(
+    save_root_label: String,
+    sender_name: String,
+    sender_device_type: DeviceType,
+    sender_endpoint_id: String,
+) -> ReceiverOfferEvent {
+    let destination_label = sender_name.clone();
+    ReceiverOfferEvent {
+        phase: ReceiverOfferPhase::Connecting,
+        sender_name: sender_name.clone(),
+        sender_device_type: device_type_to_str(sender_device_type),
+        destination_label,
+        save_root_label,
+        status_message: format!("{sender_name} is connecting…"),
+        item_count: 0,
+        total_size_bytes: 0,
+        bytes_received: 0,
+        plan: None,
+        snapshot: None,
+        connection_path: None,
+        sender_endpoint_id: Some(sender_endpoint_id),
+        sender_ticket: None,
+        total_size_label: human_size(0),
+        files: Vec::new(),
+        inline_text: None,
+        error: None,
+    }
+}
+
+/// Dispatch a terminal failure for a transfer that died *before* its Offer
+/// arrived. When the sender's Hello was already read we attribute the failure
+/// to that sender (so it surfaces in the UI rather than being suppressed as an
+/// "unknown sender" card); otherwise we fall back to an empty name.
+async fn send_pre_offer_failure(
+    cmd_tx: &mpsc::Sender<ReceiverCommand>,
+    offer_id: u64,
+    save_root_label: &str,
+    fallback_device_type: DeviceType,
+    connecting_sender: Option<&(String, DeviceType, String)>,
+    error: UserFacingError,
+) {
+    let (sender_name, sender_device_type, sender_endpoint_id) = match connecting_sender {
+        Some((name, dt, id)) => (name.clone(), *dt, Some(id.clone())),
+        None => (String::new(), fallback_device_type, None),
+    };
+    let _ = cmd_tx
+        .send(ReceiverCommand::OfferFinished {
+            offer_id,
+            final_event: failed_offer_event(
+                save_root_label.to_owned(),
+                sender_name,
+                sender_device_type,
+                "Transfer failed.".to_owned(),
+                error,
+                0,
+                0,
+                0,
+                None,
+                None,
+                None,
+                sender_endpoint_id,
+                None,
+                Vec::new(),
+            ),
+        })
+        .await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        build_core_receiver_request, build_offer_event, completed_offer_event, failed_offer_event,
+        build_core_receiver_request, build_offer_event, completed_offer_event,
+        connecting_offer_event, failed_offer_event, send_pre_offer_failure,
     };
     use crate::error::UserFacingErrorKind;
-    use crate::types::{ConflictPolicy, ConnectionPath, ReceiverOfferFile};
+    use crate::receiver::actor::ReceiverCommand;
+    use crate::types::{ConflictPolicy, ConnectionPath, ReceiverOfferFile, ReceiverOfferPhase};
     use wisp_core::protocol::DeviceType;
     use wisp_core::transfer::{TransferPhase, TransferPlan, TransferPlanFile, TransferSnapshot};
     use wisp_core::util::ConnectionPathKind;
+
+    #[test]
+    fn connecting_offer_event_carries_sender_and_empty_manifest() {
+        // Emitted the instant the sender's Hello is read — identity is known
+        // but the manifest isn't, so the UI shows "connecting from X" with no
+        // files / plan / accept action.
+        let event = connecting_offer_event(
+            "Downloads".to_owned(),
+            "Maya".to_owned(),
+            DeviceType::Laptop,
+            "endpoint-123".to_owned(),
+        );
+
+        assert_eq!(event.phase, ReceiverOfferPhase::Connecting);
+        assert_eq!(event.sender_name, "Maya");
+        assert_eq!(event.destination_label, "Maya");
+        assert_eq!(event.item_count, 0);
+        assert_eq!(event.total_size_bytes, 0);
+        assert!(event.files.is_empty());
+        assert!(event.plan.is_none());
+        assert_eq!(event.sender_endpoint_id.as_deref(), Some("endpoint-123"));
+        assert!(event.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn pre_offer_failure_is_attributed_to_known_sender() {
+        // When the Hello was read before the offer stalled, the failure must
+        // name the sender so the actor surfaces it (the `identified_sender`
+        // gate) instead of suppressing it as a bogus "unknown sender" card.
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let identity = (
+            "Maya".to_owned(),
+            DeviceType::Laptop,
+            "endpoint-123".to_owned(),
+        );
+        send_pre_offer_failure(
+            &tx,
+            7,
+            "Downloads",
+            DeviceType::Phone,
+            Some(&identity),
+            crate::error::UserFacingError::internal("Transfer failed", "stalled"),
+        )
+        .await;
+
+        match rx.recv().await.expect("a command was dispatched") {
+            ReceiverCommand::OfferFinished {
+                offer_id,
+                final_event,
+            } => {
+                assert_eq!(offer_id, 7);
+                assert_eq!(final_event.phase, ReceiverOfferPhase::Failed);
+                assert_eq!(final_event.sender_name, "Maya");
+                assert_eq!(
+                    final_event.sender_endpoint_id.as_deref(),
+                    Some("endpoint-123")
+                );
+            }
+            _ => panic!("expected an OfferFinished command"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pre_offer_failure_without_hello_has_empty_sender() {
+        // Handshake died before the Hello — no identity to attribute, so the
+        // sender_name stays empty and the actor suppresses the bogus card.
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        send_pre_offer_failure(
+            &tx,
+            9,
+            "Downloads",
+            DeviceType::Phone,
+            None,
+            crate::error::UserFacingError::internal("Transfer failed", "no hello"),
+        )
+        .await;
+
+        match rx.recv().await.expect("a command was dispatched") {
+            ReceiverCommand::OfferFinished { final_event, .. } => {
+                assert!(final_event.sender_name.is_empty());
+                assert!(final_event.sender_endpoint_id.is_none());
+            }
+            _ => panic!("expected an OfferFinished command"),
+        }
+    }
 
     #[test]
     fn core_receiver_request_preserves_configured_conflict_policy() {

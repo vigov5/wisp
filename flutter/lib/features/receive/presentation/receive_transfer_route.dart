@@ -69,6 +69,10 @@ class _ReceiveTransferRoutePageState
         }
 
         switch (state.phase) {
+          case TransferSessionPhase.connecting:
+            // No offer to act on yet; backing out just returns home. The
+            // in-flight inbound handshake resolves or times out on its own.
+            context.goHome();
           case TransferSessionPhase.offerPending:
             controller.declineOffer();
           case TransferSessionPhase.receiving:

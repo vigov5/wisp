@@ -32,6 +32,12 @@ pub(super) enum ReceiverCommand {
     CancelTransfer {
         reply: oneshot::Sender<AppResult<()>>,
     },
+    /// A sender connected and finished the Hello exchange, but its Offer
+    /// hasn't arrived yet. Relayed straight to the UI (phase `Connecting`) so
+    /// the receiver shows "connecting from <X>" without yet tracking an offer
+    /// in the runtime — there's nothing to accept/decline until the Offer
+    /// lands (which arrives as a later [`OfferPrepared`]) or the wait fails.
+    OfferConnecting { event: ReceiverOfferEvent },
     OfferPrepared {
         run: super::session::ReceiverRun,
         event: ReceiverOfferEvent,
@@ -122,6 +128,13 @@ pub(super) async fn run_receiver_actor(
                         let result = runtime.cancel_active_transfer();
                         let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
                         let _ = reply.send(result);
+                    }
+                    ReceiverCommand::OfferConnecting { event } => {
+                        // Relay-only: surface the "connecting from <X>" state to
+                        // the UI without touching the runtime's offer state.
+                        // The offer isn't tracked yet, so no accept/decline is
+                        // possible — that arrives with `OfferPrepared`.
+                        let _ = event_tx.send(ReceiverEvent::OfferUpdated(event));
                     }
                     ReceiverCommand::OfferPrepared { run, event } => {
                         if runtime.handle_offer_prepared(run) {

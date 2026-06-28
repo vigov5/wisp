@@ -6,6 +6,12 @@ import 'manifest.dart';
 
 enum TransferSessionPhase {
   idle,
+
+  /// A sender has connected and identified itself (Hello exchanged) but its
+  /// offer hasn't arrived yet. The UI shows a "connecting from sender" screen
+  /// with no accept/decline — there's no manifest to act on until the offer
+  /// lands.
+  connecting,
   offerPending,
   receiving,
   completed,
@@ -163,6 +169,16 @@ class TransferSessionState {
         result: null,
         errorMessage: null,
       );
+
+  const TransferSessionState.connecting({
+    required TransferIncomingOffer offer,
+  }) : this._(
+         phase: TransferSessionPhase.connecting,
+         offer: offer,
+         progress: null,
+         result: null,
+         errorMessage: null,
+       );
 
   const TransferSessionState.offerPending({
     required TransferIncomingOffer offer,

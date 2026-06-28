@@ -117,6 +117,40 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
     _incomingController.add(_lastIncomingEvent!);
   }
 
+  /// Emits a pre-offer `connecting` event (sender identified via Hello, no
+  /// manifest yet) — mirrors what the receiver core sends on
+  /// `SenderConnected`.
+  void emitConnecting({
+    required String senderName,
+    String senderEndpointId = 'endpoint-1',
+    String senderDeviceType = 'laptop',
+    String destinationLabel = 'Downloads',
+    String saveRootLabel = 'Downloads',
+    String statusMessage = 'is connecting…',
+  }) {
+    if (_incomingController.isClosed) {
+      return;
+    }
+    lastIncomingSenderEndpointId = senderEndpointId;
+    lastIncomingSenderName = senderName;
+    _lastIncomingEvent = rust_receiver.ReceiverTransferEvent(
+      phase: rust_receiver.ReceiverTransferPhase.connecting,
+      senderName: senderName,
+      senderDeviceType: senderDeviceType,
+      destinationLabel: destinationLabel,
+      saveRootLabel: saveRootLabel,
+      statusMessage: statusMessage,
+      itemCount: BigInt.zero,
+      totalSizeBytes: BigInt.zero,
+      bytesReceived: BigInt.zero,
+      senderEndpointId: senderEndpointId,
+      totalSizeLabel: '0 B',
+      files: const [],
+      error: null,
+    );
+    _incomingController.add(_lastIncomingEvent!);
+  }
+
   void emitCompletedTransfer({
     required String senderName,
     String senderDeviceType = 'laptop',

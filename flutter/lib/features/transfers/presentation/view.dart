@@ -11,6 +11,7 @@ import '../application/service.dart';
 import '../application/result_view_data.dart';
 import '../application/state.dart';
 import '../../settings/feature.dart';
+import 'widgets/connecting_card.dart';
 import 'widgets/receiving_card.dart';
 import 'widgets/offer_card.dart';
 import 'widgets/transfer_result_card.dart';
@@ -33,6 +34,11 @@ class TransfersFeature extends ConsumerWidget {
         switchInCurve: Curves.easeOut,
         switchOutCurve: Curves.easeIn,
         child: switch (state.phase) {
+          TransferSessionPhase.connecting => ConnectingCard(
+            key: const ValueKey('connecting'),
+            offer: state.incomingOffer!,
+            animate: animateReview,
+          ),
           TransferSessionPhase.offerPending => OfferCard(
             key: const ValueKey('offer'),
             offer: state.incomingOffer!,

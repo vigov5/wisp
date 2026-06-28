@@ -48,8 +48,15 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
           state = TransferSessionState.offerPending(offer: _incomingOffer!);
           return;
         case rust_receiver.ReceiverTransferPhase.connecting:
-          if (_incomingOffer != null) {
-            state = TransferSessionState.offerPending(offer: _incomingOffer!);
+          // A sender connected and identified itself, but its offer hasn't
+          // arrived yet. Show a "connecting from <X>" screen built from the
+          // sender identity (empty manifest). Ignore late/duplicate connecting
+          // events once a real offer is in hand so we never regress a confirm
+          // or receiving screen back to "connecting".
+          if (_incomingOffer == null) {
+            final connecting = _mapIncomingOffer(event);
+            _incomingOffer = connecting;
+            state = TransferSessionState.connecting(offer: connecting);
           }
           return;
         case rust_receiver.ReceiverTransferPhase.receiving:

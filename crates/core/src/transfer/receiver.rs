@@ -84,6 +84,17 @@ pub enum ReceiverEvent {
     Listening {
         endpoint_id: iroh::EndpointId,
     },
+    /// A sender opened a connection and completed the Hello exchange, but the
+    /// transfer Offer hasn't arrived yet. Emitted as soon as the sender's
+    /// identity is known so the UI can switch to a "connecting from <X>"
+    /// screen instead of sitting silently on the QR/idle screen while the
+    /// offer is in flight (or stalled).
+    SenderConnected {
+        session_id: String,
+        sender_device_name: String,
+        sender_device_type: crate::protocol::DeviceType,
+        sender_endpoint_id: iroh::EndpointId,
+    },
     OfferReceived {
         session_id: String,
         sender_device_name: String,
@@ -205,7 +216,7 @@ async fn run_session(
 
     // --- Phase 1: Handshake ---
     let (mut control_send, mut control_recv, peer_hello, offer) =
-        match do_handshake(&endpoint, &request, &connection, &mut cancel_rx).await? {
+        match do_handshake(&endpoint, &request, &connection, &event_tx, &mut cancel_rx).await? {
             HandshakeResult::Ok(s, r, h, o) => (s, r, h, o),
             HandshakeResult::Cancelled(outcome) => {
                 let _ = offer_tx.send(Err(TransferError::other(
@@ -711,19 +722,40 @@ enum HandshakeResult {
     Cancelled(TransferOutcome),
 }
 
+/// Per-step timeout for the machine handshake (accept stream, read/write the
+/// Hello). No human is involved at this point, so each step completes at
+/// network speed; this only elapses when the connection never produces the
+/// expected frame.
+const HANDSHAKE_STEP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long the receiver waits for the sender's Offer *after* the Hello
+/// exchange has completed. The offer is machine-generated and sent
+/// immediately, so this only elapses when the connection silently stalls
+/// (e.g. a path that carried the tiny Hello frames but can't sustain the
+/// larger Offer). On elapse the receiver surfaces a recoverable "sender
+/// connected but never sent the offer" failure rather than hanging — and
+/// because [`ReceiverEvent::SenderConnected`] already fired, the UI is on the
+/// "connecting from <X>" screen and can flip to that error with the sender
+/// named.
+const OFFER_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+
 async fn do_handshake(
     endpoint: &Endpoint,
     request: &ReceiverRequest,
     conn: &Connection,
+    event_tx: &Option<mpsc::UnboundedSender<ReceiverEvent>>,
     cancel_rx: &mut watch::Receiver<bool>,
 ) -> Result<HandshakeResult> {
     tokio::select! {
         res = async {
-            let (mut send, mut recv) = tokio::time::timeout(Duration::from_secs(30), conn.accept_bi())
+            let (mut send, mut recv) = tokio::time::timeout(HANDSHAKE_STEP_TIMEOUT, conn.accept_bi())
                 .await
                 .map_err(|source| TransferError::other("handshake stream timeout", source))?
                 .map_err(|source| TransferError::other("accepting bi-stream", source))?;
-            let hello = match protocol_wire::read_sender_message(&mut recv).await? {
+            let hello = match tokio::time::timeout(HANDSHAKE_STEP_TIMEOUT, protocol_wire::read_sender_message(&mut recv))
+                .await
+                .map_err(|_| TransferError::timeout("waiting for sender hello"))??
+            {
                 protocol_message::SenderMessage::Hello(h) => h,
                 protocol_message::SenderMessage::Cancel(c) => {
                     return Ok(HandshakeResult::Cancelled(TransferOutcome::from_remote_cancel(c, "")?))
@@ -747,7 +779,22 @@ async fn do_handshake(
                     device_type: to_protocol_device_type(request.device_type),
                 }
             })).await?;
-            let offer = match protocol_wire::read_sender_message(&mut recv).await? {
+            // The sender is now known (Hello carries its identity). Surface it
+            // immediately so the receiver UI leaves the idle/QR screen for a
+            // "connecting from <X>" screen while the Offer is in flight.
+            emit_receiver_event(
+                event_tx,
+                ReceiverEvent::SenderConnected {
+                    session_id: hello.session_id.clone(),
+                    sender_device_name: hello.identity.device_name.clone(),
+                    sender_device_type: to_local_device_type(hello.identity.device_type),
+                    sender_endpoint_id: hello.identity.endpoint_id,
+                },
+            );
+            let offer = match tokio::time::timeout(OFFER_WAIT_TIMEOUT, protocol_wire::read_sender_message(&mut recv))
+                .await
+                .map_err(|_| TransferError::timeout("sender connected but never sent the transfer offer"))??
+            {
                 protocol_message::SenderMessage::Offer(o) => o,
                 protocol_message::SenderMessage::Cancel(c) => {
                     return Ok(HandshakeResult::Cancelled(TransferOutcome::from_remote_cancel(c, &hello.session_id)?))
@@ -764,7 +811,6 @@ async fn do_handshake(
             Ok(HandshakeResult::Ok(send, recv, hello, offer))
         } => res,
         _ = wait_for_cancel(cancel_rx) => Ok(HandshakeResult::Cancelled(TransferOutcome::local_cancel(protocol_message::TransferRole::Receiver, protocol_message::CancelPhase::WaitingForDecision))),
-        _ = tokio::time::sleep(Duration::from_secs(30)) => return Err(TransferError::timeout("waiting for handshake")),
         _ = conn.closed() => return Err(TransferError::connection_closed("during handshake")),
     }
 }
