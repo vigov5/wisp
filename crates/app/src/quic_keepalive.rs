@@ -1,8 +1,6 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use iroh::endpoint::{QuicTransportConfig, VarInt};
-use noq_proto::congestion::BbrConfig;
 
 /// Per-stream flow-control receive window advertised by this endpoint.
 ///
@@ -45,8 +43,13 @@ const STREAM_RECEIVE_WINDOW_BYTES: u32 = 16 * 1024 * 1024;
 /// - `send_window` — raised to `8 ×` the stream window (mirroring quinn's
 ///   default send/stream ratio) so the serving side can keep the larger receive
 ///   window full and isn't the new bottleneck.
-/// - `congestion_controller_factory = BBR` — materially better than the default
-///   CUBIC on lossy/variable Wi-Fi and on high-RTT relay paths.
+///
+/// Congestion control is left at iroh's default (**CUBIC**). BBR was tried but
+/// made phone-to-phone Wi-Fi throughput visibly stutter: its ProbeBW gain
+/// cycling and periodic ProbeRTT cwnd collapses oscillate the rate on low-RTT
+/// direct paths. The relay win comes from the window (ceiling = window / RTT),
+/// not the controller, so keeping CUBIC costs nothing on relay while restoring a
+/// steady Wi-Fi rate.
 ///
 /// `initial_mtu` (1200) and MTU discovery are left at iroh's defaults — safe on
 /// every path; `receive_window` (connection-level) stays at iroh's
@@ -62,7 +65,6 @@ pub(crate) fn build_transport_config() -> QuicTransportConfig {
         .default_path_keep_alive_interval(Duration::from_millis(4_500))
         .stream_receive_window(stream_receive_window)
         .send_window(send_window)
-        .congestion_controller_factory(Arc::new(BbrConfig::default()))
         .build()
 }
 
@@ -72,11 +74,10 @@ mod tests {
 
     #[test]
     fn build_transport_config_runs_without_panic() {
-        // Smoke test: the builder accepts the chosen Durations, windows, and the
-        // BBR congestion-controller factory, and produces a value. We can't
-        // assert internal state because iroh doesn't expose getters on
-        // QuicTransportConfig — but a compile-and-run check guards against API
-        // drift on iroh/noq-proto upgrades (e.g. the BBR factory type moving).
+        // Smoke test: the builder accepts the chosen Durations and windows and
+        // produces a value. We can't assert internal state because iroh doesn't
+        // expose getters on QuicTransportConfig — but a compile-and-run check
+        // guards against API drift on iroh upgrades.
         let _ = build_transport_config();
     }
 }
