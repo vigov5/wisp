@@ -145,11 +145,26 @@ pub(super) async fn run_receiver_actor(
                     }
                     ReceiverCommand::OfferFinished { offer_id, final_event } => {
                         let phase = final_event.phase;
-                        if runtime.handle_offer_finished(offer_id)
-                            || matches!(
+                        // `handle_offer_finished` returns true only when this
+                        // offer_id was actually tracked (Pending/Receiving), so
+                        // its terminal event corresponds to a card the user has
+                        // already seen.  We still force terminal Failed/Declined
+                        // events through for *untracked* offers so an
+                        // already-surfaced offer that fails late isn't swallowed
+                        // — BUT only when we know who the sender was.  A
+                        // handshake that dies before the offer is produced (e.g.
+                        // the sender cancels while the receiver is blocked
+                        // reading the Offer frame) carries an empty
+                        // `sender_name`; surfacing it rendered a bogus "Unknown
+                        // sender" failed-transfer card for a transfer the user
+                        // never saw begin.  Suppress those.
+                        let tracked = runtime.handle_offer_finished(offer_id);
+                        let identified_sender = !final_event.sender_name.trim().is_empty();
+                        if tracked
+                            || (matches!(
                                 phase,
                                 ReceiverOfferPhase::Failed | ReceiverOfferPhase::Declined
-                            )
+                            ) && identified_sender)
                         {
                             let _ = event_tx.send(ReceiverEvent::OfferUpdated(final_event));
                         }
