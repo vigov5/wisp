@@ -87,10 +87,16 @@ class UsbAoaChannel(private val context: Context) {
 
         private const val ACTION_USB_PERMISSION = "dev.vigov5.wisp.USB_PERMISSION"
 
-        // bulkTransfer / stream read budget per call.
-        private const val READ_BUF = 32 * 1024
+        // bulkTransfer / stream read budget per call. Raised to 64KB so the
+        // inbound bulk read drains more per syscall now that frames can be up to
+        // TUNNEL_MTU (~8KB) each instead of ~1.25KB.
+        private const val READ_BUF = 64 * 1024
         // Max bytes coalesced into a single TUN→AOA bulk write. Kept ≤16KB —
-        // some controllers mishandle larger single bulk transfers.
+        // some controllers mishandle larger single bulk transfers. With the
+        // larger TUNNEL_MTU each batch already carries ~2 full packets, so the
+        // per-transfer overhead is largely amortized; this is the next knob to
+        // raise (and measure) once a controller proves it tolerates bigger
+        // single transfers.
         private const val BULK_BATCH_BYTES = 16 * 1024
         // Host bulk-WRITE timeout. Deliberately large: a write only stalls when
         // the accessory is briefly behind on draining the pipe (backpressure),
@@ -116,7 +122,16 @@ class UsbAoaChannel(private val context: Context) {
         const val TUNNEL_ACCESSORY_IP = "10.42.0.2"
         const val TUNNEL_SUBNET = "10.42.0.0"
         const val TUNNEL_PREFIX = 30
-        const val TUNNEL_MTU = 1280
+        // TUN MTU for the cable tunnel. Raised from 1280 so QUIC-over-AOA can use
+        // big datagrams — far less per-packet, framing and syscall overhead on
+        // the cable. The frame length prefix is a u16 (max 65535) and the link is
+        // a private point-to-point cable, so a large MTU is safe framing-wise.
+        // Must leave room for the IPv4+UDP header (28B) above the receiver's QUIC
+        // MTU-discovery ceiling (AOA_MTU_DISCOVERY_UPPER_BOUND = 7900 in
+        // blobs/receive.rs): 7900 + 28 = 7928 ≤ 8000. Validate on real hardware —
+        // some USB controllers mishandle very large transfers (see
+        // BULK_BATCH_BYTES); back this off if bulk errors appear.
+        const val TUNNEL_MTU = 8000
         const val EXTRA_ROLE = "role"
 
         fun tunnelIpForRole(role: String?): String =
@@ -839,12 +854,15 @@ class UsbAoaChannel(private val context: Context) {
     ) : AoaLink("host") {
         override fun write(buf: ByteArray, off: Int, len: Int) {
             var sent = 0
-            // bulkTransfer wants an offset-0 buffer on older APIs; copy when needed.
-            val payload = if (off == 0 && len == buf.size) buf else buf.copyOfRange(off, off + len)
+            // Offset-aware bulkTransfer (API 18+; minSdk is well above that) lets
+            // us resume mid-buffer on partial writes without re-allocating the
+            // remaining slice every iteration. The old `copyOfRange(sent, len)`
+            // per loop was pure GC churn on the hot pump path.
             while (sent < len) {
                 val n = connection.bulkTransfer(
                     bulkOut,
-                    if (sent == 0) payload else payload.copyOfRange(sent, len),
+                    buf,
+                    off + sent,
                     len - sent,
                     BULK_WRITE_TIMEOUT_MS,
                 )
