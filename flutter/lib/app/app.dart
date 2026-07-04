@@ -139,14 +139,31 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
   void _handleWindowsSendPaths(List<String> paths) {
     final files = _sendPickedFilesFromPaths(paths);
     if (files.isEmpty) return;
+    // Drive the controller state ourselves rather than relying on the draft
+    // route's builder to seed via `beginDraft`: when the draft route already
+    // sits in the stack, navigating back to it reuses the existing page and its
+    // `initState` never re-runs, so the forwarded file would be dropped.
+    final notifier = ref.read(sendControllerProvider.notifier);
     if (ref.read(sendControllerProvider) is SendStateDrafting) {
-      ref.read(sendControllerProvider.notifier).appendDraftItems(files);
+      // Already drafting — the draft screen is up. Fold the items in; only
+      // navigate if we've somehow drifted off it. (Guard avoids churning the
+      // route on rapid multi-select forwards.)
+      notifier.appendDraftItems(files);
       final currentPath = _router.routeInformationProvider.value.uri.path;
       if (currentPath != AppRoutePaths.sendDraft) {
-        _router.go(AppRoutePaths.sendDraft, extra: files);
+        _router.go(AppRoutePaths.sendDraft, extra: const <SendPickedFile>[]);
       }
     } else {
-      _router.go(AppRoutePaths.sendDraft, extra: files);
+      // Idle / transferring / a finished result. Start a fresh draft and
+      // navigate UNCONDITIONALLY. The transfer route is reached via `push`, and
+      // with go_router's optionURLReflectsImperativeAPIs = false the reported
+      // path still reads `/send/draft` while that pushed route is on top — so a
+      // path-guarded `go` would be skipped and strand us on the transfer route
+      // (stuck on "Gathering transfer details…"). `go` rebuilds the stack from
+      // the URL and drops the imperatively-pushed route. Empty `extra` so the
+      // draft route reuses the state we just set instead of re-seeding.
+      notifier.beginDraft(files);
+      _router.go(AppRoutePaths.sendDraft, extra: const <SendPickedFile>[]);
     }
   }
 
@@ -178,9 +195,7 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            style: FilledButton.styleFrom(
-              backgroundColor: kAccentCyanStrong,
-            ),
+            style: FilledButton.styleFrom(backgroundColor: kAccentCyanStrong),
             child: const Text('Add'),
           ),
         ],
@@ -319,13 +334,10 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
     // Keep the USB-cable controller alive (single AOA event subscription +
     // auto-establish) and force discoverability while its tunnel is up so
     // either phone can send over the cable.
-    ref.listen(
-      usbCableControllerProvider.select((s) => s.tunnelUp),
-      (_, up) {
-        _usbCableTunnelUp = up;
-        _applyDiscoverability();
-      },
-    );
+    ref.listen(usbCableControllerProvider.select((s) => s.tunnelUp), (_, up) {
+      _usbCableTunnelUp = up;
+      _applyDiscoverability();
+    });
 
     // When an incoming offer arrives while the user is on any other screen
     // (Settings, Saved devices, QR pairing/scan, deep dialogs, etc.), pop
