@@ -7,14 +7,14 @@ import 'package:app/features/settings/feature.dart';
 import 'support/settings_test_overrides.dart';
 
 Widget _app() => ProviderScope(
-      overrides: [
-        initialAppSettingsProvider.overrideWithValue(testAppSettings),
-      ],
-      child: const WispApp(),
-    );
+  overrides: [initialAppSettingsProvider.overrideWithValue(testAppSettings)],
+  child: const WispApp(),
+);
 
 void main() {
-  testWidgets('home screen shows drop-zone prompt', (WidgetTester tester) async {
+  testWidgets('home screen shows drop-zone prompt', (
+    WidgetTester tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(1024, 768));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -24,7 +24,9 @@ void main() {
     expect(find.text('Drop files to send'), findsOneWidget);
   });
 
-  testWidgets('home screen shows file-picker button', (WidgetTester tester) async {
+  testWidgets('home screen shows file-picker button', (
+    WidgetTester tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(1024, 768));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 

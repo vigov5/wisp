@@ -17,10 +17,7 @@ class TransferKeepalive {
     required String body,
   }) async {
     if (!_supported) return;
-    await _channel.invokeMethod<void>('start', {
-      'title': title,
-      'body': body,
-    });
+    await _channel.invokeMethod<void>('start', {'title': title, 'body': body});
   }
 
   /// Update the notification text without restarting the service or touching
@@ -30,10 +27,7 @@ class TransferKeepalive {
     required String body,
   }) async {
     if (!_supported) return;
-    await _channel.invokeMethod<void>('update', {
-      'title': title,
-      'body': body,
-    });
+    await _channel.invokeMethod<void>('update', {'title': title, 'body': body});
   }
 
   /// Stop the service and release locks.

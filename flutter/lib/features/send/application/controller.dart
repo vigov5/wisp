@@ -75,9 +75,7 @@ class SendController extends _$SendController {
     // (send_draft_file_list.dart), so a duplicate would crash with a
     // "duplicate key" error — and re-adding the same file is a no-op anyway
     // (e.g. clicking "Send via Wisp" twice on the same file).
-    final existingPaths = currentState.items
-        .map((item) => item.path)
-        .toSet();
+    final existingPaths = currentState.items.map((item) => item.path).toSet();
     final newItems = files
         .where((file) => existingPaths.add(file.path))
         .map(SendDraftItem.fromPickedFile)
@@ -86,9 +84,7 @@ class SendController extends _$SendController {
       return;
     }
 
-    state = currentState.copyWith(
-      items: [...currentState.items, ...newItems],
-    );
+    state = currentState.copyWith(items: [...currentState.items, ...newItems]);
     _hydrateDirectorySizes();
   }
 

@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Widget _wrap(Widget child) {
-  return MaterialApp(home: Scaffold(body: Center(child: child)));
+  return MaterialApp(
+    home: Scaffold(body: Center(child: child)),
+  );
 }
 
 void main() {
@@ -21,22 +23,21 @@ void main() {
     expect(find.text('P2P direct'), findsOneWidget);
   });
 
-  testWidgets(
-    'renders P2P direct via <ip> label when directAddr provided',
-    (tester) async {
-      await tester.pumpWidget(
-        _wrap(
-          const ConnectionPathBadge(
-            path: ConnectionPathInfo(
-              kind: ConnectionPathKind.direct,
-              directAddr: '192.168.1.5:5000',
-            ),
+  testWidgets('renders P2P direct via <ip> label when directAddr provided', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        const ConnectionPathBadge(
+          path: ConnectionPathInfo(
+            kind: ConnectionPathKind.direct,
+            directAddr: '192.168.1.5:5000',
           ),
         ),
-      );
-      expect(find.text('P2P direct via 192.168.1.5'), findsOneWidget);
-    },
-  );
+      ),
+    );
+    expect(find.text('P2P direct via 192.168.1.5'), findsOneWidget);
+  });
 
   testWidgets(
     'renders Via relay: <host> label when kind is relay and URL parseable',
@@ -55,19 +56,18 @@ void main() {
     },
   );
 
-  testWidgets(
-    'falls back to "Via relay" when relay URL has no host',
-    (tester) async {
-      await tester.pumpWidget(
-        _wrap(
-          const ConnectionPathBadge(
-            path: ConnectionPathInfo(kind: ConnectionPathKind.relay),
-          ),
+  testWidgets('falls back to "Via relay" when relay URL has no host', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        const ConnectionPathBadge(
+          path: ConnectionPathInfo(kind: ConnectionPathKind.relay),
         ),
-      );
-      expect(find.text('Via relay'), findsOneWidget);
-    },
-  );
+      ),
+    );
+    expect(find.text('Via relay'), findsOneWidget);
+  });
 
   testWidgets('renders nothing when path is null', (tester) async {
     await tester.pumpWidget(_wrap(const ConnectionPathBadge(path: null)));

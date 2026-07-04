@@ -26,10 +26,7 @@ class DiagnosticsController extends Notifier<DiagnosticsState> {
 
   Future<void> runAll() async {
     if (state.isRunning) return;
-    state = DiagnosticsState(
-      results: _initialPendingChecks(),
-      isRunning: true,
-    );
+    state = DiagnosticsState(results: _initialPendingChecks(), isRunning: true);
     final settings = ref.read(settingsControllerProvider).settings;
     await Future.wait([
       _runRust(
@@ -115,5 +112,4 @@ class DiagnosticsController extends Notifier<DiagnosticsState> {
       state = state.upsert(result);
     }
   }
-
 }

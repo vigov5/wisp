@@ -467,190 +467,184 @@ void main() {
     },
   );
 
-  testWidgets(
-    'retry button restores draft and navigates to /send/draft',
-    (WidgetTester tester) async {
-      // End-to-end check of the Retry path: user on the failed-result
-      // screen taps Retry → controller transitions Result → Drafting (with
-      // the same picked files) → router lands on /send/draft so the user
-      // can immediately re-tap Send without re-picking files.
-      final fakeSource = FakeSendTransferSource();
-      final container = _buildContainer(fakeSource);
-      addTearDown(container.dispose);
-      addTearDown(fakeSource.close);
+  testWidgets('retry button restores draft and navigates to /send/draft', (
+    WidgetTester tester,
+  ) async {
+    // End-to-end check of the Retry path: user on the failed-result
+    // screen taps Retry → controller transitions Result → Drafting (with
+    // the same picked files) → router lands on /send/draft so the user
+    // can immediately re-tap Send without re-picking files.
+    final fakeSource = FakeSendTransferSource();
+    final container = _buildContainer(fakeSource);
+    addTearDown(container.dispose);
+    addTearDown(fakeSource.close);
 
-      final controller = container.read(sendControllerProvider.notifier);
-      controller.beginDraft([
-        SendPickedFile(
-          path: '/tmp/report.pdf',
-          name: 'report.pdf',
-          sizeBytes: BigInt.from(1024),
+    final controller = container.read(sendControllerProvider.notifier);
+    controller.beginDraft([
+      SendPickedFile(
+        path: '/tmp/report.pdf',
+        name: 'report.pdf',
+        sizeBytes: BigInt.from(1024),
+      ),
+    ]);
+    controller.updateDestinationCode('ABC123');
+    final request = controller.buildSendRequest()!;
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp.router(routerConfig: _buildRouter(request)),
+      ),
+    );
+    await _pumpRoute(tester);
+
+    fakeSource.emit(
+      SendTransferUpdate.failed(
+        destinationLabel: 'Laptop',
+        statusMessage: 'Failed',
+        itemCount: BigInt.one,
+        totalSize: BigInt.from(1024),
+        bytesSent: BigInt.zero,
+        totalBytes: BigInt.from(1024),
+        error: const SendTransferErrorData(
+          kind: SendTransferErrorKind.internal,
+          title: 'Send failed',
+          message: 'boom',
+          retryable: false,
         ),
-      ]);
-      controller.updateDestinationCode('ABC123');
-      final request = controller.buildSendRequest()!;
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump();
 
-      await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: MaterialApp.router(routerConfig: _buildRouter(request)),
+    expect(find.text('Retry'), findsOneWidget);
+    expect(container.read(sendControllerProvider), isA<SendStateResult>());
+
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+
+    // State rolled back so the draft screen can re-use the same items.
+    final restored = container.read(sendControllerProvider);
+    expect(restored, isA<SendStateDrafting>());
+    expect((restored as SendStateDrafting).items, hasLength(1));
+
+    // Router landed on the draft stub.
+    expect(find.text('draft stub'), findsOneWidget);
+  });
+
+  testWidgets('back button while connecting cancels and returns to the draft', (
+    WidgetTester tester,
+  ) async {
+    // While still connecting (no bytes sent), the user can bail out of the
+    // attempt without going all the way home: Back cancels the connect, rolls
+    // the transfer back into a draft with the same file, and lands on
+    // /send/draft so they can pick a different connect method.
+    final fakeSource = FakeSendTransferSource();
+    final container = _buildContainer(fakeSource);
+    addTearDown(container.dispose);
+    addTearDown(fakeSource.close);
+
+    final controller = container.read(sendControllerProvider.notifier);
+    controller.beginDraft([
+      SendPickedFile(
+        path: '/tmp/report.pdf',
+        name: 'report.pdf',
+        sizeBytes: BigInt.from(1024),
+      ),
+    ]);
+    controller.updateDestinationCode('ABC123');
+    final request = controller.buildSendRequest()!;
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp.router(routerConfig: _buildRouter(request)),
+      ),
+    );
+    await _pumpRoute(tester);
+
+    fakeSource.emit(
+      SendTransferUpdate(
+        phase: SendTransferUpdatePhase.connecting,
+        destinationLabel: 'Laptop',
+        statusMessage: 'Preparing offer.',
+        itemCount: BigInt.one,
+        totalSize: BigInt.from(1024),
+        bytesSent: BigInt.zero,
+        totalBytes: BigInt.from(1024),
+        plan: _buildPlan(),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump();
+
+    expect(find.text('Back'), findsOneWidget);
+    expect(find.text('Cancel transfer'), findsOneWidget);
+
+    await tester.tap(find.text('Back'));
+    await tester.pumpAndSettle();
+
+    // Connect aborted, state rolled back to a draft with the same file, and
+    // the router landed on the draft screen.
+    final restored = container.read(sendControllerProvider);
+    expect(restored, isA<SendStateDrafting>());
+    expect((restored as SendStateDrafting).items, hasLength(1));
+    expect(find.text('draft stub'), findsOneWidget);
+  });
+
+  testWidgets('done button on failed result clears draft and navigates home', (
+    WidgetTester tester,
+  ) async {
+    // Companion to the retry test above — verifies that the "Done"
+    // (escape hatch) on a failure result still behaves like the
+    // success-path Done: clear the draft and go home.
+    final fakeSource = FakeSendTransferSource();
+    final container = _buildContainer(fakeSource);
+    addTearDown(container.dispose);
+    addTearDown(fakeSource.close);
+
+    final controller = container.read(sendControllerProvider.notifier);
+    controller.beginDraft([
+      SendPickedFile(
+        path: '/tmp/report.pdf',
+        name: 'report.pdf',
+        sizeBytes: BigInt.from(1024),
+      ),
+    ]);
+    controller.updateDestinationCode('ABC123');
+    final request = controller.buildSendRequest()!;
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp.router(routerConfig: _buildRouter(request)),
+      ),
+    );
+    await _pumpRoute(tester);
+
+    fakeSource.emit(
+      SendTransferUpdate.failed(
+        destinationLabel: 'Laptop',
+        statusMessage: 'Failed',
+        itemCount: BigInt.one,
+        totalSize: BigInt.from(1024),
+        bytesSent: BigInt.zero,
+        totalBytes: BigInt.from(1024),
+        error: const SendTransferErrorData(
+          kind: SendTransferErrorKind.internal,
+          title: 'Send failed',
+          message: 'boom',
+          retryable: false,
         ),
-      );
-      await _pumpRoute(tester);
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump();
 
-      fakeSource.emit(
-        SendTransferUpdate.failed(
-          destinationLabel: 'Laptop',
-          statusMessage: 'Failed',
-          itemCount: BigInt.one,
-          totalSize: BigInt.from(1024),
-          bytesSent: BigInt.zero,
-          totalBytes: BigInt.from(1024),
-          error: const SendTransferErrorData(
-            kind: SendTransferErrorKind.internal,
-            title: 'Send failed',
-            message: 'boom',
-            retryable: false,
-          ),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 600));
-      await tester.pump();
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
 
-      expect(find.text('Retry'), findsOneWidget);
-      expect(
-        container.read(sendControllerProvider),
-        isA<SendStateResult>(),
-      );
-
-      await tester.tap(find.text('Retry'));
-      await tester.pumpAndSettle();
-
-      // State rolled back so the draft screen can re-use the same items.
-      final restored = container.read(sendControllerProvider);
-      expect(restored, isA<SendStateDrafting>());
-      expect((restored as SendStateDrafting).items, hasLength(1));
-
-      // Router landed on the draft stub.
-      expect(find.text('draft stub'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'back button while connecting cancels and returns to the draft',
-    (WidgetTester tester) async {
-      // While still connecting (no bytes sent), the user can bail out of the
-      // attempt without going all the way home: Back cancels the connect, rolls
-      // the transfer back into a draft with the same file, and lands on
-      // /send/draft so they can pick a different connect method.
-      final fakeSource = FakeSendTransferSource();
-      final container = _buildContainer(fakeSource);
-      addTearDown(container.dispose);
-      addTearDown(fakeSource.close);
-
-      final controller = container.read(sendControllerProvider.notifier);
-      controller.beginDraft([
-        SendPickedFile(
-          path: '/tmp/report.pdf',
-          name: 'report.pdf',
-          sizeBytes: BigInt.from(1024),
-        ),
-      ]);
-      controller.updateDestinationCode('ABC123');
-      final request = controller.buildSendRequest()!;
-
-      await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: MaterialApp.router(routerConfig: _buildRouter(request)),
-        ),
-      );
-      await _pumpRoute(tester);
-
-      fakeSource.emit(
-        SendTransferUpdate(
-          phase: SendTransferUpdatePhase.connecting,
-          destinationLabel: 'Laptop',
-          statusMessage: 'Preparing offer.',
-          itemCount: BigInt.one,
-          totalSize: BigInt.from(1024),
-          bytesSent: BigInt.zero,
-          totalBytes: BigInt.from(1024),
-          plan: _buildPlan(),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 600));
-      await tester.pump();
-
-      expect(find.text('Back'), findsOneWidget);
-      expect(find.text('Cancel transfer'), findsOneWidget);
-
-      await tester.tap(find.text('Back'));
-      await tester.pumpAndSettle();
-
-      // Connect aborted, state rolled back to a draft with the same file, and
-      // the router landed on the draft screen.
-      final restored = container.read(sendControllerProvider);
-      expect(restored, isA<SendStateDrafting>());
-      expect((restored as SendStateDrafting).items, hasLength(1));
-      expect(find.text('draft stub'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'done button on failed result clears draft and navigates home',
-    (WidgetTester tester) async {
-      // Companion to the retry test above — verifies that the "Done"
-      // (escape hatch) on a failure result still behaves like the
-      // success-path Done: clear the draft and go home.
-      final fakeSource = FakeSendTransferSource();
-      final container = _buildContainer(fakeSource);
-      addTearDown(container.dispose);
-      addTearDown(fakeSource.close);
-
-      final controller = container.read(sendControllerProvider.notifier);
-      controller.beginDraft([
-        SendPickedFile(
-          path: '/tmp/report.pdf',
-          name: 'report.pdf',
-          sizeBytes: BigInt.from(1024),
-        ),
-      ]);
-      controller.updateDestinationCode('ABC123');
-      final request = controller.buildSendRequest()!;
-
-      await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: MaterialApp.router(routerConfig: _buildRouter(request)),
-        ),
-      );
-      await _pumpRoute(tester);
-
-      fakeSource.emit(
-        SendTransferUpdate.failed(
-          destinationLabel: 'Laptop',
-          statusMessage: 'Failed',
-          itemCount: BigInt.one,
-          totalSize: BigInt.from(1024),
-          bytesSent: BigInt.zero,
-          totalBytes: BigInt.from(1024),
-          error: const SendTransferErrorData(
-            kind: SendTransferErrorKind.internal,
-            title: 'Send failed',
-            message: 'boom',
-            retryable: false,
-          ),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 600));
-      await tester.pump();
-
-      await tester.tap(find.text('Done'));
-      await tester.pumpAndSettle();
-
-      expect(container.read(sendControllerProvider), isA<SendStateIdle>());
-      expect(find.text('home stub'), findsOneWidget);
-    },
-  );
+    expect(container.read(sendControllerProvider), isA<SendStateIdle>());
+    expect(find.text('home stub'), findsOneWidget);
+  });
 }

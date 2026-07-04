@@ -7,18 +7,18 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   Widget app() => ProviderScope(
-        overrides: [
-          initialAppSettingsProvider.overrideWithValue(
-            const AppSettings(
-              deviceName: 'Wisp',
-              downloadRoot: '/tmp/Wisp',
-              discoverableByDefault: true,
-              discoveryServerUrl: null,
-            ),
-          ),
-        ],
-        child: const WispApp(),
-      );
+    overrides: [
+      initialAppSettingsProvider.overrideWithValue(
+        const AppSettings(
+          deviceName: 'Wisp',
+          downloadRoot: '/tmp/Wisp',
+          discoverableByDefault: true,
+          discoveryServerUrl: null,
+        ),
+      ),
+    ],
+    child: const WispApp(),
+  );
 
   testWidgets('launches the Wisp shell', (WidgetTester tester) async {
     await tester.binding.setSurfaceSize(const Size(1024, 768));

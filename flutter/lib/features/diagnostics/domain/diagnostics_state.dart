@@ -33,8 +33,12 @@ class DiagnosticsState {
   CheckStatus statusFor(CheckGroup group) {
     final subset = resultsFor(group);
     if (subset.isEmpty) return CheckStatus.running;
-    if (subset.any((r) => r.status == CheckStatus.fail)) return CheckStatus.fail;
-    if (subset.any((r) => r.status == CheckStatus.warn)) return CheckStatus.warn;
+    if (subset.any((r) => r.status == CheckStatus.fail)) {
+      return CheckStatus.fail;
+    }
+    if (subset.any((r) => r.status == CheckStatus.warn)) {
+      return CheckStatus.warn;
+    }
     if (subset.any((r) => r.status == CheckStatus.running)) {
       return CheckStatus.running;
     }

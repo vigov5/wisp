@@ -59,12 +59,8 @@ Future<void> main(List<String> args) async {
         savedDevicesRepositoryProvider.overrideWithValue(
           bootstrap.savedDevicesRepository,
         ),
-        updateRepositoryProvider.overrideWithValue(
-          bootstrap.updateRepository,
-        ),
-        identityStorageProvider.overrideWithValue(
-          bootstrap.identityStorage,
-        ),
+        updateRepositoryProvider.overrideWithValue(bootstrap.updateRepository),
+        identityStorageProvider.overrideWithValue(bootstrap.identityStorage),
       ],
       child: WispApp(initialSendPaths: args),
     ),

@@ -619,7 +619,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump();
 
-    source.emitCompletedTransfer(senderName: 'Maya', saveRootLabel: 'Downloads');
+    source.emitCompletedTransfer(
+      senderName: 'Maya',
+      saveRootLabel: 'Downloads',
+    );
     await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
 

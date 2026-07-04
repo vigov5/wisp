@@ -121,7 +121,8 @@ class UsbAoa {
   static Future<bool> consumeAccessoryAttach() async {
     if (!isSupported) return false;
     try {
-      return await _method.invokeMethod<bool>('consumeAccessoryAttach') ?? false;
+      return await _method.invokeMethod<bool>('consumeAccessoryAttach') ??
+          false;
     } on PlatformException {
       return false;
     } on MissingPluginException {

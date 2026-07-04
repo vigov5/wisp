@@ -15,41 +15,40 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     secureStore = <String, String>{};
-    TestDefaultBinaryMessengerBinding
-        .instance
-        .defaultBinaryMessenger
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(const MethodChannel(_secureChannelName), (
           call,
         ) async {
-      final args = call.arguments as Map<Object?, Object?>? ?? const {};
-      final key = args['key'] as String?;
-      switch (call.method) {
-        case 'read':
-          return secureStore[key];
-        case 'write':
-          final value = args['value'] as String?;
-          if (key != null && value != null) secureStore[key] = value;
+          final args = call.arguments as Map<Object?, Object?>? ?? const {};
+          final key = args['key'] as String?;
+          switch (call.method) {
+            case 'read':
+              return secureStore[key];
+            case 'write':
+              final value = args['value'] as String?;
+              if (key != null && value != null) secureStore[key] = value;
+              return null;
+            case 'delete':
+              if (key != null) secureStore.remove(key);
+              return null;
+            case 'deleteAll':
+              secureStore.clear();
+              return null;
+            case 'readAll':
+              return Map<String, String>.from(secureStore);
+            case 'containsKey':
+              return secureStore.containsKey(key);
+          }
           return null;
-        case 'delete':
-          if (key != null) secureStore.remove(key);
-          return null;
-        case 'deleteAll':
-          secureStore.clear();
-          return null;
-        case 'readAll':
-          return Map<String, String>.from(secureStore);
-        case 'containsKey':
-          return secureStore.containsKey(key);
-      }
-      return null;
-    });
+        });
   });
 
   tearDown(() {
-    TestDefaultBinaryMessengerBinding
-        .instance
-        .defaultBinaryMessenger
-        .setMockMethodCallHandler(const MethodChannel(_secureChannelName), null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel(_secureChannelName),
+          null,
+        );
   });
 
   test('generates a 32-byte secret on first run', () async {

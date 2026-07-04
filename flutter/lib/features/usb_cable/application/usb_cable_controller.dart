@@ -132,7 +132,9 @@ class UsbCableController extends Notifier<UsbCableState> {
       _poll?.cancel();
     });
     unawaited(_seed());
-    unawaited(_tick()); // detect role immediately rather than after the first 2s
+    unawaited(
+      _tick(),
+    ); // detect role immediately rather than after the first 2s
     return const UsbCableState(supported: true, phase: UsbCablePhase.idle);
   }
 

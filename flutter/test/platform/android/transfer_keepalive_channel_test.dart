@@ -16,10 +16,10 @@ void main() {
     originalPlatform = debugDefaultTargetPlatformOverride;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
-      invocations.add(call);
-      if (call.method == 'isIgnoringBatteryOptimizations') return true;
-      return null;
-    });
+          invocations.add(call);
+          if (call.method == 'isIgnoringBatteryOptimizations') return true;
+          return null;
+        });
   });
 
   tearDown(() {
@@ -60,14 +60,15 @@ void main() {
       expect(invocations.single.method, 'stop');
     });
 
-    test('requestIgnoreBatteryOptimizations invokes the right method',
-        () async {
-      await TransferKeepalive.requestIgnoreBatteryOptimizations();
-      expect(invocations.single.method, 'requestIgnoreBatteryOptimizations');
-    });
+    test(
+      'requestIgnoreBatteryOptimizations invokes the right method',
+      () async {
+        await TransferKeepalive.requestIgnoreBatteryOptimizations();
+        expect(invocations.single.method, 'requestIgnoreBatteryOptimizations');
+      },
+    );
 
-    test('isIgnoringBatteryOptimizations returns the platform reply',
-        () async {
+    test('isIgnoringBatteryOptimizations returns the platform reply', () async {
       final ignoring = await TransferKeepalive.isIgnoringBatteryOptimizations();
       expect(ignoring, isTrue);
       expect(invocations.single.method, 'isIgnoringBatteryOptimizations');

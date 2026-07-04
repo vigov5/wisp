@@ -170,15 +170,14 @@ class TransferSessionState {
         errorMessage: null,
       );
 
-  const TransferSessionState.connecting({
-    required TransferIncomingOffer offer,
-  }) : this._(
-         phase: TransferSessionPhase.connecting,
-         offer: offer,
-         progress: null,
-         result: null,
-         errorMessage: null,
-       );
+  const TransferSessionState.connecting({required TransferIncomingOffer offer})
+    : this._(
+        phase: TransferSessionPhase.connecting,
+        offer: offer,
+        progress: null,
+        result: null,
+        errorMessage: null,
+      );
 
   const TransferSessionState.offerPending({
     required TransferIncomingOffer offer,

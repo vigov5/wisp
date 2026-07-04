@@ -14,10 +14,7 @@ class FirewallWarningState {
 
   bool get isVisible => warning != null && !dismissed;
 
-  FirewallWarningState copyWith({
-    Object? warning = _unset,
-    bool? dismissed,
-  }) {
+  FirewallWarningState copyWith({Object? warning = _unset, bool? dismissed}) {
     return FirewallWarningState(
       warning: warning == _unset ? this.warning : warning as String?,
       dismissed: dismissed ?? this.dismissed,

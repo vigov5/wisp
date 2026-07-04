@@ -104,10 +104,7 @@ void main() {
     await tester.tap(find.byType(InkWell));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Wi-Fi may be in client isolation mode.'),
-      findsOneWidget,
-    );
+    expect(find.text('Wi-Fi may be in client isolation mode.'), findsOneWidget);
     expect(find.byIcon(Icons.keyboard_arrow_up_rounded), findsOneWidget);
   });
 

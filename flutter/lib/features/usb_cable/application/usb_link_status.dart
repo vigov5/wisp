@@ -27,7 +27,9 @@ bool isTetherLink(rust_lan.UsbLinkData? link) =>
 /// Polls [detectUsbTetherLink] so the USB setup page + home icon can react to a
 /// tether cable coming up/going down without each widget owning a timer. Emits
 /// the current link (or null) immediately, then every 2s.
-final usbTetherLinkProvider = StreamProvider<rust_lan.UsbLinkData?>((ref) async* {
+final usbTetherLinkProvider = StreamProvider<rust_lan.UsbLinkData?>((
+  ref,
+) async* {
   yield detectUsbTetherLink();
   yield* Stream<rust_lan.UsbLinkData?>.periodic(
     const Duration(seconds: 2),
@@ -50,9 +52,7 @@ final usbCablePluggedProvider = StreamProvider<bool>((ref) async* {
 /// phone↔computer tether. Drives the lit/unlit state of the home USB icon and
 /// the compact status entries on the Send/Receive screens.
 final usbConnectedProvider = Provider<bool>((ref) {
-  final aoaUp = ref.watch(
-    usbCableControllerProvider.select((s) => s.tunnelUp),
-  );
+  final aoaUp = ref.watch(usbCableControllerProvider.select((s) => s.tunnelUp));
   final tether = ref.watch(usbTetherLinkProvider).value;
   return aoaUp || isTetherLink(tether);
 });

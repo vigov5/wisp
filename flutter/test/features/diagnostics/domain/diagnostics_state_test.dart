@@ -51,12 +51,8 @@ void main() {
       state = state.upsert(
         _result('a', CheckGroup.network, CheckStatus.running),
       );
-      state = state.upsert(
-        _result('b', CheckGroup.lan, CheckStatus.running),
-      );
-      state = state.upsert(
-        _result('a', CheckGroup.network, CheckStatus.pass),
-      );
+      state = state.upsert(_result('b', CheckGroup.lan, CheckStatus.running));
+      state = state.upsert(_result('a', CheckGroup.network, CheckStatus.pass));
       expect(state.results.map((r) => r.id), ['a', 'b']);
     });
   });
@@ -67,9 +63,7 @@ void main() {
       state = state.upsert(_result('a', CheckGroup.network, CheckStatus.pass));
       state = state.upsert(_result('b', CheckGroup.network, CheckStatus.warn));
       state = state.upsert(_result('c', CheckGroup.lan, CheckStatus.fail));
-      state = state.upsert(
-        _result('d', CheckGroup.local, CheckStatus.skipped),
-      );
+      state = state.upsert(_result('d', CheckGroup.local, CheckStatus.skipped));
       expect(state.passCount, 1);
       expect(state.warnCount, 1);
       expect(state.failCount, 1);
@@ -101,20 +95,14 @@ void main() {
     test('returns running while any check in the group is still running', () {
       var state = const DiagnosticsState();
       state = state.upsert(_result('a', CheckGroup.local, CheckStatus.pass));
-      state = state.upsert(
-        _result('b', CheckGroup.local, CheckStatus.running),
-      );
+      state = state.upsert(_result('b', CheckGroup.local, CheckStatus.running));
       expect(state.statusFor(CheckGroup.local), CheckStatus.running);
     });
 
     test('returns skipped when every check in the group is skipped', () {
       var state = const DiagnosticsState();
-      state = state.upsert(
-        _result('a', CheckGroup.local, CheckStatus.skipped),
-      );
-      state = state.upsert(
-        _result('b', CheckGroup.local, CheckStatus.skipped),
-      );
+      state = state.upsert(_result('a', CheckGroup.local, CheckStatus.skipped));
+      state = state.upsert(_result('b', CheckGroup.local, CheckStatus.skipped));
       expect(state.statusFor(CheckGroup.local), CheckStatus.skipped);
     });
 
@@ -165,9 +153,7 @@ void main() {
       var state = const DiagnosticsState();
       state = state.upsert(_result('a', CheckGroup.network, CheckStatus.pass));
       state = state.upsert(_result('b', CheckGroup.lan, CheckStatus.pass));
-      state = state.upsert(
-        _result('c', CheckGroup.network, CheckStatus.warn),
-      );
+      state = state.upsert(_result('c', CheckGroup.network, CheckStatus.warn));
       final network = state.resultsFor(CheckGroup.network);
       expect(network.map((r) => r.id), ['a', 'c']);
       expect(state.resultsFor(CheckGroup.lan).map((r) => r.id), ['b']);

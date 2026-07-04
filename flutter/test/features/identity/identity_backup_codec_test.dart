@@ -16,11 +16,7 @@ void main() {
   // round-trip quick. encode and decode share the instance, so the (smaller)
   // iteration count is consistent across both halves.
   IdentityBackupCodec fastCodec() => IdentityBackupCodec(
-    pbkdf2: Pbkdf2(
-      macAlgorithm: Hmac.sha256(),
-      iterations: 100,
-      bits: 256,
-    ),
+    pbkdf2: Pbkdf2(macAlgorithm: Hmac.sha256(), iterations: 100, bits: 256),
   );
 
   group('plaintext', () {
@@ -78,10 +74,7 @@ void main() {
     test('missing password throws', () async {
       final c = fastCodec();
       final payload = await c.encode(key, password: 'pw');
-      expect(
-        () => c.decode(payload),
-        throwsA(isA<IdentityBackupException>()),
-      );
+      expect(() => c.decode(payload), throwsA(isA<IdentityBackupException>()));
     });
   });
 
