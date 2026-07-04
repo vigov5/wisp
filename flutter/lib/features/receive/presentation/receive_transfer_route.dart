@@ -86,7 +86,7 @@ class _ReceiveTransferRoutePageState
         }
       },
       child: Scaffold(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         body: SafeArea(child: SizedBox.expand(child: const TransfersFeature())),
       ),
     );

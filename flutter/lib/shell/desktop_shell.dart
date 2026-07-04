@@ -90,7 +90,7 @@ class DesktopShell extends ConsumerWidget with ShellPickingActions {
     final firewallWarning = ref.watch(firewallWarningControllerProvider);
     return ReceiveTransferRouteGate(
       child: Scaffold(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         body: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(

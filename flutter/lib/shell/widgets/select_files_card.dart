@@ -23,19 +23,19 @@ class SelectFilesCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: kSurface,
+          color: context.wc.surface,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: kBorder),
+          border: Border.all(color: context.wc.border),
         ),
         child: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: kBg,
+                color: context.wc.bg,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(icon, color: kInk, size: 24),
+              child: Icon(icon, color: context.wc.ink, size: 24),
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -47,13 +47,17 @@ class SelectFilesCard extends StatelessWidget {
                     style: wispSans(
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
-                      color: kInk,
+                      color: context.wc.ink,
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: wispSans(fontSize: 14, color: kMuted, height: 1.3),
+                    style: wispSans(
+                      fontSize: 14,
+                      color: context.wc.muted,
+                      height: 1.3,
+                    ),
                   ),
                 ],
               ),

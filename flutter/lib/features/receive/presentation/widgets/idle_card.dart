@@ -155,7 +155,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                             style: wispSans(
                               fontSize: 13.5,
                               fontWeight: FontWeight.w600,
-                              color: kInk,
+                              color: context.wc.ink,
                               letterSpacing: -0.25,
                             ),
                           ),
@@ -230,7 +230,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                             fontWeight: FontWeight.w500,
                             color: _copied
                                 ? const Color(0xFF5E9B70)
-                                : kMuted.withValues(alpha: 0.62),
+                                : context.wc.muted.withValues(alpha: 0.62),
                             letterSpacing: 0.18,
                           ),
                         ),
@@ -271,13 +271,13 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                                 ),
                                 decoration: BoxDecoration(
                                   color: _codeHovering
-                                      ? Colors.white
-                                      : const Color(0xFFFDFDFD),
+                                      ? context.wc.fill
+                                      : context.wc.surface,
                                   borderRadius: BorderRadius.circular(12),
                                   border: Border.all(
                                     color: _codeHovering
-                                        ? const Color(0xFFCFCFCF)
-                                        : const Color(0xFFD7D7D7),
+                                        ? context.wc.subtle
+                                        : context.wc.border,
                                   ),
                                   boxShadow: [
                                     BoxShadow(
@@ -295,7 +295,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                                     style: wispMono(
                                       fontSize: 15,
                                       fontWeight: FontWeight.w700,
-                                      color: const Color(0xFF111111),
+                                      color: context.wc.ink,
                                       letterSpacing: 2.2,
                                     ),
                                   ),
@@ -329,13 +329,13 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       backgroundColor: widget.state.isStale
                           ? const Color(0xFFFFF6E5)
-                          : const Color(0xFFFCFCFC),
+                          : context.wc.surface,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                         side: BorderSide(
                           color: widget.state.isStale
                               ? const Color(0xFFE0B96A)
-                              : const Color(0xFFD7D7D7),
+                              : context.wc.border,
                         ),
                       ),
                     ),
@@ -345,7 +345,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                             height: 16,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: kMuted.withValues(alpha: 0.9),
+                              color: context.wc.muted.withValues(alpha: 0.9),
                             ),
                           )
                         : Icon(
@@ -353,7 +353,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                             size: 18,
                             color: widget.state.isStale
                                 ? const Color(0xFFC0912C)
-                                : kMuted.withValues(alpha: 0.9),
+                                : context.wc.muted.withValues(alpha: 0.9),
                           ),
                   ),
                   const SizedBox(width: 8),
@@ -366,16 +366,16 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                       minimumSize: const Size(38, 38),
                       padding: EdgeInsets.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      backgroundColor: const Color(0xFFFCFCFC),
+                      backgroundColor: context.wc.surface,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
-                        side: const BorderSide(color: Color(0xFFD7D7D7)),
+                        side: BorderSide(color: context.wc.border),
                       ),
                     ),
                     icon: Icon(
                       Icons.qr_code_rounded,
                       size: 18,
-                      color: kMuted.withValues(alpha: 0.9),
+                      color: context.wc.muted.withValues(alpha: 0.9),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -388,16 +388,16 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                       minimumSize: const Size(38, 38),
                       padding: EdgeInsets.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      backgroundColor: const Color(0xFFFCFCFC),
+                      backgroundColor: context.wc.surface,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
-                        side: const BorderSide(color: Color(0xFFD7D7D7)),
+                        side: BorderSide(color: context.wc.border),
                       ),
                     ),
                     icon: Icon(
                       Icons.tune_rounded,
                       size: 18,
-                      color: kMuted.withValues(alpha: 0.9),
+                      color: context.wc.muted.withValues(alpha: 0.9),
                     ),
                   ),
                 ],
@@ -459,7 +459,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
               child: LinearProgressIndicator(
                 value: ttl,
                 minHeight: 3,
-                backgroundColor: const Color(0xFFEDEDED),
+                backgroundColor: context.wc.fill,
                 color: widget.state.isStale
                     ? const Color(0xFFC0912C)
                     : widget.state.badge.color.withValues(alpha: 0.55),

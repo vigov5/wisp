@@ -41,7 +41,7 @@ class SendDraftFileList extends StatelessWidget {
                       Divider(
                         height: 1,
                         thickness: 0.5,
-                        color: kBorder.withValues(alpha: 0.3),
+                        color: context.wc.border.withValues(alpha: 0.3),
                       ),
                     _PreviewTableRow(
                       key: ValueKey(files[i].path),
@@ -80,7 +80,7 @@ class _PreviewTableRow extends StatelessWidget {
     final rowIcon = isDirectory
         ? Icons.folder_rounded
         : Icons.description_rounded;
-    final iconColor = isDirectory ? kAccentCyanStrong : kMuted;
+    final iconColor = isDirectory ? kAccentCyanStrong : context.wc.muted;
 
     return Container(
       height: 56,
@@ -99,7 +99,7 @@ class _PreviewTableRow extends StatelessWidget {
                 style: wispSans(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: kInk,
+                  color: context.wc.ink,
                 ),
               ),
             ),
@@ -113,7 +113,7 @@ class _PreviewTableRow extends StatelessWidget {
             style: wispSans(
               fontSize: 12,
               fontWeight: FontWeight.w500,
-              color: kMuted,
+              color: context.wc.muted,
             ),
           ),
           const SizedBox(width: 10),
@@ -123,7 +123,7 @@ class _PreviewTableRow extends StatelessWidget {
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             visualDensity: VisualDensity.compact,
-            color: kMuted.withValues(alpha: 0.5),
+            color: context.wc.muted.withValues(alpha: 0.5),
             tooltip: 'Remove',
           ),
         ],

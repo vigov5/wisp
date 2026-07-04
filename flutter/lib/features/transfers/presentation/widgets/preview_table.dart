@@ -14,10 +14,10 @@ class PreviewTable extends StatelessWidget {
   final List<TransferManifestItem> items;
   final String footerSummary;
 
-  static final _divider = Divider(
+  Widget _divider(BuildContext context) => Divider(
     height: 1,
     thickness: 1,
-    color: kBorder.withValues(alpha: 0.55),
+    color: context.wc.border.withValues(alpha: 0.55),
   );
 
   @override
@@ -32,7 +32,7 @@ class PreviewTable extends StatelessWidget {
     final headerStyle = wispSans(
       fontSize: 11,
       fontWeight: FontWeight.w700,
-      color: kInk.withValues(alpha: 0.8),
+      color: context.wc.ink.withValues(alpha: 0.8),
       letterSpacing: 0.15,
     );
 
@@ -58,14 +58,14 @@ class PreviewTable extends StatelessWidget {
             ],
           ),
         ),
-        _divider,
+        _divider(context),
         const SizedBox(height: 12),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10),
           child: ManifestTree(items: items),
         ),
         if (items.length > 1) ...[
-          _divider,
+          _divider(context),
           Padding(
             padding: const EdgeInsets.only(top: 10, bottom: 4),
             child: Row(
@@ -80,7 +80,7 @@ class PreviewTable extends StatelessWidget {
                     style: wispSans(
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
-                      color: kMuted,
+                      color: context.wc.muted,
                     ),
                   ),
                 ),

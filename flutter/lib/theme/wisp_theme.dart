@@ -37,6 +37,145 @@ const Color kPrimaryDark = kAccentCyanStrong;
 const Color kPrimaryLight = Color(0xFFA5F3FC);
 const Color kSurface2 = Color(0xFFFAFBFB);
 
+// ─── Theme-varying neutrals ──────────────────────────────────────────────────
+// The neutral palette above (kBg, kSurface, kInk, kMuted, …) is the *light*
+// theme's source of truth. Because those are compile-time `const`, they can't
+// flip at runtime — so widgets read the active neutrals through this
+// [ThemeExtension] instead (via `context.wc.<field>`), and the dark theme
+// supplies a parallel set. Accents (kAccentCyan*, kAccentWarm, kAccentDirect,
+// kAccentRelay) stay constant across both themes.
+@immutable
+class WispColors extends ThemeExtension<WispColors> {
+  const WispColors({
+    required this.bg,
+    required this.surface,
+    required this.surface2,
+    required this.fill,
+    required this.border,
+    required this.ink,
+    required this.muted,
+    required this.subtle,
+    required this.codeBg,
+    required this.accentFg,
+  });
+
+  /// App/scaffold background.
+  final Color bg;
+
+  /// Primary raised surface (cards, tiles, fields).
+  final Color surface;
+
+  /// Slightly-off surface for nested/secondary panels.
+  final Color surface2;
+
+  /// Muted fill for inert chips/wells.
+  final Color fill;
+
+  /// Hairline borders and dividers.
+  final Color border;
+
+  /// Primary text / high-emphasis foreground.
+  final Color ink;
+
+  /// Secondary text / low-emphasis icons.
+  final Color muted;
+
+  /// Tertiary text / hints / disabled.
+  final Color subtle;
+
+  /// Dark surface behind code / monospace blocks.
+  final Color codeBg;
+
+  /// Accent used as a foreground (text/icon) color on a surface. Brighter on
+  /// dark, where cyan-600 ([kAccentCyanStrong]) would be too low-contrast.
+  /// (Where an accent is a *filled button background* with white text, keep
+  /// [kAccentCyanStrong] directly — it reads fine on both themes.)
+  final Color accentFg;
+
+  @override
+  WispColors copyWith({
+    Color? bg,
+    Color? surface,
+    Color? surface2,
+    Color? fill,
+    Color? border,
+    Color? ink,
+    Color? muted,
+    Color? subtle,
+    Color? codeBg,
+    Color? accentFg,
+  }) {
+    return WispColors(
+      bg: bg ?? this.bg,
+      surface: surface ?? this.surface,
+      surface2: surface2 ?? this.surface2,
+      fill: fill ?? this.fill,
+      border: border ?? this.border,
+      ink: ink ?? this.ink,
+      muted: muted ?? this.muted,
+      subtle: subtle ?? this.subtle,
+      codeBg: codeBg ?? this.codeBg,
+      accentFg: accentFg ?? this.accentFg,
+    );
+  }
+
+  @override
+  WispColors lerp(covariant ThemeExtension<WispColors>? other, double t) {
+    if (other is! WispColors) return this;
+    return WispColors(
+      bg: Color.lerp(bg, other.bg, t)!,
+      surface: Color.lerp(surface, other.surface, t)!,
+      surface2: Color.lerp(surface2, other.surface2, t)!,
+      fill: Color.lerp(fill, other.fill, t)!,
+      border: Color.lerp(border, other.border, t)!,
+      ink: Color.lerp(ink, other.ink, t)!,
+      muted: Color.lerp(muted, other.muted, t)!,
+      subtle: Color.lerp(subtle, other.subtle, t)!,
+      codeBg: Color.lerp(codeBg, other.codeBg, t)!,
+      accentFg: Color.lerp(accentFg, other.accentFg, t)!,
+    );
+  }
+}
+
+const WispColors _lightColors = WispColors(
+  bg: kBg,
+  surface: kSurface,
+  surface2: kSurface2,
+  fill: kFill,
+  border: kBorder,
+  ink: kInk,
+  muted: kMuted,
+  subtle: kSubtle,
+  codeBg: kCodeBg,
+  accentFg: kAccentCyanStrong,
+);
+
+const WispColors _darkColors = WispColors(
+  bg: Color(0xFF0F1213),
+  surface: Color(0xFF171A1B),
+  surface2: Color(0xFF1D2122),
+  fill: Color(0xFF23282A),
+  border: Color(0xFF2E3436),
+  ink: Color(0xFFECEEEE),
+  muted: Color(0xFF9AA1A2),
+  subtle: Color(0xFF64696B),
+  codeBg: Color(0xFF0A0C0D),
+  accentFg: kAccentCyan,
+);
+
+/// Reads the active [WispColors] for the current theme. Use `context.wc.ink`,
+/// `context.wc.border`, etc. instead of the raw `k*` neutral constants so the
+/// color flips with light/dark.
+///
+/// Falls back to the light palette when no [WispColors] is registered on the
+/// ambient theme. In the running app every `MaterialApp` is built via
+/// [buildWispTheme], which always registers the extension, so the fallback only
+/// applies to isolated contexts (e.g. widget tests that pump a bare
+/// `MaterialApp`) — where the historical light palette is the right default.
+extension WispColorsX on BuildContext {
+  WispColors get wc => Theme.of(this).extension<WispColors>() ?? _lightColors;
+}
+
 // ─── Button conventions ─────────────────────────────────────────────────────
 // Action buttons in this app fall into four styles. Reach for an existing one
 // before inventing a new colour/alpha combination.
@@ -109,100 +248,105 @@ TextStyle wispMono({
   );
 }
 
-ThemeData buildWispTheme() {
+ThemeData buildWispTheme([Brightness brightness = Brightness.light]) {
+  final isDark = brightness == Brightness.dark;
+  final c = isDark ? _darkColors : _lightColors;
+
   final colorScheme =
       ColorScheme.fromSeed(
         seedColor: kAccentCyan,
-        brightness: Brightness.light,
+        brightness: brightness,
       ).copyWith(
         primary: kAccentCyanStrong,
         secondary: kAccentWarm,
-        surface: kSurface,
-        onSurface: kInk,
-        outline: kBorder,
+        surface: c.surface,
+        onSurface: c.ink,
+        outline: c.border,
       );
 
   final textTheme = TextTheme(
     headlineLarge: wispSans(
       fontSize: 30,
       fontWeight: FontWeight.w700,
-      color: kInk,
+      color: c.ink,
       letterSpacing: -0.8,
       height: 1.15,
     ),
     headlineMedium: wispSans(
       fontSize: 22,
       fontWeight: FontWeight.w700,
-      color: kInk,
+      color: c.ink,
       letterSpacing: -0.5,
       height: 1.2,
     ),
     titleLarge: wispSans(
       fontSize: 17,
       fontWeight: FontWeight.w600,
-      color: kInk,
+      color: c.ink,
       letterSpacing: -0.2,
     ),
     titleMedium: wispSans(
       fontSize: 14,
       fontWeight: FontWeight.w600,
-      color: kInk,
+      color: c.ink,
     ),
     bodyLarge: wispSans(
       fontSize: 14,
       fontWeight: FontWeight.w400,
-      color: kInk,
+      color: c.ink,
       height: 1.5,
     ),
     bodyMedium: wispSans(
       fontSize: 13,
       fontWeight: FontWeight.w400,
-      color: kMuted,
+      color: c.muted,
       height: 1.5,
     ),
     labelLarge: wispSans(
       fontSize: 13,
       fontWeight: FontWeight.w500,
-      color: kInk,
+      color: c.ink,
     ),
     labelMedium: wispSans(
       fontSize: 11.5,
       fontWeight: FontWeight.w500,
-      color: kMuted,
+      color: c.muted,
       letterSpacing: 0.1,
     ),
   );
 
   return ThemeData(
+    brightness: brightness,
     useMaterial3: true,
     fontFamily: kFontFamily,
     colorScheme: colorScheme,
-    scaffoldBackgroundColor: kBg,
+    scaffoldBackgroundColor: c.bg,
     textTheme: textTheme,
+    extensions: [c],
     cardTheme: CardThemeData(
-      color: kSurface,
+      color: c.surface,
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: kBorder),
+        side: BorderSide(color: c.border),
       ),
       margin: EdgeInsets.zero,
     ),
-    dividerColor: kBorder,
-    dividerTheme: const DividerThemeData(color: kBorder, space: 0),
+    dividerColor: c.border,
+    dividerTheme: DividerThemeData(color: c.border, space: 0),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: kSurface,
-      hoverColor: kSurface,
+      fillColor: c.surface,
+      hoverColor: c.surface,
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      hintStyle: wispSans(color: kSubtle, fontSize: 14),
+      hintStyle: wispSans(color: c.subtle, fontSize: 14),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: kBorder),
+        borderSide: BorderSide(color: c.border),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: kBorder),
+        borderSide: BorderSide(color: c.border),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
@@ -219,8 +363,10 @@ ThemeData buildWispTheme() {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: kInk,
-        foregroundColor: Colors.white,
+        // The default filled CTA uses the ink neutral as its fill. On dark that
+        // becomes a near-white button, so the label must flip to a dark ink.
+        backgroundColor: c.ink,
+        foregroundColor: isDark ? c.bg : Colors.white,
         minimumSize: const Size(80, 38),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -231,8 +377,8 @@ ThemeData buildWispTheme() {
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: kInk,
-        side: const BorderSide(color: kBorder, width: 1.5),
+        foregroundColor: c.ink,
+        side: BorderSide(color: c.border, width: 1.5),
         minimumSize: const Size(80, 38),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -241,7 +387,7 @@ ThemeData buildWispTheme() {
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
-        foregroundColor: kMuted,
+        foregroundColor: c.muted,
         minimumSize: const Size(0, 36),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         textStyle: wispSans(fontSize: 13, fontWeight: FontWeight.w500),
@@ -250,7 +396,7 @@ ThemeData buildWispTheme() {
     ),
     iconButtonTheme: IconButtonThemeData(
       style: IconButton.styleFrom(
-        foregroundColor: kMuted,
+        foregroundColor: c.muted,
         minimumSize: const Size(34, 34),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),

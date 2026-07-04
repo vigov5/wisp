@@ -78,11 +78,11 @@ class _SendingConnectionStripState extends State<SendingConnectionStrip>
     super.dispose();
   }
 
-  Widget _buildStrip(double loopPhase) {
+  Widget _buildStrip(BuildContext context, double loopPhase) {
     final captionStyle = wispSans(
       fontSize: 11,
       fontWeight: FontWeight.w500,
-      color: kInk.withValues(alpha: 0.9),
+      color: context.wc.ink.withValues(alpha: 0.9),
       height: 1.2,
       letterSpacing: -0.1,
     );
@@ -104,7 +104,7 @@ class _SendingConnectionStripState extends State<SendingConnectionStrip>
                     ? Icons.smartphone_rounded
                     : Icons.laptop_mac_rounded,
                 size: _iconSize,
-                color: kInk.withValues(alpha: 0.88),
+                color: context.wc.ink.withValues(alpha: 0.88),
               ),
               const SizedBox(height: 6),
               Tooltip(
@@ -136,7 +136,7 @@ class _SendingConnectionStripState extends State<SendingConnectionStrip>
                         widget.mode == SendingStripMode.transferring
                         ? widget.transferProgress.clamp(0.0, 1.0)
                         : 0.0,
-                    lineColor: kBorder.withValues(alpha: 0.65),
+                    lineColor: context.wc.border.withValues(alpha: 0.65),
                     accentColor: kAccentCyan,
                   ),
                 );
@@ -154,7 +154,7 @@ class _SendingConnectionStripState extends State<SendingConnectionStrip>
                     ? Icons.smartphone_rounded
                     : Icons.laptop_mac_rounded,
                 size: _iconSize,
-                color: kInk.withValues(alpha: 0.88),
+                color: context.wc.ink.withValues(alpha: 0.88),
               ),
               const SizedBox(height: 6),
               Tooltip(
@@ -195,7 +195,8 @@ class _SendingConnectionStripState extends State<SendingConnectionStrip>
     if (_needsLoop) {
       return AnimatedBuilder(
         animation: _loopController!,
-        builder: (context, child) => _buildStrip(_loopController!.value),
+        builder: (context, child) =>
+            _buildStrip(context, _loopController!.value),
       );
     }
     final loopPhase =
@@ -204,7 +205,7 @@ class _SendingConnectionStripState extends State<SendingConnectionStrip>
                 widget.mode == SendingStripMode.waitingOnRecipient)
         ? 0.41
         : 0.0;
-    return _buildStrip(loopPhase);
+    return _buildStrip(context, loopPhase);
   }
 }
 

@@ -197,9 +197,9 @@ class SendDraftPreview extends ConsumerWidget {
     };
 
     return Scaffold(
-      backgroundColor: kBg,
+      backgroundColor: context.wc.bg,
       appBar: AppBar(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         elevation: 0,
         scrolledUnderElevation: 0,
         leadingWidth: 72,
@@ -231,7 +231,7 @@ class SendDraftPreview extends ConsumerWidget {
                           style: wispSans(
                             fontSize: 17,
                             fontWeight: FontWeight.w700,
-                            color: kInk,
+                            color: context.wc.ink,
                           ),
                         ),
                         const Spacer(),
@@ -241,9 +241,9 @@ class SendDraftPreview extends ConsumerWidget {
                             vertical: 6,
                           ),
                           decoration: BoxDecoration(
-                            color: kSurface,
+                            color: context.wc.surface,
                             borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: kBorder),
+                            border: Border.all(color: context.wc.border),
                           ),
                           child: Text(
                             isText
@@ -252,7 +252,7 @@ class SendDraftPreview extends ConsumerWidget {
                             style: wispSans(
                               fontSize: 11.5,
                               fontWeight: FontWeight.w600,
-                              color: kMuted,
+                              color: context.wc.muted,
                               letterSpacing: 0.15,
                             ),
                           ),
@@ -266,9 +266,9 @@ class SendDraftPreview extends ConsumerWidget {
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: kSurface,
+                          color: context.wc.surface,
                           borderRadius: BorderRadius.circular(24),
-                          border: Border.all(color: kBorder),
+                          border: Border.all(color: context.wc.border),
                         ),
                         child: SizedBox(
                           height: previewHeight,
@@ -289,7 +289,20 @@ class SendDraftPreview extends ConsumerWidget {
                               ? () => _editText(context, ref, inlineText)
                               : null,
                           icon: const Icon(Icons.edit_outlined, size: 16),
-                          label: const Text('Edit'),
+                          label: Text(
+                            'Edit',
+                            style: wispSans(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: kAccentCyan,
+                            ),
+                          ),
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            foregroundColor: kAccentCyan,
+                          ),
                         ),
                       )
                     else
@@ -371,9 +384,11 @@ class SendDraftPreview extends ConsumerWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
                 decoration: BoxDecoration(
-                  color: kBg,
+                  color: context.wc.bg,
                   border: Border(
-                    top: BorderSide(color: kBorder.withValues(alpha: 0.5)),
+                    top: BorderSide(
+                      color: context.wc.border.withValues(alpha: 0.5),
+                    ),
                   ),
                 ),
                 child: FilledButton(
@@ -421,9 +436,9 @@ class _SendDraftIdleRecovery extends StatelessWidget {
     }
 
     return Scaffold(
-      backgroundColor: kBg,
+      backgroundColor: context.wc.bg,
       appBar: AppBar(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         elevation: 0,
         scrolledUnderElevation: 0,
         leadingWidth: 72,
@@ -450,14 +465,18 @@ class _SendDraftIdleRecovery extends StatelessWidget {
                   style: wispSans(
                     fontSize: 19,
                     fontWeight: FontWeight.w700,
-                    color: kInk,
+                    color: context.wc.ink,
                   ),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   'Start from home to pick files or folders, then try sending again.',
                   textAlign: TextAlign.center,
-                  style: wispSans(fontSize: 13.5, color: kMuted, height: 1.35),
+                  style: wispSans(
+                    fontSize: 13.5,
+                    color: context.wc.muted,
+                    height: 1.35,
+                  ),
                 ),
                 const SizedBox(height: 20),
                 FilledButton(
@@ -507,13 +526,17 @@ class _SendResultCard extends StatelessWidget {
             style: wispSans(
               fontSize: 16,
               fontWeight: FontWeight.w700,
-              color: kInk,
+              color: context.wc.ink,
             ),
           ),
           const SizedBox(height: 6),
           Text(
             result.message,
-            style: wispSans(fontSize: 13.5, color: kMuted, height: 1.4),
+            style: wispSans(
+              fontSize: 13.5,
+              color: context.wc.muted,
+              height: 1.4,
+            ),
           ),
         ],
       ),
@@ -535,9 +558,9 @@ class _TextDraftPreview extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: kSurface,
+        color: context.wc.surface,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: kBorder),
+        border: Border.all(color: context.wc.border),
       ),
       child: ConstrainedBox(
         constraints: BoxConstraints(
@@ -545,7 +568,10 @@ class _TextDraftPreview extends StatelessWidget {
         ),
         child: SingleChildScrollView(
           physics: const BouncingScrollPhysics(),
-          child: Text(text, style: wispMono(fontSize: 13.5, color: kInk)),
+          child: Text(
+            text,
+            style: wispMono(fontSize: 13.5, color: context.wc.ink),
+          ),
         ),
       ),
     );

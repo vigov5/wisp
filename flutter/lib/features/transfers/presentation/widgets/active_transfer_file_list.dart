@@ -63,9 +63,9 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
 
     return Container(
       decoration: BoxDecoration(
-        color: kSurface,
+        color: context.wc.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: kBorder),
+        border: Border.all(color: context.wc.border),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.03),
@@ -111,7 +111,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                             style: wispSans(
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
-                              color: kMuted,
+                              color: context.wc.muted,
                               letterSpacing: 0.4,
                             ),
                           ),
@@ -126,7 +126,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                             fontWeight: isSingleFile
                                 ? FontWeight.w600
                                 : FontWeight.w700,
-                            color: kInk,
+                            color: context.wc.ink,
                           ),
                         ),
                         if (isSingleFile)
@@ -137,7 +137,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                             style: wispSans(
                               fontSize: 11,
                               fontWeight: FontWeight.w500,
-                              color: kMuted,
+                              color: context.wc.muted,
                             ),
                           ),
                       ],
@@ -152,7 +152,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                       _isExpanded
                           ? Icons.keyboard_arrow_up_rounded
                           : Icons.keyboard_arrow_down_rounded,
-                      color: kSubtle,
+                      color: context.wc.subtle,
                       size: 20,
                     ),
                 ],
@@ -217,7 +217,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                                 style: wispSans(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
-                                  color: kInk,
+                                  color: context.wc.ink,
                                 ),
                               ),
                               if (dirPath != null && dirPath.isNotEmpty)
@@ -228,7 +228,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                                   style: wispSans(
                                     fontSize: 10,
                                     fontWeight: FontWeight.w500,
-                                    color: kSubtle,
+                                    color: context.wc.subtle,
                                   ),
                                 ),
                             ],
@@ -240,7 +240,7 @@ class _ActiveTransferFileListState extends State<ActiveTransferFileList> {
                           style: wispSans(
                             fontSize: 12,
                             fontWeight: FontWeight.w500,
-                            color: kMuted,
+                            color: context.wc.muted,
                           ),
                         ),
                         if (widget.onOpenFile != null)
@@ -301,7 +301,7 @@ class _FileIcon extends StatelessWidget {
           width: 32,
           height: 32,
           decoration: BoxDecoration(
-            color: kFill.withValues(alpha: 0.5),
+            color: context.wc.fill.withValues(alpha: 0.5),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(
@@ -311,7 +311,7 @@ class _FileIcon extends StatelessWidget {
                       ? Icons.insert_drive_file_outlined
                       : Icons.copy_all_rounded),
             size: 16,
-            color: isDone ? kAccentCyanStrong : kMuted,
+            color: isDone ? kAccentCyanStrong : context.wc.muted,
           ),
         ),
         if (showProgress)

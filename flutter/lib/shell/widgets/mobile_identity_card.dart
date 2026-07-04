@@ -112,10 +112,10 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
 
     return Card(
       elevation: 0,
-      color: kSurface,
+      color: context.wc.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(28),
-        side: const BorderSide(color: kBorder, width: 1),
+        side: BorderSide(color: context.wc.border, width: 1),
       ),
       child: Padding(
         padding: const EdgeInsets.all(24.0),
@@ -130,7 +130,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                   style: wispSans(
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
-                    color: kInk,
+                    color: context.wc.ink,
                   ),
                 ),
                 if (widget.state.endpointId.isNotEmpty) ...[
@@ -172,7 +172,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
               style: wispSans(
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
-                color: kMuted,
+                color: context.wc.muted,
                 letterSpacing: 1.2,
               ),
             ),
@@ -191,7 +191,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                           style: wispMono(
                             fontSize: 36,
                             fontWeight: FontWeight.w700,
-                            color: kInk,
+                            color: context.wc.ink,
                             letterSpacing: 4,
                           ),
                         ),
@@ -206,7 +206,9 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                                 )
                               : Icon(
                                   Icons.copy_rounded,
-                                  color: kMuted.withValues(alpha: 0.5),
+                                  color: context.wc.muted.withValues(
+                                    alpha: 0.5,
+                                  ),
                                   key: const ValueKey('copy'),
                                 ),
                         ),
@@ -228,12 +230,12 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                       decoration: BoxDecoration(
                         color: widget.state.isStale
                             ? const Color(0xFFFFF6E5)
-                            : const Color(0xFFFCFCFC),
+                            : context.wc.surface,
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
                           color: widget.state.isStale
                               ? const Color(0xFFE0B96A)
-                              : const Color(0xFFD7D7D7),
+                              : context.wc.border,
                         ),
                       ),
                       child: Center(
@@ -243,7 +245,9 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                                 height: 18,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: kMuted.withValues(alpha: 0.9),
+                                  color: context.wc.muted.withValues(
+                                    alpha: 0.9,
+                                  ),
                                 ),
                               )
                             : Icon(
@@ -251,7 +255,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                                 size: 22,
                                 color: widget.state.isStale
                                     ? const Color(0xFFC0912C)
-                                    : kMuted.withValues(
+                                    : context.wc.muted.withValues(
                                         alpha: canRefresh ? 0.9 : 0.35,
                                       ),
                               ),
@@ -269,7 +273,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                 child: LinearProgressIndicator(
                   value: ttl,
                   minHeight: 4,
-                  backgroundColor: const Color(0xFFEDEDED),
+                  backgroundColor: context.wc.fill,
                   color: widget.state.isStale
                       ? const Color(0xFFC0912C)
                       : widget.state.badge.color.withValues(alpha: 0.55),

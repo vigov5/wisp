@@ -205,7 +205,7 @@ class _SendDestinationSelectorState
     final titleStyle = wispSans(
       fontSize: 17,
       fontWeight: FontWeight.w700,
-      color: kInk,
+      color: context.wc.ink,
     );
 
     // Recent = saved devices NOT currently visible on the LAN scan.
@@ -261,7 +261,11 @@ class _SendDestinationSelectorState
         else
           Text(
             'Scan a receiver\'s QR code to pair offline.',
-            style: wispSans(fontSize: 12.5, color: kMuted, height: 1.4),
+            style: wispSans(
+              fontSize: 12.5,
+              color: context.wc.muted,
+              height: 1.4,
+            ),
           ),
         const SizedBox(height: 18),
         if (recentDevices.isNotEmpty) ...[
@@ -335,7 +339,7 @@ class _SendDestinationSelectorState
         const SizedBox(height: 6),
         Text(
           'Use the 6 characters shown on the receiver.',
-          style: wispSans(fontSize: 13.5, color: kMuted, height: 1.4),
+          style: wispSans(fontSize: 13.5, color: context.wc.muted, height: 1.4),
         ),
         const SizedBox(height: 16),
         ReceiveCodeField(
@@ -352,7 +356,7 @@ class _SendDestinationSelectorState
         Text(
           'A direct, encrypted link over the cable — no shared Wi-Fi needed. '
           'Set up both ends, then send as usual.',
-          style: wispSans(fontSize: 12.5, color: kMuted, height: 1.4),
+          style: wispSans(fontSize: 12.5, color: context.wc.muted, height: 1.4),
         ),
         const SizedBox(height: 10),
         const UsbStatusEntry(),
@@ -490,9 +494,9 @@ class _NearbyStatusCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: kSurface,
+        color: context.wc.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: kBorder.withValues(alpha: 0.55)),
+        border: Border.all(color: context.wc.border.withValues(alpha: 0.55)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -505,7 +509,7 @@ class _NearbyStatusCard extends StatelessWidget {
               child: Icon(
                 isScanning ? Icons.radar_rounded : Icons.wifi_off_rounded,
                 size: 20,
-                color: const Color(0xFF8E8E8E),
+                color: context.wc.muted,
               ),
             ),
           ),
@@ -519,7 +523,7 @@ class _NearbyStatusCard extends StatelessWidget {
                   style: wispSans(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
-                    color: kInk,
+                    color: context.wc.ink,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -528,7 +532,7 @@ class _NearbyStatusCard extends StatelessWidget {
                   style: wispSans(
                     fontSize: 13,
                     fontWeight: FontWeight.w400,
-                    color: kMuted,
+                    color: context.wc.muted,
                     height: 1.35,
                   ),
                 ),
@@ -584,10 +588,14 @@ class _RecentDeviceTile extends ConsumerWidget {
         width: 116,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFF4F8FA) : kSurface,
+          color: isSelected
+              ? kAccentCyan.withValues(alpha: 0.10)
+              : context.wc.surface,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isSelected ? const Color(0xFF8DBED4) : kBorder,
+            color: isSelected
+                ? kAccentCyan.withValues(alpha: 0.5)
+                : context.wc.border,
           ),
         ),
         child: Column(
@@ -596,7 +604,7 @@ class _RecentDeviceTile extends ConsumerWidget {
             Icon(
               _deviceIconForType(device.deviceType),
               size: 22,
-              color: isSelected ? kAccentCyan : kMuted,
+              color: isSelected ? kAccentCyan : context.wc.muted,
             ),
             const SizedBox(height: 8),
             Text(
@@ -604,7 +612,7 @@ class _RecentDeviceTile extends ConsumerWidget {
               style: wispSans(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w600,
-                color: kInk,
+                color: context.wc.ink,
                 height: 1.18,
               ),
               maxLines: 1,
@@ -618,7 +626,7 @@ class _RecentDeviceTile extends ConsumerWidget {
                 style: wispSans(
                   fontSize: 9.5,
                   fontWeight: FontWeight.w400,
-                  color: kMuted,
+                  color: context.wc.muted,
                   height: 1.1,
                 ),
                 maxLines: 1,
@@ -659,7 +667,7 @@ class _RecentDeviceTile extends ConsumerWidget {
               style: wispSans(
                 fontSize: 9.5,
                 fontWeight: FontWeight.w400,
-                color: kMuted,
+                color: context.wc.muted,
               ),
             ),
           ],
@@ -705,14 +713,16 @@ class _NearbyDeviceTile extends ConsumerWidget {
               width: 116,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               decoration: BoxDecoration(
-                color: isSelected ? const Color(0xFFF4F8FA) : kSurface,
+                color: isSelected
+                    ? kAccentCyan.withValues(alpha: 0.10)
+                    : context.wc.surface,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
                   color: isSelected
-                      ? const Color(0xFF8DBED4)
+                      ? kAccentCyan.withValues(alpha: 0.5)
                       : isStale
-                      ? kBorder.withValues(alpha: 0.5)
-                      : kBorder,
+                      ? context.wc.border.withValues(alpha: 0.5)
+                      : context.wc.border,
                 ),
               ),
               child: Column(
@@ -721,7 +731,7 @@ class _NearbyDeviceTile extends ConsumerWidget {
                   Icon(
                     icon,
                     size: 22,
-                    color: isSelected ? kAccentCyan : kMuted,
+                    color: isSelected ? kAccentCyan : context.wc.muted,
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -729,7 +739,7 @@ class _NearbyDeviceTile extends ConsumerWidget {
                     style: wispSans(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w600,
-                      color: kInk,
+                      color: context.wc.ink,
                       height: 1.18,
                     ),
                     maxLines: 1,
@@ -743,7 +753,7 @@ class _NearbyDeviceTile extends ConsumerWidget {
                       style: wispSans(
                         fontSize: 9.5,
                         fontWeight: FontWeight.w400,
-                        color: kMuted,
+                        color: context.wc.muted,
                         height: 1.1,
                       ),
                       maxLines: 1,
@@ -833,7 +843,9 @@ class _QrPairedTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pubkey = receiver.endpointId;
-    final badgeColor = pubkey.isEmpty ? kMuted : colorFromPubkey(pubkey);
+    final badgeColor = pubkey.isEmpty
+        ? context.wc.muted
+        : colorFromPubkey(pubkey);
     final badgeText = pubkey.isEmpty
         ? null
         : HSLColor.fromColor(badgeColor).withLightness(0.32).toColor();
@@ -845,10 +857,14 @@ class _QrPairedTile extends StatelessWidget {
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFF4F8FA) : kSurface,
+          color: isSelected
+              ? kAccentCyan.withValues(alpha: 0.10)
+              : context.wc.surface,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isSelected ? const Color(0xFF8DBED4) : kBorder,
+            color: isSelected
+                ? kAccentCyan.withValues(alpha: 0.5)
+                : context.wc.border,
           ),
         ),
         child: Row(
@@ -856,7 +872,7 @@ class _QrPairedTile extends StatelessWidget {
             Icon(
               _deviceIconForType(receiver.deviceType),
               size: 24,
-              color: isSelected ? kAccentCyan : kMuted,
+              color: isSelected ? kAccentCyan : context.wc.muted,
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -871,7 +887,7 @@ class _QrPairedTile extends StatelessWidget {
                           style: wispSans(
                             fontSize: 13.5,
                             fontWeight: FontWeight.w700,
-                            color: kInk,
+                            color: context.wc.ink,
                           ),
                         ),
                         TextSpan(
@@ -879,7 +895,7 @@ class _QrPairedTile extends StatelessWidget {
                           style: wispSans(
                             fontSize: 11.5,
                             fontWeight: FontWeight.w400,
-                            color: kMuted,
+                            color: context.wc.muted,
                           ),
                         ),
                       ],
@@ -921,7 +937,7 @@ class _QrPairedTile extends StatelessWidget {
             const SizedBox(width: 4),
             IconButton(
               icon: const Icon(Icons.close_rounded, size: 16),
-              color: kMuted,
+              color: context.wc.muted,
               tooltip: 'Dismiss',
               visualDensity: VisualDensity.compact,
               padding: EdgeInsets.zero,

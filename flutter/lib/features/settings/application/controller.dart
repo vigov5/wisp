@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../settings_providers.dart';
@@ -88,6 +89,17 @@ class SettingsController extends Notifier<SettingsState> {
       }
       state = state.copyWith(isSaving: false, errorMessage: error.toString());
     }
+  }
+
+  /// Applies and persists the light/dark/system appearance immediately, without
+  /// waiting for the Save button. The theme is a pure UI preference (no receiver
+  /// identity sync), so it lives outside [saveSettings] and updates live — the
+  /// same live-apply pattern used by the update-check and context-menu toggles.
+  Future<void> setThemeMode(ThemeMode mode) async {
+    if (state.settings.themeMode == mode) return;
+    final next = state.settings.copyWith(themeMode: mode);
+    state = state.copyWith(settings: next);
+    await ref.read(settingsRepositoryProvider).save(next);
   }
 
   bool _isLatestSave(int serial) => serial == _saveRequestSerial;

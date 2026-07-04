@@ -73,37 +73,39 @@ Widget buildSubtitleWithBroadcast(String text, String? broadcast) {
 }
 
 Widget buildSpeedLine({required String speedLabel, required String? etaLabel}) {
-  return Text.rich(
-    TextSpan(
-      children: [
-        TextSpan(
-          text: speedLabel,
-          style: wispSans(
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            color: kInk,
-          ),
-        ),
-        if (etaLabel != null) ...[
+  return Builder(
+    builder: (context) => Text.rich(
+      TextSpan(
+        children: [
           TextSpan(
-            text: '  ·  ',
+            text: speedLabel,
             style: wispSans(
               fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: kSubtle,
+              fontWeight: FontWeight.w700,
+              color: context.wc.ink,
             ),
           ),
-          TextSpan(
-            text: etaLabel,
-            style: wispSans(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: kMuted,
+          if (etaLabel != null) ...[
+            TextSpan(
+              text: '  ·  ',
+              style: wispSans(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: context.wc.subtle,
+              ),
             ),
-          ),
+            TextSpan(
+              text: etaLabel,
+              style: wispSans(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: context.wc.muted,
+              ),
+            ),
+          ],
         ],
-      ],
+      ),
+      textAlign: TextAlign.center,
     ),
-    textAlign: TextAlign.center,
   );
 }

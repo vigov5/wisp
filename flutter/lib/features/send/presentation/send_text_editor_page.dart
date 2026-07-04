@@ -66,16 +66,16 @@ class _SendTextEditorPageState extends State<SendTextEditorPage> {
     final willFallback = byteLen > _inlineTextMaxBytes;
 
     return Scaffold(
-      backgroundColor: kBg,
+      backgroundColor: context.wc.bg,
       appBar: AppBar(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         elevation: 0,
         title: Text(
           widget.title,
           style: wispSans(
             fontSize: 17,
             fontWeight: FontWeight.w700,
-            color: kInk,
+            color: context.wc.ink,
           ),
         ),
       ),
@@ -98,9 +98,9 @@ class _SendTextEditorPageState extends State<SendTextEditorPage> {
                 child: Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: kSurface,
+                    color: context.wc.surface,
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: kBorder),
+                    border: Border.all(color: context.wc.border),
                   ),
                   child: TextField(
                     controller: _controller,
@@ -110,12 +110,15 @@ class _SendTextEditorPageState extends State<SendTextEditorPage> {
                     minLines: null,
                     textAlignVertical: TextAlignVertical.top,
                     keyboardType: TextInputType.multiline,
-                    style: wispMono(fontSize: 14, color: kInk),
+                    style: wispMono(fontSize: 14, color: context.wc.ink),
                     decoration: InputDecoration(
                       isCollapsed: true,
                       border: InputBorder.none,
                       hintText: 'Type or paste text to send…',
-                      hintStyle: wispSans(fontSize: 14, color: kMuted),
+                      hintStyle: wispSans(
+                        fontSize: 14,
+                        color: context.wc.muted,
+                      ),
                     ),
                   ),
                 ),
@@ -128,7 +131,7 @@ class _SendTextEditorPageState extends State<SendTextEditorPage> {
                 textAlign: TextAlign.right,
                 style: wispSans(
                   fontSize: 12,
-                  color: willFallback ? kAccentCyanStrong : kMuted,
+                  color: willFallback ? context.wc.accentFg : context.wc.muted,
                 ),
               ),
               const SizedBox(height: 12),
@@ -171,7 +174,7 @@ class _HintBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: kAccentCyanStrong),
+          Icon(icon, size: 18, color: context.wc.accentFg),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -179,7 +182,7 @@ class _HintBanner extends StatelessWidget {
               style: wispSans(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: kInk.withValues(alpha: 0.8),
+                color: context.wc.ink.withValues(alpha: 0.8),
                 height: 1.35,
               ),
             ),

@@ -169,9 +169,9 @@ class _IdentityImportPageState extends ConsumerState<IdentityImportPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kBg,
+      backgroundColor: context.wc.bg,
       appBar: AppBar(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
@@ -179,7 +179,11 @@ class _IdentityImportPageState extends ConsumerState<IdentityImportPage> {
         ),
         title: Text(
           'Restore identity',
-          style: wispSans(fontSize: 18, fontWeight: FontWeight.w700, color: kInk),
+          style: wispSans(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: context.wc.ink,
+          ),
         ),
       ),
       body: SafeArea(
@@ -191,14 +195,18 @@ class _IdentityImportPageState extends ConsumerState<IdentityImportPage> {
               Text(
                 'Paste a backup code, scan its QR, or pick a saved .wispkey '
                 'file to restore a previous identity on this device.',
-                style: wispSans(fontSize: 13, color: kMuted, height: 1.45),
+                style: wispSans(
+                  fontSize: 13,
+                  color: context.wc.muted,
+                  height: 1.45,
+                ),
               ),
               const SizedBox(height: 20),
               TextField(
                 controller: _codeController,
                 minLines: 2,
                 maxLines: 4,
-                style: wispMono(fontSize: 12, color: kInk),
+                style: wispMono(fontSize: 12, color: context.wc.ink),
                 decoration: const InputDecoration(
                   labelText: 'Backup code',
                   hintText: 'wisp-key:v1:…',

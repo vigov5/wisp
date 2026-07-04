@@ -55,9 +55,9 @@ class SendSelectionSourceSheet extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: kSurface,
+            color: context.wc.surface,
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: kBorder),
+            border: Border.all(color: context.wc.border),
             boxShadow: const [
               BoxShadow(
                 color: Color(0x14000000),
@@ -79,7 +79,7 @@ class SendSelectionSourceSheet extends StatelessWidget {
                     style: wispSans(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      color: kMuted,
+                      color: context.wc.muted,
                       letterSpacing: 0.1,
                     ),
                   ),
@@ -136,13 +136,13 @@ class _SelectionActionTile extends StatelessWidget {
       color: Colors.transparent,
       child: ListTile(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        leading: Icon(icon, color: kInk),
+        leading: Icon(icon, color: context.wc.ink),
         title: Text(
           label,
           style: wispSans(
             fontSize: 15,
             fontWeight: FontWeight.w600,
-            color: kInk,
+            color: context.wc.ink,
           ),
         ),
         onTap: onTap,

@@ -94,7 +94,7 @@ class _ReliabilitySettingsSectionState extends State<ReliabilitySettingsSection>
             style: wispSans(
               fontSize: 11.5,
               fontWeight: FontWeight.w400,
-              color: kMuted,
+              color: context.wc.muted,
               height: 1.45,
             ),
           ),
@@ -123,7 +123,7 @@ class _StatusRow extends StatelessWidget {
           const SizedBox(width: 10),
           Text(
             'Checking battery optimisation status…',
-            style: wispSans(fontSize: 12.5, color: kMuted),
+            style: wispSans(fontSize: 12.5, color: context.wc.muted),
           ),
         ],
       );
@@ -144,7 +144,7 @@ class _StatusRow extends StatelessWidget {
             style: wispSans(
               fontSize: 12.5,
               fontWeight: FontWeight.w500,
-              color: kInk,
+              color: context.wc.ink,
               height: 1.4,
             ),
           ),

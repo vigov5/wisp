@@ -70,7 +70,7 @@ class OfferCard extends ConsumerWidget {
           style: wispSans(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: kInk.withValues(alpha: 0.7),
+            color: context.wc.ink.withValues(alpha: 0.7),
             height: 1.4,
           ),
         ),
@@ -285,7 +285,7 @@ class _TextOfferCardState extends ConsumerState<_TextOfferCard> {
           style: wispSans(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: kInk.withValues(alpha: 0.7),
+            color: context.wc.ink.withValues(alpha: 0.7),
             height: 1.4,
           ),
         ),
@@ -307,9 +307,9 @@ class _TextOfferCardState extends ConsumerState<_TextOfferCard> {
               width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: kSurface,
+                color: context.wc.surface,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: kBorder),
+                border: Border.all(color: context.wc.border),
               ),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 180),
@@ -317,7 +317,7 @@ class _TextOfferCardState extends ConsumerState<_TextOfferCard> {
                   physics: const BouncingScrollPhysics(),
                   child: SelectableText(
                     _text,
-                    style: wispMono(fontSize: 13.5, color: kInk),
+                    style: wispMono(fontSize: 13.5, color: context.wc.ink),
                   ),
                 ),
               ),

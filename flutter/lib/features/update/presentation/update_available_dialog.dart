@@ -43,10 +43,14 @@ class _UpdateAvailableDialog extends ConsumerWidget {
         Platform.isWindows && release.assetForCurrentPlatform() != null;
 
     return AlertDialog(
-      backgroundColor: kSurface,
+      backgroundColor: context.wc.surface,
       title: Text(
         'Update available',
-        style: wispSans(fontSize: 16, fontWeight: FontWeight.w700, color: kInk),
+        style: wispSans(
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+          color: context.wc.ink,
+        ),
       ),
       contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 20),
       content: Column(
@@ -58,7 +62,7 @@ class _UpdateAvailableDialog extends ConsumerWidget {
             style: wispSans(
               fontSize: 13.5,
               fontWeight: FontWeight.w600,
-              color: kInk,
+              color: context.wc.ink,
             ),
           ),
           if (release.htmlUrl.isNotEmpty) ...[
@@ -75,7 +79,7 @@ class _UpdateAvailableDialog extends ConsumerWidget {
                     style: wispSans(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: kAccentCyanStrong,
+                      color: context.wc.accentFg,
                     ),
                   ),
                 ),
@@ -119,10 +123,10 @@ class _UpdateAvailableDialog extends ConsumerWidget {
                 ),
                 child: Text(
                   'Later',
-                  style: wispSans(fontSize: 13, color: kMuted),
+                  style: wispSans(fontSize: 13, color: context.wc.muted),
                 ),
               ),
-              Text('·', style: wispSans(fontSize: 13, color: kMuted)),
+              Text('·', style: wispSans(fontSize: 13, color: context.wc.muted)),
               TextButton(
                 onPressed: () {
                   controller.skipCurrentVersion();
@@ -134,7 +138,7 @@ class _UpdateAvailableDialog extends ConsumerWidget {
                 ),
                 child: Text(
                   'Skip this version',
-                  style: wispSans(fontSize: 13, color: kMuted),
+                  style: wispSans(fontSize: 13, color: context.wc.muted),
                 ),
               ),
             ],

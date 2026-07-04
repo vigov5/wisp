@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter/foundation.dart';
 
 @immutable
@@ -8,6 +9,7 @@ class AppSettings {
     required this.discoverableByDefault,
     required this.discoveryServerUrl,
     this.skipClipboardConfirm = false,
+    this.themeMode = ThemeMode.system,
   });
 
   final String deviceName;
@@ -19,6 +21,10 @@ class AppSettings {
   /// straight to device selection. Default false (always confirm first).
   final bool skipClipboardConfirm;
 
+  /// Light / dark / follow-the-system appearance. Defaults to
+  /// [ThemeMode.system] so a fresh install matches the OS.
+  final ThemeMode themeMode;
+
   AppSettings copyWith({
     String? deviceName,
     String? downloadRoot,
@@ -26,6 +32,7 @@ class AppSettings {
     String? discoveryServerUrl,
     bool clearDiscoveryServerUrl = false,
     bool? skipClipboardConfirm,
+    ThemeMode? themeMode,
   }) {
     return AppSettings(
       deviceName: deviceName ?? this.deviceName,
@@ -36,6 +43,7 @@ class AppSettings {
           ? null
           : (discoveryServerUrl ?? this.discoveryServerUrl),
       skipClipboardConfirm: skipClipboardConfirm ?? this.skipClipboardConfirm,
+      themeMode: themeMode ?? this.themeMode,
     );
   }
 
@@ -48,7 +56,8 @@ class AppSettings {
           downloadRoot == other.downloadRoot &&
           discoverableByDefault == other.discoverableByDefault &&
           discoveryServerUrl == other.discoveryServerUrl &&
-          skipClipboardConfirm == other.skipClipboardConfirm;
+          skipClipboardConfirm == other.skipClipboardConfirm &&
+          themeMode == other.themeMode;
 
   @override
   int get hashCode => Object.hash(
@@ -57,6 +66,7 @@ class AppSettings {
     discoverableByDefault,
     discoveryServerUrl,
     skipClipboardConfirm,
+    themeMode,
   );
 }
 

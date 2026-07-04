@@ -37,9 +37,9 @@ class _GroupSectionState extends State<GroupSection> {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: kSurface,
+        color: context.wc.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: kBorder),
+        border: Border.all(color: context.wc.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -48,8 +48,7 @@ class _GroupSectionState extends State<GroupSection> {
             onTap: () => setState(() => _expandedOverride = !_expanded),
             borderRadius: BorderRadius.circular(12),
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               child: Row(
                 children: [
                   _GroupStatusDot(status: widget.groupStatus),
@@ -60,7 +59,7 @@ class _GroupSectionState extends State<GroupSection> {
                       style: wispSans(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
-                        color: kInk,
+                        color: context.wc.ink,
                       ),
                     ),
                   ),
@@ -68,17 +67,16 @@ class _GroupSectionState extends State<GroupSection> {
                     _expanded
                         ? Icons.keyboard_arrow_up_rounded
                         : Icons.keyboard_arrow_down_rounded,
-                    color: kMuted,
+                    color: context.wc.muted,
                   ),
                 ],
               ),
             ),
           ),
           if (_expanded) ...[
-            const Divider(height: 1, color: kBorder),
+            Divider(height: 1, color: context.wc.border),
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               child: Column(
                 children: [
                   for (final r in widget.results)

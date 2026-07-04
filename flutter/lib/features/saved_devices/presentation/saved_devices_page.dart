@@ -13,16 +13,16 @@ class SavedDevicesPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final devices = ref.watch(savedDevicesProvider);
     return Scaffold(
-      backgroundColor: kBg,
+      backgroundColor: context.wc.bg,
       appBar: AppBar(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         elevation: 0,
         title: Text(
           'Saved devices',
           style: wispSans(
             fontSize: 17,
             fontWeight: FontWeight.w700,
-            color: kInk,
+            color: context.wc.ink,
           ),
         ),
         actions: [
@@ -41,7 +41,7 @@ class SavedDevicesPage extends ConsumerWidget {
         ],
       ),
       body: devices.isEmpty
-          ? _emptyState()
+          ? _emptyState(context)
           : ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: devices.length,
@@ -60,7 +60,7 @@ class SavedDevicesPage extends ConsumerWidget {
     );
   }
 
-  Widget _emptyState() {
+  Widget _emptyState(BuildContext context) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -72,7 +72,7 @@ class SavedDevicesPage extends ConsumerWidget {
           style: wispSans(
             fontSize: 14,
             fontWeight: FontWeight.w400,
-            color: kMuted,
+            color: context.wc.muted,
             height: 1.5,
           ),
         ),
@@ -174,7 +174,7 @@ class _RenameDialogState extends State<_RenameDialog> {
             broadcast.isEmpty
                 ? 'Leave empty to use their device name.'
                 : 'Leave empty to use their name "$broadcast".',
-            style: wispSans(fontSize: 12, color: kMuted, height: 1.4),
+            style: wispSans(fontSize: 12, color: context.wc.muted, height: 1.4),
           ),
         ],
       ),
@@ -229,16 +229,16 @@ class _SavedDeviceRow extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: kSurface,
+          color: context.wc.surface,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: kBorder),
+          border: Border.all(color: context.wc.border),
         ),
         child: Row(
           children: [
             Icon(
               isPhone ? Icons.smartphone_rounded : Icons.laptop_mac_rounded,
               size: 26,
-              color: kInk.withValues(alpha: 0.8),
+              color: context.wc.ink.withValues(alpha: 0.8),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -250,7 +250,7 @@ class _SavedDeviceRow extends StatelessWidget {
                     style: wispSans(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
-                      color: kInk,
+                      color: context.wc.ink,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -264,7 +264,7 @@ class _SavedDeviceRow extends StatelessWidget {
                       style: wispSans(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w400,
-                        color: kMuted,
+                        color: context.wc.muted,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -289,7 +289,7 @@ class _SavedDeviceRow extends StatelessWidget {
                           style: wispSans(
                             fontSize: 11.5,
                             fontWeight: FontWeight.w400,
-                            color: kMuted,
+                            color: context.wc.muted,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -302,13 +302,13 @@ class _SavedDeviceRow extends StatelessWidget {
             ),
             IconButton(
               icon: const Icon(Icons.edit_outlined, size: 19),
-              color: kMuted,
+              color: context.wc.muted,
               onPressed: onRename,
               tooltip: 'Rename',
             ),
             IconButton(
               icon: const Icon(Icons.close_rounded, size: 20),
-              color: kMuted,
+              color: context.wc.muted,
               onPressed: onDelete,
               tooltip: 'Remove',
             ),

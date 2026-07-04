@@ -31,7 +31,7 @@ class MobileShell extends ConsumerWidget with ShellPickingActions {
     return AndroidPermissionBootstrap(
       child: ReceiveTransferRouteGate(
         child: Scaffold(
-          backgroundColor: kBg,
+          backgroundColor: context.wc.bg,
           body: CustomScrollView(
             physics: const BouncingScrollPhysics(),
             slivers: [

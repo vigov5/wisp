@@ -54,13 +54,17 @@ class _UsbSetupPageState extends ConsumerState<UsbSetupPage> {
     final selected = _selected ?? _defaultMode(cable, tetherUp);
 
     return Scaffold(
-      backgroundColor: kBg,
+      backgroundColor: context.wc.bg,
       appBar: AppBar(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         elevation: 0,
         title: Text(
           'USB transfer',
-          style: wispSans(fontSize: 17, fontWeight: FontWeight.w700, color: kInk),
+          style: wispSans(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: context.wc.ink,
+          ),
         ),
       ),
       body: SafeArea(
@@ -71,7 +75,11 @@ class _UsbSetupPageState extends ConsumerState<UsbSetupPage> {
               'Move files over a USB cable — a direct, encrypted link with no '
               'shared Wi-Fi. Pick how you\'re connected below, follow the steps '
               'on each end, then head to Send to share your files.',
-              style: wispSans(fontSize: 13, color: kMuted, height: 1.45),
+              style: wispSans(
+                fontSize: 13,
+                color: context.wc.muted,
+                height: 1.45,
+              ),
             ),
             const SizedBox(height: 14),
             const _NearbyTipNote(),
@@ -80,7 +88,8 @@ class _UsbSetupPageState extends ConsumerState<UsbSetupPage> {
               _ModeCard(
                 icon: Icons.smartphone_rounded,
                 title: 'Phone to phone',
-                subtitle: 'One cable between two phones — roles set automatically.',
+                subtitle:
+                    'One cable between two phones — roles set automatically.',
                 connected: cable.tunnelUp,
                 selected: selected == _UsbMode.phoneToPhone,
                 onTap: () => setState(() => _selected = _UsbMode.phoneToPhone),
@@ -146,10 +155,14 @@ class _ModeCard extends StatelessWidget {
         duration: const Duration(milliseconds: 160),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFF4F8FA) : kSurface,
+          color: selected
+              ? kAccentCyan.withValues(alpha: 0.10)
+              : context.wc.surface,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: selected ? const Color(0xFF8DBED4) : kBorder,
+            color: selected
+                ? kAccentCyan.withValues(alpha: 0.5)
+                : context.wc.border,
             width: selected ? 1.4 : 1,
           ),
         ),
@@ -160,10 +173,14 @@ class _ModeCard extends StatelessWidget {
               height: 38,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: selected ? kAccentCyanHover : kFill,
+                color: selected ? kAccentCyanHover : context.wc.fill,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(icon, size: 20, color: selected ? kAccentCyanStrong : kMuted),
+              child: Icon(
+                icon,
+                size: 20,
+                color: selected ? context.wc.accentFg : context.wc.muted,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -177,7 +194,7 @@ class _ModeCard extends StatelessWidget {
                         style: wispSans(
                           fontSize: 14.5,
                           fontWeight: FontWeight.w700,
-                          color: kInk,
+                          color: context.wc.ink,
                         ),
                       ),
                       if (connected) ...[
@@ -189,7 +206,11 @@ class _ModeCard extends StatelessWidget {
                   const SizedBox(height: 3),
                   Text(
                     subtitle,
-                    style: wispSans(fontSize: 12.5, color: kMuted, height: 1.35),
+                    style: wispSans(
+                      fontSize: 12.5,
+                      color: context.wc.muted,
+                      height: 1.35,
+                    ),
                   ),
                 ],
               ),
@@ -200,7 +221,7 @@ class _ModeCard extends StatelessWidget {
                   ? Icons.radio_button_checked_rounded
                   : Icons.radio_button_unchecked_rounded,
               size: 20,
-              color: selected ? kAccentCyan : kSubtle,
+              color: selected ? kAccentCyan : context.wc.subtle,
             ),
           ],
         ),
@@ -322,44 +343,46 @@ class _PhoneToPhonePanel extends ConsumerWidget {
     UsbCableState state,
   ) {
     return [
-        _StepData(
-          state: s1,
-          title: 'Connect the cable',
-          detail: s1 == _StepState.done
-              ? 'USB cable detected.'
-              : 'Plug one USB cable into both phones.',
-        ),
-        _StepData(
-          state: s2,
-          title: 'Direct link established',
-          detail: switch (s2) {
-            _StepState.done => roleWord == null
+      _StepData(
+        state: s1,
+        title: 'Connect the cable',
+        detail: s1 == _StepState.done
+            ? 'USB cable detected.'
+            : 'Plug one USB cable into both phones.',
+      ),
+      _StepData(
+        state: s2,
+        title: 'Direct link established',
+        detail: switch (s2) {
+          _StepState.done =>
+            roleWord == null
                 ? 'Linked over USB.'
                 : 'Linked — this phone is the $roleWord.',
-            _StepState.active => role == 'accessory'
+          _StepState.active =>
+            role == 'accessory'
                 ? 'Waiting to be switched — keep this open and start Host on '
                       'the other phone.'
                 : 'Driving the link — approve the USB permission prompt.',
-            _StepState.failed => err ?? 'Could not establish the USB link.',
-            _StepState.pending =>
-              'This phone is the $detectedWord. Order: ① the Accessory phone '
-                  'connects, ② the Host phone connects, ③ both Start VPN.',
-          },
-        ),
-        _StepData(
-          state: s3,
-          title: 'Secure connection ready',
-          detail: switch (s3) {
-            _StepState.done =>
-              'Ready${state.localIp != null ? ' · ${state.localIp}' : ''}. '
-                  'Send to or receive from the other phone over the cable.',
-            _StepState.active =>
-              'Bringing up the encrypted tunnel — approve the VPN prompt (once).',
-            _StepState.failed => err ?? 'Could not bring up the tunnel.',
-            _StepState.pending => '③ Tap Start VPN on both phones.',
-          },
-        ),
-      ];
+          _StepState.failed => err ?? 'Could not establish the USB link.',
+          _StepState.pending =>
+            'This phone is the $detectedWord. Order: ① the Accessory phone '
+                'connects, ② the Host phone connects, ③ both Start VPN.',
+        },
+      ),
+      _StepData(
+        state: s3,
+        title: 'Secure connection ready',
+        detail: switch (s3) {
+          _StepState.done =>
+            'Ready${state.localIp != null ? ' · ${state.localIp}' : ''}. '
+                'Send to or receive from the other phone over the cable.',
+          _StepState.active =>
+            'Bringing up the encrypted tunnel — approve the VPN prompt (once).',
+          _StepState.failed => err ?? 'Could not bring up the tunnel.',
+          _StepState.pending => '③ Tap Start VPN on both phones.',
+        },
+      ),
+    ];
   }
 }
 
@@ -426,7 +449,7 @@ class _PhoneToPhoneAction extends ConsumerWidget {
               onPressed: () => unawaited(notifier.disable()),
               child: Text(
                 'Disconnect',
-                style: wispSans(fontSize: 12.5, color: kMuted),
+                style: wispSans(fontSize: 12.5, color: context.wc.muted),
               ),
             ),
           ),
@@ -471,7 +494,11 @@ class _PhoneToPhoneAction extends ConsumerWidget {
       children: [
         Text(
           'Step $step:',
-          style: wispSans(fontSize: 14.5, fontWeight: FontWeight.w800, color: Colors.white),
+          style: wispSans(
+            fontSize: 14.5,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+          ),
         ),
         const SizedBox(width: 10),
         Icon(icon, size: 18),
@@ -480,7 +507,11 @@ class _PhoneToPhoneAction extends ConsumerWidget {
           child: Text(
             label,
             overflow: TextOverflow.ellipsis,
-            style: wispSans(fontSize: 14.5, fontWeight: FontWeight.w700, color: Colors.white),
+            style: wispSans(
+              fontSize: 14.5,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
           ),
         ),
       ],
@@ -538,7 +569,11 @@ class _NearbyTipNote extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.info_outline_rounded, size: 16, color: kAccentCyanStrong),
+          Icon(
+            Icons.info_outline_rounded,
+            size: 16,
+            color: context.wc.accentFg,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text.rich(
@@ -558,7 +593,7 @@ class _NearbyTipNote extends StatelessWidget {
               style: wispSans(
                 fontSize: 11.5,
                 fontWeight: FontWeight.w600,
-                color: kInk.withValues(alpha: 0.75),
+                color: context.wc.ink.withValues(alpha: 0.75),
                 height: 1.35,
               ),
             ),
@@ -689,16 +724,20 @@ class _StepPanel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
       decoration: BoxDecoration(
-        color: kSurface,
+        color: context.wc.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: kBorder.withValues(alpha: 0.7)),
+        border: Border.all(color: context.wc.border.withValues(alpha: 0.7)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
-            style: wispSans(fontSize: 12, fontWeight: FontWeight.w700, color: kMuted),
+            style: wispSans(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: context.wc.muted,
+            ),
           ),
           const SizedBox(height: 14),
           for (var i = 0; i < steps.length; i++)
@@ -707,10 +746,7 @@ class _StepPanel extends StatelessWidget {
               data: steps[i],
               isLast: i == steps.length - 1,
             ),
-          if (footer != null) ...[
-            const SizedBox(height: 6),
-            footer!,
-          ],
+          if (footer != null) ...[const SizedBox(height: 6), footer!],
         ],
       ),
     );
@@ -733,7 +769,7 @@ class _StepRow extends StatelessWidget {
     // Connector reads "done" green once this step is complete; otherwise muted.
     final lineColor = data.state == _StepState.done
         ? kAccentDirect.withValues(alpha: 0.45)
-        : kBorder;
+        : context.wc.border;
 
     return IntrinsicHeight(
       child: Row(
@@ -743,9 +779,7 @@ class _StepRow extends StatelessWidget {
             children: [
               _StepNode(state: data.state, index: index),
               if (!isLast)
-                Expanded(
-                  child: Container(width: 2, color: lineColor),
-                ),
+                Expanded(child: Container(width: 2, color: lineColor)),
             ],
           ),
           const SizedBox(width: 12),
@@ -762,14 +796,20 @@ class _StepRow extends StatelessWidget {
                       style: wispSans(
                         fontSize: 13.5,
                         fontWeight: FontWeight.w600,
-                        color: data.state == _StepState.pending ? kMuted : kInk,
+                        color: data.state == _StepState.pending
+                            ? context.wc.muted
+                            : context.wc.ink,
                       ),
                     ),
                   ),
                   const SizedBox(height: 3),
                   Text(
                     data.detail,
-                    style: wispSans(fontSize: 12.5, color: kMuted, height: 1.4),
+                    style: wispSans(
+                      fontSize: 12.5,
+                      color: context.wc.muted,
+                      height: 1.4,
+                    ),
                   ),
                   if (data.trailing != null) ...[
                     const SizedBox(height: 10),
@@ -821,14 +861,14 @@ class _StepNode extends StatelessWidget {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: kBorder, width: 1.5),
+            border: Border.all(color: context.wc.border, width: 1.5),
           ),
           child: Text(
             '$index',
             style: wispSans(
               fontSize: 12,
               fontWeight: FontWeight.w700,
-              color: kMuted,
+              color: context.wc.muted,
             ),
           ),
         );

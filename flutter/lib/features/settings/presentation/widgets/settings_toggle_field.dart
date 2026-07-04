@@ -30,7 +30,7 @@ class SettingsToggleField extends StatelessWidget {
                 style: wispSans(
                   fontSize: 13.5,
                   fontWeight: FontWeight.w600,
-                  color: kInk,
+                  color: context.wc.ink,
                 ),
               ),
               const SizedBox(height: 4),
@@ -39,7 +39,7 @@ class SettingsToggleField extends StatelessWidget {
                 style: wispSans(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w400,
-                  color: kMuted,
+                  color: context.wc.muted,
                   height: 1.45,
                 ),
               ),
@@ -62,7 +62,7 @@ class SettingsToggleField extends StatelessWidget {
               if (states.contains(WidgetState.selected)) {
                 return kAccentCyanStrong;
               }
-              return kBorder;
+              return context.wc.border;
             }),
           ),
         ),

@@ -91,7 +91,9 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
       final bytes = await ref.read(identityStorageProvider).read();
       if (!mounted) return;
       if (bytes == null) {
-        setState(() => _loadError = 'No identity is stored on this device yet.');
+        setState(
+          () => _loadError = 'No identity is stored on this device yet.',
+        );
         return;
       }
       setState(() => _keyBytes = bytes);
@@ -181,9 +183,9 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kBg,
+      backgroundColor: context.wc.bg,
       appBar: AppBar(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
@@ -191,46 +193,58 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
         ),
         title: Text(
           'Back up identity',
-          style: wispSans(fontSize: 18, fontWeight: FontWeight.w700, color: kInk),
+          style: wispSans(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: context.wc.ink,
+          ),
         ),
       ),
-      body: SafeArea(child: _buildBody()),
+      body: SafeArea(child: _buildBody(context)),
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody(BuildContext context) {
     switch (_gate) {
       case _GateState.checking:
         return const Center(child: CircularProgressIndicator());
       case _GateState.denied:
-        return _buildLocked();
+        return _buildLocked(context);
       case _GateState.granted:
-        if (_loadError != null) return _buildError(_loadError!);
+        if (_loadError != null) return _buildError(context, _loadError!);
         if (_keyBytes == null) {
           return const Center(child: CircularProgressIndicator());
         }
-        return _buildContent();
+        return _buildContent(context);
     }
   }
 
-  Widget _buildLocked() {
+  Widget _buildLocked(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.lock_outline_rounded, size: 48, color: kMuted),
+          Icon(Icons.lock_outline_rounded, size: 48, color: context.wc.muted),
           const SizedBox(height: 12),
           Text(
             'Authentication required',
-            style: wispSans(fontSize: 16, fontWeight: FontWeight.w700, color: kInk),
+            style: wispSans(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: context.wc.ink,
+            ),
           ),
           const SizedBox(height: 8),
           Text(
             'Unlock with your fingerprint, face, or device PIN to reveal your '
             'identity backup.',
             textAlign: TextAlign.center,
-            style: wispSans(fontSize: 13, color: kMuted, height: 1.45),
+            style: wispSans(
+              fontSize: 13,
+              color: context.wc.muted,
+              height: 1.45,
+            ),
           ),
           const SizedBox(height: 20),
           FilledButton(
@@ -246,7 +260,7 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
     );
   }
 
-  Widget _buildContent() {
+  Widget _buildContent(BuildContext context) {
     final passwordError = _protect ? _passwordValidationError() : null;
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
@@ -257,7 +271,11 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
             'Save this to keep the same identity after reinstalling or moving '
             'to a new device. Restore it there and the people who saved you '
             'can still reach you — no need to re-pair or share a new code.',
-            style: wispSans(fontSize: 13, color: kMuted, height: 1.45),
+            style: wispSans(
+              fontSize: 13,
+              color: context.wc.muted,
+              height: 1.45,
+            ),
           ),
           const SizedBox(height: 16),
           _buildWarningCard(),
@@ -266,7 +284,11 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
             Text(
               'Tip: this device has no screen lock, so we couldn\'t verify it '
               'was you. Set up a lock screen for stronger protection.',
-              style: wispSans(fontSize: 11.5, color: kMuted, height: 1.45),
+              style: wispSans(
+                fontSize: 11.5,
+                color: context.wc.muted,
+                height: 1.45,
+              ),
             ),
           ],
           const SizedBox(height: 20),
@@ -277,11 +299,15 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
           ],
           const SizedBox(height: 22),
           if (_payload != null)
-            _buildPayloadSection()
+            _buildPayloadSection(context)
           else if (_protect)
             Text(
               'Set a password above, then tap "Show backup".',
-              style: wispSans(fontSize: 12.5, color: kMuted, height: 1.45),
+              style: wispSans(
+                fontSize: 12.5,
+                color: context.wc.muted,
+                height: 1.45,
+              ),
             ),
         ],
       ),
@@ -373,7 +399,7 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
     );
   }
 
-  Widget _buildPayloadSection() {
+  Widget _buildPayloadSection(BuildContext context) {
     final payload = _payload!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -384,7 +410,7 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: kBorder),
+              border: Border.all(color: context.wc.border),
             ),
             child: QrImageView(
               data: payload,
@@ -405,15 +431,15 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
         Text(
           'Scan this on the new device, or copy the code below.',
           textAlign: TextAlign.center,
-          style: wispSans(fontSize: 12.5, color: kMuted, height: 1.4),
+          style: wispSans(fontSize: 12.5, color: context.wc.muted, height: 1.4),
         ),
         const SizedBox(height: 16),
         Container(
           padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
           decoration: BoxDecoration(
-            color: kSurface,
+            color: context.wc.surface,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: kBorder),
+            border: Border.all(color: context.wc.border),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -421,13 +447,13 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
               Expanded(
                 child: SelectableText(
                   payload,
-                  style: wispMono(fontSize: 12, color: kInk),
+                  style: wispMono(fontSize: 12, color: context.wc.ink),
                 ),
               ),
               IconButton(
                 tooltip: 'Copy code',
                 icon: const Icon(Icons.copy_rounded, size: 18),
-                color: kMuted,
+                color: context.wc.muted,
                 visualDensity: VisualDensity.compact,
                 onPressed: _copy,
               ),
@@ -446,7 +472,9 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
               foregroundColor: kAccentCyanStrong,
               backgroundColor: kAccentCyanStrong.withValues(alpha: 0.08),
               minimumSize: const Size(0, 46),
-              side: BorderSide(color: kAccentCyanStrong.withValues(alpha: 0.15)),
+              side: BorderSide(
+                color: kAccentCyanStrong.withValues(alpha: 0.15),
+              ),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -457,18 +485,18 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
     );
   }
 
-  Widget _buildError(String message) {
+  Widget _buildError(BuildContext context, String message) {
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.error_outline_rounded, size: 48, color: kMuted),
+          Icon(Icons.error_outline_rounded, size: 48, color: context.wc.muted),
           const SizedBox(height: 12),
           Text(
             message,
             textAlign: TextAlign.center,
-            style: wispSans(fontSize: 13, color: kMuted),
+            style: wispSans(fontSize: 13, color: context.wc.muted),
           ),
         ],
       ),

@@ -43,9 +43,9 @@ class _QrPairingPageState extends State<QrPairingPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kBg,
+      backgroundColor: context.wc.bg,
       appBar: AppBar(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
@@ -56,21 +56,24 @@ class _QrPairingPageState extends State<QrPairingPage> {
           style: wispSans(
             fontSize: 18,
             fontWeight: FontWeight.w700,
-            color: kInk,
+            color: context.wc.ink,
           ),
         ),
       ),
       body: SafeArea(
         child: _info != null
-            ? _buildContent(_info!)
+            ? _buildContent(context, _info!)
             : _error != null
-            ? _buildError(_error!)
+            ? _buildError(context, _error!)
             : const Center(child: CircularProgressIndicator()),
       ),
     );
   }
 
-  Widget _buildContent(rust_receiver.QrPairingInfoData info) {
+  Widget _buildContent(
+    BuildContext context,
+    rust_receiver.QrPairingInfoData info,
+  ) {
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
       child: Column(
@@ -79,7 +82,11 @@ class _QrPairingPageState extends State<QrPairingPage> {
           Text(
             'Scan this code from the sender device.',
             textAlign: TextAlign.center,
-            style: wispSans(fontSize: 13.5, color: kMuted, height: 1.4),
+            style: wispSans(
+              fontSize: 13.5,
+              color: context.wc.muted,
+              height: 1.4,
+            ),
           ),
           const SizedBox(height: 18),
           Center(
@@ -88,7 +95,7 @@ class _QrPairingPageState extends State<QrPairingPage> {
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: kBorder),
+                border: Border.all(color: context.wc.border),
               ),
               child: QrImageView(
                 data: info.ticket,
@@ -111,12 +118,13 @@ class _QrPairingPageState extends State<QrPairingPage> {
             style: wispSans(
               fontSize: 13.5,
               fontWeight: FontWeight.w600,
-              color: kInk,
+              color: context.wc.ink,
             ),
           ),
           const SizedBox(height: 8),
           if (info.lanIps.isEmpty)
             _buildIpRow(
+              context,
               'No LAN address detected — make sure Wi-Fi is connected.',
               copyable: false,
               warn: true,
@@ -125,35 +133,44 @@ class _QrPairingPageState extends State<QrPairingPage> {
             ...info.lanIps.map(
               (ip) => Padding(
                 padding: const EdgeInsets.only(bottom: 6),
-                child: _buildIpRow(ip, copyable: true),
+                child: _buildIpRow(context, ip, copyable: true),
               ),
             ),
           const SizedBox(height: 14),
           Text(
             'No internet needed — both devices just need the same Wi-Fi.',
             textAlign: TextAlign.center,
-            style: wispSans(fontSize: 11.5, color: kMuted, height: 1.4),
+            style: wispSans(
+              fontSize: 11.5,
+              color: context.wc.muted,
+              height: 1.4,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildIpRow(String text, {required bool copyable, bool warn = false}) {
-    final color = warn ? const Color(0xFFC78F2A) : kInk;
+  Widget _buildIpRow(
+    BuildContext context,
+    String text, {
+    required bool copyable,
+    bool warn = false,
+  }) {
+    final color = warn ? const Color(0xFFC78F2A) : context.wc.ink;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: kSurface,
+        color: context.wc.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: kBorder),
+        border: Border.all(color: context.wc.border),
       ),
       child: Row(
         children: [
           Icon(
             warn ? Icons.warning_amber_rounded : Icons.lan_rounded,
             size: 16,
-            color: warn ? const Color(0xFFC78F2A) : kMuted,
+            color: warn ? const Color(0xFFC78F2A) : context.wc.muted,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -166,11 +183,11 @@ class _QrPairingPageState extends State<QrPairingPage> {
             IconButton(
               tooltip: 'Copy',
               icon: const Icon(Icons.copy_rounded, size: 16),
-              color: kMuted,
+              color: context.wc.muted,
               visualDensity: VisualDensity.compact,
               onPressed: () async {
                 await Clipboard.setData(ClipboardData(text: text));
-                if (!mounted) return;
+                if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('Copied $text'),
@@ -184,30 +201,32 @@ class _QrPairingPageState extends State<QrPairingPage> {
     );
   }
 
-  Widget _buildError(String message) {
+  Widget _buildError(BuildContext context, String message) {
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.error_outline_rounded, size: 48, color: kMuted),
+          Icon(Icons.error_outline_rounded, size: 48, color: context.wc.muted),
           const SizedBox(height: 12),
           Text(
             'Couldn\'t build QR code',
-            style: wispSans(fontSize: 16, fontWeight: FontWeight.w700, color: kInk),
+            style: wispSans(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: context.wc.ink,
+            ),
           ),
           const SizedBox(height: 8),
           Text(
             message,
             textAlign: TextAlign.center,
-            style: wispSans(fontSize: 13, color: kMuted),
+            style: wispSans(fontSize: 13, color: context.wc.muted),
           ),
           const SizedBox(height: 20),
           FilledButton(
             onPressed: _load,
-            style: FilledButton.styleFrom(
-              backgroundColor: kAccentCyanStrong,
-            ),
+            style: FilledButton.styleFrom(backgroundColor: kAccentCyanStrong),
             child: const Text('Retry'),
           ),
         ],

@@ -30,10 +30,14 @@ class _UpdateProgressDialog extends ConsumerWidget {
     final progress = state.downloadProgress;
 
     return AlertDialog(
-      backgroundColor: kSurface,
+      backgroundColor: context.wc.surface,
       title: Text(
         isError ? 'Update failed' : 'Updating Wisp',
-        style: wispSans(fontSize: 16, fontWeight: FontWeight.w700, color: kInk),
+        style: wispSans(
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+          color: context.wc.ink,
+        ),
       ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -43,14 +47,22 @@ class _UpdateProgressDialog extends ConsumerWidget {
             Text(
               state.errorMessage ??
                   'Something went wrong while downloading the update.',
-              style: wispSans(fontSize: 13, color: kMuted, height: 1.4),
+              style: wispSans(
+                fontSize: 13,
+                color: context.wc.muted,
+                height: 1.4,
+              ),
             ),
           ] else ...[
             Text(
               isReady
                   ? 'Download complete. Launching the installer…'
                   : 'Downloading the latest version…',
-              style: wispSans(fontSize: 13, color: kMuted, height: 1.4),
+              style: wispSans(
+                fontSize: 13,
+                color: context.wc.muted,
+                height: 1.4,
+              ),
             ),
             const SizedBox(height: 16),
             ClipRRect(
@@ -58,7 +70,7 @@ class _UpdateProgressDialog extends ConsumerWidget {
               child: LinearProgressIndicator(
                 value: isReady ? 1.0 : progress,
                 minHeight: 8,
-                backgroundColor: kBorder,
+                backgroundColor: context.wc.border,
                 valueColor: const AlwaysStoppedAnimation(kAccentCyanStrong),
               ),
             ),
@@ -66,7 +78,7 @@ class _UpdateProgressDialog extends ConsumerWidget {
               const SizedBox(height: 8),
               Text(
                 '${(progress * 100).round()}%',
-                style: wispSans(fontSize: 12, color: kMuted),
+                style: wispSans(fontSize: 12, color: context.wc.muted),
               ),
             ],
           ],

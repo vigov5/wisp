@@ -27,7 +27,7 @@ class TransferLiveStats extends StatelessWidget {
           style: wispSans(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: kInk,
+            color: context.wc.ink,
             height: 1.3,
           ),
         ),
@@ -39,7 +39,7 @@ class TransferLiveStats extends StatelessWidget {
             style: wispSans(
               fontSize: 12,
               fontWeight: FontWeight.w500,
-              color: kMuted,
+              color: context.wc.muted,
               height: 1.3,
             ),
           ),

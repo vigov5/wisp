@@ -40,9 +40,9 @@ class _ManifestTreeCardState extends State<ManifestTreeCard> {
 
     return Container(
       decoration: BoxDecoration(
-        color: kSurface,
+        color: context.wc.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: kBorder),
+        border: Border.all(color: context.wc.border),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.03),
@@ -72,7 +72,7 @@ class _ManifestTreeCardState extends State<ManifestTreeCard> {
                     isSingleFile
                         ? Icons.insert_drive_file_rounded
                         : Icons.copy_all_rounded,
-                    color: kMuted,
+                    color: context.wc.muted,
                     size: 18,
                   ),
                   const SizedBox(width: 12),
@@ -86,7 +86,7 @@ class _ManifestTreeCardState extends State<ManifestTreeCard> {
                             style: wispSans(
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
-                              color: kMuted,
+                              color: context.wc.muted,
                               letterSpacing: 0.4,
                             ),
                           ),
@@ -101,7 +101,7 @@ class _ManifestTreeCardState extends State<ManifestTreeCard> {
                             fontWeight: isSingleFile
                                 ? FontWeight.w600
                                 : FontWeight.w700,
-                            color: kInk,
+                            color: context.wc.ink,
                           ),
                         ),
                         if (isSingleFile)
@@ -110,7 +110,7 @@ class _ManifestTreeCardState extends State<ManifestTreeCard> {
                             style: wispSans(
                               fontSize: 11,
                               fontWeight: FontWeight.w500,
-                              color: kMuted,
+                              color: context.wc.muted,
                             ),
                           ),
                       ],
@@ -121,7 +121,7 @@ class _ManifestTreeCardState extends State<ManifestTreeCard> {
                       _isExpanded
                           ? Icons.keyboard_arrow_up_rounded
                           : Icons.keyboard_arrow_down_rounded,
-                      color: kSubtle,
+                      color: context.wc.subtle,
                       size: 20,
                     ),
                 ],

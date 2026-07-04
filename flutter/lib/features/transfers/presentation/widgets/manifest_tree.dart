@@ -36,7 +36,7 @@ class ManifestTree extends StatelessWidget {
         width: 10,
         style: IndentStyle.squareJoint,
         thickness: 1,
-        color: kBorder.withValues(alpha: 0.75),
+        color: context.wc.border.withValues(alpha: 0.75),
       ),
       onTreeReady: (controller) {
         // Only expand the top-level items by default.
@@ -68,10 +68,8 @@ class ManifestTree extends StatelessWidget {
                         : Icons.insert_drive_file_outlined,
                     size: 18,
                     color: data.isFolder
-                        ? (isTopLevel
-                              ? const Color(0xFF4A5D65)
-                              : const Color(0xFF6C8590))
-                        : kMuted,
+                        ? (isTopLevel ? context.wc.muted : context.wc.subtle)
+                        : context.wc.muted,
                   ),
                 ),
                 Expanded(
@@ -90,7 +88,7 @@ class ManifestTree extends StatelessWidget {
                             : (data.isFolder
                                   ? FontWeight.w600
                                   : FontWeight.w500),
-                        color: kInk,
+                        color: context.wc.ink,
                       ),
                     ),
                   ),
@@ -106,7 +104,7 @@ class ManifestTree extends StatelessWidget {
                     style: wispSans(
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
-                      color: kMuted,
+                      color: context.wc.muted,
                     ),
                   ),
                 ),

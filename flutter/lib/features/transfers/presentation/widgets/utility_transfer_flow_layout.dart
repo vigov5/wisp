@@ -66,7 +66,7 @@ class UtilityTransferFlowLayout extends StatelessWidget {
                   style: wispSans(
                     fontSize: 42,
                     fontWeight: FontWeight.w800,
-                    color: kInk,
+                    color: context.wc.ink,
                     letterSpacing: -1.2,
                     height: 1.0,
                   ),
@@ -77,7 +77,7 @@ class UtilityTransferFlowLayout extends StatelessWidget {
                   style: wispSans(
                     fontSize: 15,
                     fontWeight: FontWeight.w500,
-                    color: kMuted,
+                    color: context.wc.muted,
                   ),
                 ),
                 const SizedBox(height: 32),

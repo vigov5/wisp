@@ -197,7 +197,7 @@ class _RecipientAvatarState extends State<RecipientAvatar>
                     value: widget.progress.clamp(0.01, 1.0),
                     strokeWidth: 4,
                     strokeCap: StrokeCap.round,
-                    backgroundColor: kBorder.withValues(alpha: 0.3),
+                    backgroundColor: context.wc.border.withValues(alpha: 0.3),
                     valueColor: const AlwaysStoppedAnimation<Color>(
                       kAccentCyan,
                     ),
@@ -243,14 +243,17 @@ class _RecipientAvatarState extends State<RecipientAvatar>
                       height: 90,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: kSurface,
+                        color: context.wc.surface,
                         gradient: LinearGradient(
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
-                          colors: [kSurface, kBg.withValues(alpha: 0.5)],
+                          colors: [
+                            context.wc.surface,
+                            context.wc.bg.withValues(alpha: 0.5),
+                          ],
                         ),
                         border: Border.all(
-                          color: kBorder.withValues(alpha: 0.6),
+                          color: context.wc.border.withValues(alpha: 0.6),
                         ),
                         boxShadow: [
                           BoxShadow(
@@ -263,7 +266,11 @@ class _RecipientAvatarState extends State<RecipientAvatar>
                     ),
 
                     // Icon
-                    Icon(icon, size: 40, color: kInk.withValues(alpha: 0.9)),
+                    Icon(
+                      icon,
+                      size: 40,
+                      color: context.wc.ink.withValues(alpha: 0.9),
+                    ),
                   ],
                 ),
               ),
@@ -277,7 +284,7 @@ class _RecipientAvatarState extends State<RecipientAvatar>
           style: wispSans(
             fontSize: 20,
             fontWeight: FontWeight.w700,
-            color: kInk,
+            color: context.wc.ink,
             letterSpacing: -0.4,
           ),
         ),
@@ -357,7 +364,7 @@ class _CandidatePathList extends StatelessWidget {
           style: wispSans(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: kMuted,
+            color: context.wc.muted,
           ),
         ),
         const SizedBox(height: 8),
@@ -379,7 +386,7 @@ class _CandidatePathRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final active = candidate.isActive;
     final kindLabel = candidate.isRelay ? 'relay' : 'direct';
-    final color = active ? kInk : kMuted;
+    final color = active ? context.wc.ink : context.wc.muted;
 
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -393,7 +400,10 @@ class _CandidatePathRow extends StatelessWidget {
             color: active ? kAccentCyanStrong : Colors.transparent,
             border: active
                 ? null
-                : Border.all(color: kMuted.withValues(alpha: 0.6), width: 1.2),
+                : Border.all(
+                    color: context.wc.muted.withValues(alpha: 0.6),
+                    width: 1.2,
+                  ),
           ),
         ),
         const SizedBox(width: 8),
@@ -415,7 +425,7 @@ class _CandidatePathRow extends StatelessWidget {
           style: wispSans(
             fontSize: 11,
             fontWeight: FontWeight.w500,
-            color: kMuted.withValues(alpha: 0.8),
+            color: context.wc.muted.withValues(alpha: 0.8),
           ),
         ),
       ],

@@ -25,7 +25,9 @@ class _CheckRowState extends State<CheckRow> {
   Widget build(BuildContext context) {
     final r = widget.result;
     return InkWell(
-      onTap: _isExpandable ? () => setState(() => _expanded = !_expanded) : null,
+      onTap: _isExpandable
+          ? () => setState(() => _expanded = !_expanded)
+          : null,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
@@ -43,7 +45,9 @@ class _CheckRowState extends State<CheckRow> {
                     style: wispSans(
                       fontSize: 13.5,
                       fontWeight: FontWeight.w500,
-                      color: r.status == CheckStatus.skipped ? kMuted : kInk,
+                      color: r.status == CheckStatus.skipped
+                          ? context.wc.muted
+                          : context.wc.ink,
                     ),
                   ),
                 ),
@@ -55,7 +59,7 @@ class _CheckRowState extends State<CheckRow> {
                           ? Icons.keyboard_arrow_up_rounded
                           : Icons.keyboard_arrow_down_rounded,
                       size: 18,
-                      color: kMuted,
+                      color: context.wc.muted,
                     ),
                   ),
               ],
@@ -68,7 +72,7 @@ class _CheckRowState extends State<CheckRow> {
                   style: wispSans(
                     fontSize: 12,
                     fontWeight: FontWeight.w400,
-                    color: kMuted,
+                    color: context.wc.muted,
                     height: 1.4,
                   ),
                   maxLines: _expanded ? 8 : 2,
@@ -76,14 +80,14 @@ class _CheckRowState extends State<CheckRow> {
                   softWrap: true,
                 ),
               ),
-            if (_expanded && _isExpandable) _expandedContent(r),
+            if (_expanded && _isExpandable) _expandedContent(context, r),
           ],
         ),
       ),
     );
   }
 
-  Widget _expandedContent(CheckResult r) {
+  Widget _expandedContent(BuildContext context, CheckResult r) {
     return Padding(
       padding: const EdgeInsets.only(left: 28, top: 8, right: 4, bottom: 4),
       child: Column(
@@ -95,7 +99,7 @@ class _CheckRowState extends State<CheckRow> {
               style: wispSans(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w400,
-                color: kInk,
+                color: context.wc.ink,
                 height: 1.45,
               ),
               softWrap: true,
@@ -127,7 +131,10 @@ class _StatusIcon extends StatelessWidget {
         child: CircularProgressIndicator(strokeWidth: 2, color: status.color),
       );
     }
-    return Icon(status.icon ?? Icons.help_outline_rounded,
-        color: status.color, size: 18);
+    return Icon(
+      status.icon ?? Icons.help_outline_rounded,
+      color: status.color,
+      size: 18,
+    );
   }
 }

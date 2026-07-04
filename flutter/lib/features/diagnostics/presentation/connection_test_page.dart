@@ -25,8 +25,7 @@ class ConnectionTestPage extends ConsumerStatefulWidget {
   const ConnectionTestPage({super.key});
 
   @override
-  ConsumerState<ConnectionTestPage> createState() =>
-      _ConnectionTestPageState();
+  ConsumerState<ConnectionTestPage> createState() => _ConnectionTestPageState();
 }
 
 class _ConnectionTestPageState extends ConsumerState<ConnectionTestPage> {
@@ -38,12 +37,9 @@ class _ConnectionTestPageState extends ConsumerState<ConnectionTestPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(ref.read(diagnosticsControllerProvider.notifier).runAll());
     });
-    _timestampTicker = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) {
-        if (mounted) setState(() {});
-      },
-    );
+    _timestampTicker = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -61,16 +57,16 @@ class _ConnectionTestPageState extends ConsumerState<ConnectionTestPage> {
     final state = ref.watch(diagnosticsControllerProvider);
 
     return Scaffold(
-      backgroundColor: kBg,
+      backgroundColor: context.wc.bg,
       appBar: AppBar(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         elevation: 0,
         title: Text(
           'Connection Test',
           style: wispSans(
             fontSize: 17,
             fontWeight: FontWeight.w700,
-            color: kInk,
+            color: context.wc.ink,
           ),
         ),
         actions: [
@@ -140,12 +136,8 @@ class _ConnectionTestPageState extends ConsumerState<ConnectionTestPage> {
       if (!mounted) return;
       messenger
         ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(content: Text('Firewall rule created.')),
-        );
-      unawaited(
-        ref.read(firewallWarningControllerProvider.notifier).recheck(),
-      );
+        ..showSnackBar(const SnackBar(content: Text('Firewall rule created.')));
+      unawaited(ref.read(firewallWarningControllerProvider.notifier).recheck());
       await _rerun();
     } catch (error) {
       if (!mounted) return;

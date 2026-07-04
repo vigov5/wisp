@@ -32,12 +32,12 @@ class UsbStatusEntry extends ConsumerWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: kSurface,
+          color: context.wc.surface,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: color == kAccentDirect
                 ? kAccentDirect.withValues(alpha: 0.45)
-                : kBorder.withValues(alpha: 0.6),
+                : context.wc.border.withValues(alpha: 0.6),
           ),
         ),
         child: Row(
@@ -53,18 +53,26 @@ class UsbStatusEntry extends ConsumerWidget {
                     style: wispSans(
                       fontSize: 13.5,
                       fontWeight: FontWeight.w600,
-                      color: kInk,
+                      color: context.wc.ink,
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: wispSans(fontSize: 11.5, color: kMuted, height: 1.3),
+                    style: wispSans(
+                      fontSize: 11.5,
+                      color: context.wc.muted,
+                      height: 1.3,
+                    ),
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right_rounded, size: 20, color: kMuted),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 20,
+              color: context.wc.muted,
+            ),
           ],
         ),
       ),

@@ -150,7 +150,7 @@ class _StatsGrid extends StatelessWidget {
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
       decoration: BoxDecoration(
-        color: kFill.withValues(alpha: 0.4),
+        color: context.wc.fill.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(12),
       ),
       child: TweenAnimationBuilder<double>(
@@ -174,7 +174,7 @@ class _StatsGrid extends StatelessWidget {
                 Container(
                   width: 1,
                   height: 24,
-                  color: kBorder.withValues(alpha: 0.5),
+                  color: context.wc.border.withValues(alpha: 0.5),
                 ),
               Expanded(
                 child: Column(
@@ -184,7 +184,7 @@ class _StatsGrid extends StatelessWidget {
                       style: wispSans(
                         fontSize: 9,
                         fontWeight: FontWeight.w800,
-                        color: kMuted,
+                        color: context.wc.muted,
                         letterSpacing: 0.5,
                       ),
                     ),
@@ -194,7 +194,7 @@ class _StatsGrid extends StatelessWidget {
                       style: wispSans(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
-                        color: kInk,
+                        color: context.wc.ink,
                       ),
                     ),
                   ],

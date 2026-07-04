@@ -331,7 +331,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
         }
       },
       child: Scaffold(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         body: SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
@@ -351,7 +351,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                       style: wispSans(
                         fontSize: 22,
                         fontWeight: FontWeight.w700,
-                        color: kInk,
+                        color: context.wc.ink,
                         letterSpacing: -0.35,
                       ),
                     ),
@@ -406,7 +406,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                                   style: wispSans(
                                     fontSize: 11.5,
                                     fontWeight: FontWeight.w400,
-                                    color: kMuted,
+                                    color: context.wc.muted,
                                     height: 1.45,
                                   ),
                                 ),
@@ -442,9 +442,9 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                                 vertical: 12,
                               ),
                               decoration: BoxDecoration(
-                                color: kSurface,
+                                color: context.wc.surface,
                                 borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: kBorder),
+                                border: Border.all(color: context.wc.border),
                               ),
                               child: Row(
                                 children: [
@@ -453,13 +453,13 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                                       'Self-diagnose pairing, LAN, and permissions',
                                       style: wispSans(
                                         fontSize: 13,
-                                        color: kInk,
+                                        color: context.wc.ink,
                                       ),
                                     ),
                                   ),
-                                  const Icon(
+                                  Icon(
                                     Icons.chevron_right_rounded,
-                                    color: kMuted,
+                                    color: context.wc.muted,
                                   ),
                                 ],
                               ),
@@ -478,9 +478,9 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                                 vertical: 12,
                               ),
                               decoration: BoxDecoration(
-                                color: kSurface,
+                                color: context.wc.surface,
                                 borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: kBorder),
+                                border: Border.all(color: context.wc.border),
                               ),
                               child: Row(
                                 children: [
@@ -489,13 +489,13 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                                       'Manage devices used for fast resends',
                                       style: wispSans(
                                         fontSize: 13,
-                                        color: kInk,
+                                        color: context.wc.ink,
                                       ),
                                     ),
                                   ),
-                                  const Icon(
+                                  Icon(
                                     Icons.chevron_right_rounded,
-                                    color: kMuted,
+                                    color: context.wc.muted,
                                   ),
                                 ],
                               ),
@@ -503,6 +503,16 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                           ),
                         ),
                         const _SettingsGroupHeader(title: 'Preferences'),
+                        SettingsSectionField(
+                          label: 'Appearance',
+                          child: _ThemeModeSelector(
+                            value: state.settings.themeMode,
+                            onChanged: (mode) => ref
+                                .read(settingsControllerProvider.notifier)
+                                .setThemeMode(mode),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
                         SettingsToggleField(
                           title: 'Skip clipboard confirmation',
                           subtitle:
@@ -555,7 +565,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                                     style: wispSans(
                                       fontSize: 13.5,
                                       fontWeight: FontWeight.w600,
-                                      color: kInk,
+                                      color: context.wc.ink,
                                     ),
                                   ),
                                   const SizedBox(height: 4),
@@ -565,7 +575,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                                         : 'Get the latest version of Wisp.',
                                     style: wispSans(
                                       fontSize: 11.5,
-                                      color: kMuted,
+                                      color: context.wc.muted,
                                       height: 1.4,
                                     ),
                                   ),
@@ -629,21 +639,24 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                               vertical: 12,
                             ),
                             decoration: BoxDecoration(
-                              color: kSurface,
+                              color: context.wc.surface,
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: kBorder),
+                              border: Border.all(color: context.wc.border),
                             ),
                             child: Row(
                               children: [
                                 Expanded(
                                   child: Text(
                                     'Version, source code, and licenses',
-                                    style: wispSans(fontSize: 13, color: kInk),
+                                    style: wispSans(
+                                      fontSize: 13,
+                                      color: context.wc.ink,
+                                    ),
                                   ),
                                 ),
-                                const Icon(
+                                Icon(
                                   Icons.chevron_right_rounded,
-                                  color: kMuted,
+                                  color: context.wc.muted,
                                 ),
                               ],
                             ),
@@ -662,7 +675,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                         style: wispSans(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w400,
-                          color: kMuted,
+                          color: context.wc.muted,
                         ),
                       ),
                     ),
@@ -709,7 +722,7 @@ class _IdentityBadgeRow extends StatelessWidget {
           style: wispSans(
             fontSize: 13.5,
             fontWeight: FontWeight.w600,
-            color: kInk,
+            color: context.wc.ink,
           ),
         ),
         const SizedBox(height: 10),
@@ -750,7 +763,7 @@ class _IdentityBadgeRow extends StatelessWidget {
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               icon: const Icon(Icons.copy_rounded, size: 18),
-              color: kMuted,
+              color: context.wc.muted,
               onPressed: () async {
                 await Clipboard.setData(ClipboardData(text: endpointId));
                 if (!context.mounted) return;
@@ -785,12 +798,14 @@ class _IdentityBackupRow extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _tile(
+          context,
           icon: Icons.backup_outlined,
           label: 'Back up identity',
           onTap: onBackup,
         ),
         const SizedBox(height: 8),
         _tile(
+          context,
           icon: Icons.restore_rounded,
           label: 'Restore identity',
           onTap: onRestore,
@@ -799,7 +814,8 @@ class _IdentityBackupRow extends StatelessWidget {
     );
   }
 
-  Widget _tile({
+  Widget _tile(
+    BuildContext context, {
     required IconData icon,
     required String label,
     required VoidCallback onTap,
@@ -810,21 +826,62 @@ class _IdentityBackupRow extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: kSurface,
+          color: context.wc.surface,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: kBorder),
+          border: Border.all(color: context.wc.border),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 18, color: kMuted),
+            Icon(icon, size: 18, color: context.wc.muted),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(label, style: wispSans(fontSize: 13, color: kInk)),
+              child: Text(
+                label,
+                style: wispSans(fontSize: 13, color: context.wc.ink),
+              ),
             ),
-            const Icon(Icons.chevron_right_rounded, color: kMuted),
+            Icon(Icons.chevron_right_rounded, color: context.wc.muted),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Light / Dark / System appearance picker. A single 3-segment control that
+/// applies immediately (theme is a live UI preference, not gated by Save).
+class _ThemeModeSelector extends StatelessWidget {
+  const _ThemeModeSelector({required this.value, required this.onChanged});
+
+  final ThemeMode value;
+  final ValueChanged<ThemeMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SegmentedButton<ThemeMode>(
+      showSelectedIcon: false,
+      style: SegmentedButton.styleFrom(
+        textStyle: wispSans(fontSize: 13, fontWeight: FontWeight.w500),
+      ),
+      segments: const [
+        ButtonSegment(
+          value: ThemeMode.system,
+          label: Text('System'),
+          icon: Icon(Icons.brightness_auto_rounded, size: 18),
+        ),
+        ButtonSegment(
+          value: ThemeMode.light,
+          label: Text('Light'),
+          icon: Icon(Icons.light_mode_rounded, size: 18),
+        ),
+        ButtonSegment(
+          value: ThemeMode.dark,
+          label: Text('Dark'),
+          icon: Icon(Icons.dark_mode_rounded, size: 18),
+        ),
+      ],
+      selected: {value},
+      onSelectionChanged: (selection) => onChanged(selection.first),
     );
   }
 }
@@ -852,7 +909,7 @@ class _SettingsGroupHeader extends StatelessWidget {
       children: [
         if (showDivider) ...[
           const SizedBox(height: 28),
-          const Divider(color: kBorder, height: 1),
+          Divider(color: context.wc.border, height: 1),
           const SizedBox(height: 18),
         ],
         Text(
@@ -860,7 +917,7 @@ class _SettingsGroupHeader extends StatelessWidget {
           style: wispSans(
             fontSize: 18,
             fontWeight: FontWeight.w700,
-            color: kInk,
+            color: context.wc.ink,
             letterSpacing: -0.35,
           ),
         ),
@@ -871,7 +928,7 @@ class _SettingsGroupHeader extends StatelessWidget {
             style: wispSans(
               fontSize: 12.5,
               fontWeight: FontWeight.w400,
-              color: kMuted,
+              color: context.wc.muted,
               height: 1.45,
             ),
           ),

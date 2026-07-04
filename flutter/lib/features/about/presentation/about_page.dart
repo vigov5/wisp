@@ -47,22 +47,24 @@ class _AboutPageState extends State<AboutPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kBg,
+      backgroundColor: context.wc.bg,
       appBar: AppBar(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         elevation: 0,
         title: Text(
           'About',
-          style: wispSans(fontSize: 17, fontWeight: FontWeight.w700, color: kInk),
+          style: wispSans(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: context.wc.ink,
+          ),
         ),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
         children: [
           const SizedBox(height: 12),
-          Center(
-            child: Image.asset('assets/wisp_rounded_logo.png', width: 88),
-          ),
+          Center(child: Image.asset('assets/wisp_rounded_logo.png', width: 88)),
           const SizedBox(height: 16),
           Center(
             child: Text(
@@ -70,7 +72,7 @@ class _AboutPageState extends State<AboutPage> {
               style: wispSans(
                 fontSize: 24,
                 fontWeight: FontWeight.w700,
-                color: kInk,
+                color: context.wc.ink,
                 letterSpacing: -0.4,
               ),
             ),
@@ -82,7 +84,7 @@ class _AboutPageState extends State<AboutPage> {
               style: wispSans(
                 fontSize: 13,
                 fontWeight: FontWeight.w400,
-                color: kMuted,
+                color: context.wc.muted,
               ),
             ),
           ),
@@ -94,7 +96,7 @@ class _AboutPageState extends State<AboutPage> {
             style: wispSans(
               fontSize: 13.5,
               fontWeight: FontWeight.w400,
-              color: kMuted,
+              color: context.wc.muted,
               height: 1.5,
             ),
           ),
@@ -153,13 +155,13 @@ class _AboutTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: kSurface,
+          color: context.wc.surface,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: kBorder),
+          border: Border.all(color: context.wc.border),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 22, color: kInk.withValues(alpha: 0.8)),
+            Icon(icon, size: 22, color: context.wc.ink.withValues(alpha: 0.8)),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
@@ -170,7 +172,7 @@ class _AboutTile extends StatelessWidget {
                     style: wispSans(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      color: kInk,
+                      color: context.wc.ink,
                     ),
                   ),
                   const SizedBox(height: 2),
@@ -179,13 +181,13 @@ class _AboutTile extends StatelessWidget {
                     style: wispSans(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w400,
-                      color: kMuted,
+                      color: context.wc.muted,
                     ),
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right_rounded, color: kMuted),
+            Icon(Icons.chevron_right_rounded, color: context.wc.muted),
           ],
         ),
       ),

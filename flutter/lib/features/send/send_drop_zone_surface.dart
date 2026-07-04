@@ -25,10 +25,10 @@ class SendDropZoneSurface extends StatelessWidget {
       curve: Curves.easeOutCubic,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
       decoration: BoxDecoration(
-        color: isInteractive ? const Color(0xFFECEDED) : kBg,
+        color: isInteractive ? context.wc.fill : context.wc.bg,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isInteractive ? const Color(0xFFCED3D4) : kBorder,
+          color: isInteractive ? context.wc.subtle : context.wc.border,
         ),
         boxShadow: const [
           BoxShadow(
@@ -56,22 +56,16 @@ class SendDropZoneSurface extends StatelessWidget {
                     width: 42,
                     height: 42,
                     decoration: BoxDecoration(
-                      color: isInteractive
-                          ? const Color(0xFFF4F4F4)
-                          : const Color(0xFFF7F7F7),
+                      color: context.wc.surface,
                       borderRadius: BorderRadius.circular(15),
-                      border: Border.all(
-                        color: isInteractive
-                            ? const Color(0xFFE2E2E2)
-                            : const Color(0xFFE9E9E9),
-                      ),
+                      border: Border.all(color: context.wc.border),
                     ),
                     child: Icon(
                       Icons.upload_file_outlined,
                       size: 18,
                       color: isInteractive
-                          ? const Color(0xFF666666)
-                          : kMuted.withValues(alpha: 0.72),
+                          ? context.wc.muted
+                          : context.wc.muted.withValues(alpha: 0.72),
                     ),
                   ),
                 ),
@@ -81,7 +75,7 @@ class SendDropZoneSurface extends StatelessWidget {
                   style: wispSans(
                     fontSize: 24,
                     fontWeight: FontWeight.w600,
-                    color: kInk,
+                    color: context.wc.ink,
                     letterSpacing: -0.7,
                   ),
                   textAlign: TextAlign.center,
@@ -92,7 +86,7 @@ class SendDropZoneSurface extends StatelessWidget {
                   style: wispSans(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
-                    color: kMuted.withValues(alpha: 0.85),
+                    color: context.wc.muted.withValues(alpha: 0.85),
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -152,19 +146,19 @@ class _DropZoneAction extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: kSurface,
+          color: context.wc.surface,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: kBorder),
+          border: Border.all(color: context.wc.border),
         ),
         child: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: kBg,
+                color: context.wc.bg,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(icon, color: kInk, size: 24),
+              child: Icon(icon, color: context.wc.ink, size: 24),
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -176,13 +170,17 @@ class _DropZoneAction extends StatelessWidget {
                     style: wispSans(
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
-                      color: kInk,
+                      color: context.wc.ink,
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     description,
-                    style: wispSans(fontSize: 14, color: kMuted, height: 1.3),
+                    style: wispSans(
+                      fontSize: 14,
+                      color: context.wc.muted,
+                      height: 1.3,
+                    ),
                   ),
                 ],
               ),

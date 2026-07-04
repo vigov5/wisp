@@ -57,7 +57,7 @@ class RelayTipNote extends StatelessWidget {
                 style: wispSans(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w600,
-                  color: kInk.withValues(alpha: 0.75),
+                  color: context.wc.ink.withValues(alpha: 0.75),
                   height: 1.35,
                 ),
               ),

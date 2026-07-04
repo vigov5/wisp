@@ -131,7 +131,7 @@ class _SettingsStorageSectionState
                 style: wispSans(
                   fontSize: 13.5,
                   fontWeight: FontWeight.w600,
-                  color: kInk,
+                  color: context.wc.ink,
                 ),
               ),
               const SizedBox(height: 4),
@@ -140,14 +140,14 @@ class _SettingsStorageSectionState
                   children: [
                     TextSpan(
                       text: 'Received Cache: ',
-                      style: wispSans(fontSize: 11.5, color: kMuted),
+                      style: wispSans(fontSize: 11.5, color: context.wc.muted),
                     ),
                     TextSpan(
                       text: sizeText,
                       style: wispSans(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w500,
-                        color: kInk,
+                        color: context.wc.ink,
                       ),
                     ),
                   ],
@@ -168,7 +168,7 @@ class _SettingsStorageSectionState
             ),
             style: TextButton.styleFrom(
               foregroundColor: kAccentCyan,
-              disabledForegroundColor: kSubtle,
+              disabledForegroundColor: context.wc.subtle,
             ),
           ),
         ),

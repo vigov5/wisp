@@ -124,7 +124,7 @@ class _SendTransferRoutePageState extends ConsumerState<SendTransferRoutePage> {
         }
       },
       child: Scaffold(
-        backgroundColor: kBg,
+        backgroundColor: context.wc.bg,
         body: SafeArea(
           child: SizedBox.expand(
             child: AnimatedSwitcher(
@@ -242,6 +242,7 @@ class _TransferStateCard extends StatelessWidget {
           ? RelayTipNote(path: viewData.connectionPath)
           : null,
       footer: _buildFooter(
+        context: context,
         state: state,
         showFooterButton: showFooterButton,
         isSuccessResult: isSuccessResult,
@@ -267,6 +268,7 @@ class _TransferStateCard extends StatelessWidget {
 ///    /send/draft so the user can immediately re-send the same files).
 /// 4. **Anything else** (e.g. early connecting phase) → no footer button.
 Widget _buildFooter({
+  required BuildContext context,
   required SendState state,
   required bool showFooterButton,
   required bool isSuccessResult,
@@ -309,12 +311,12 @@ Widget _buildFooter({
             child: OutlinedButton(
               onPressed: onBack,
               style: OutlinedButton.styleFrom(
-                foregroundColor: kInk,
+                foregroundColor: context.wc.ink,
                 minimumSize: const Size(0, 48),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                side: BorderSide(color: kBorder),
+                side: BorderSide(color: context.wc.border),
               ),
               child: const Text('Back'),
             ),
@@ -363,12 +365,12 @@ Widget _buildFooter({
         child: OutlinedButton(
           onPressed: onExit,
           style: OutlinedButton.styleFrom(
-            foregroundColor: kInk,
+            foregroundColor: context.wc.ink,
             minimumSize: const Size(0, 48),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
-            side: BorderSide(color: kBorder),
+            side: BorderSide(color: context.wc.border),
           ),
           child: const Text('Done'),
         ),
@@ -415,7 +417,7 @@ class _SendStatsGrid extends StatelessWidget {
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
       decoration: BoxDecoration(
-        color: kFill.withValues(alpha: 0.4),
+        color: context.wc.fill.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(12),
       ),
       child: TweenAnimationBuilder<double>(
@@ -439,7 +441,7 @@ class _SendStatsGrid extends StatelessWidget {
                 Container(
                   width: 1,
                   height: 24,
-                  color: kBorder.withValues(alpha: 0.5),
+                  color: context.wc.border.withValues(alpha: 0.5),
                 ),
               Expanded(
                 child: Column(
@@ -449,7 +451,7 @@ class _SendStatsGrid extends StatelessWidget {
                       style: wispSans(
                         fontSize: 9,
                         fontWeight: FontWeight.w800,
-                        color: kMuted,
+                        color: context.wc.muted,
                         letterSpacing: 0.5,
                       ),
                     ),
@@ -459,7 +461,7 @@ class _SendStatsGrid extends StatelessWidget {
                       style: wispSans(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
-                        color: kInk,
+                        color: context.wc.ink,
                       ),
                     ),
                   ],

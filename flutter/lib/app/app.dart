@@ -366,10 +366,16 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
       },
     );
 
+    final themeMode = ref.watch(
+      settingsControllerProvider.select((s) => s.settings.themeMode),
+    );
+
     return MaterialApp.router(
       title: 'Wisp',
       debugShowCheckedModeBanner: false,
-      theme: buildWispTheme(),
+      theme: buildWispTheme(Brightness.light),
+      darkTheme: buildWispTheme(Brightness.dark),
+      themeMode: themeMode,
       routerConfig: _router,
     );
   }

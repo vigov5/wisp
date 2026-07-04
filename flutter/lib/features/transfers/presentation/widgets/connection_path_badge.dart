@@ -55,7 +55,7 @@ class ConnectionPathBadge extends StatelessWidget {
               style: wispSans(
                 fontSize: dense ? 11 : 12,
                 fontWeight: FontWeight.w600,
-                color: kInk.withValues(alpha: 0.92),
+                color: context.wc.ink.withValues(alpha: 0.92),
                 letterSpacing: -0.1,
               ),
             ),

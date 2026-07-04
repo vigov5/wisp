@@ -22,7 +22,7 @@ class SettingsSectionField extends StatelessWidget {
           style: wispSans(
             fontSize: 13.5,
             fontWeight: FontWeight.w600,
-            color: kInk,
+            color: context.wc.ink,
           ),
         ),
         const SizedBox(height: 10),

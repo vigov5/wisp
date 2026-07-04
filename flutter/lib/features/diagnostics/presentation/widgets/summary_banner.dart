@@ -15,9 +15,7 @@ class SummaryBanner extends StatelessWidget {
     final color = overall.color;
     final running = state.isRunning;
 
-    final title = running
-        ? 'Running checks…'
-        : _titleForStatus(overall, state);
+    final title = running ? 'Running checks…' : _titleForStatus(overall, state);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -40,7 +38,7 @@ class SummaryBanner extends StatelessWidget {
                   style: wispSans(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
-                    color: kInk,
+                    color: context.wc.ink,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -49,7 +47,7 @@ class SummaryBanner extends StatelessWidget {
                   style: wispSans(
                     fontSize: 12,
                     fontWeight: FontWeight.w500,
-                    color: kMuted,
+                    color: context.wc.muted,
                   ),
                 ),
               ],
@@ -65,10 +63,7 @@ class SummaryBanner extends StatelessWidget {
       return SizedBox(
         width: 18,
         height: 18,
-        child: CircularProgressIndicator(
-          strokeWidth: 2,
-          color: status.color,
-        ),
+        child: CircularProgressIndicator(strokeWidth: 2, color: status.color),
       );
     }
     final iconData = status.icon ?? Icons.help_outline_rounded;

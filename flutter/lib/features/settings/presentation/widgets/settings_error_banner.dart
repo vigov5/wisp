@@ -36,7 +36,7 @@ class SettingsErrorBanner extends StatelessWidget {
               style: wispSans(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w500,
-                color: kInk,
+                color: context.wc.ink,
                 height: 1.35,
               ),
             ),

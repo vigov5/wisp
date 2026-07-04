@@ -72,7 +72,7 @@ class _DesktopTitleBar extends StatelessWidget {
                 style: wispSans(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: kInk,
+                  color: context.wc.ink,
                   letterSpacing: -0.2,
                 ),
               ),
@@ -118,7 +118,7 @@ class _TitleBarButton extends StatelessWidget {
         child: SizedBox(
           width: 36,
           height: 36,
-          child: Icon(icon, size: 16, color: kMuted),
+          child: Icon(icon, size: 16, color: context.wc.muted),
         ),
       ),
     );

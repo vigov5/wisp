@@ -84,20 +84,20 @@ class _ReceiveCodeFieldState extends State<ReceiveCodeField> {
         fontSize: 18,
         fontWeight: FontWeight.w700,
         letterSpacing: 4.0,
-        color: kInk,
+        color: context.wc.ink,
       ),
       decoration: InputDecoration(
         hintText: widget.hintText,
         counterText: '',
         fillColor: widget.understated
-            ? kSurface.withValues(alpha: 0.6)
-            : (widget.compact ? kSurface2 : kSurface),
+            ? context.wc.surface.withValues(alpha: 0.6)
+            : (widget.compact ? context.wc.surface2 : context.wc.surface),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16,
           vertical: 15,
         ),
         hintStyle: wispSans(
-          color: kSubtle,
+          color: context.wc.subtle,
           fontSize: 14,
           fontWeight: FontWeight.w400,
           letterSpacing: 0,
@@ -107,7 +107,9 @@ class _ReceiveCodeFieldState extends State<ReceiveCodeField> {
           borderSide: BorderSide(
             color: widget.hasError
                 ? errorColor
-                : (isSmall ? kBorder.withValues(alpha: 0.6) : kBorder),
+                : (isSmall
+                      ? context.wc.border.withValues(alpha: 0.6)
+                      : context.wc.border),
             width: 1.2,
           ),
         ),

@@ -97,9 +97,9 @@ class TransferFlowLayout extends StatelessWidget {
         Container(
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
           decoration: BoxDecoration(
-            color: kBg,
+            color: context.wc.bg,
             border: Border(
-              top: BorderSide(color: kBorder.withValues(alpha: 0.4)),
+              top: BorderSide(color: context.wc.border.withValues(alpha: 0.4)),
             ),
           ),
           child: footer,

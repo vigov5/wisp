@@ -54,7 +54,7 @@ class _AppVersionTextState extends State<AppVersionText> {
     final baseStyle = wispSans(
       fontSize: 11,
       fontWeight: FontWeight.w400,
-      color: kMuted,
+      color: context.wc.muted,
     );
 
     // Desktop users already have the desktop app — only mobile needs the link.
@@ -73,7 +73,7 @@ class _AppVersionTextState extends State<AppVersionText> {
           TextSpan(
             text: 'Get Wisp for desktop ↗',
             style: baseStyle.copyWith(
-              color: kAccentCyanStrong,
+              color: context.wc.accentFg,
               fontWeight: FontWeight.w600,
             ),
             recognizer: _tapRecognizer,
