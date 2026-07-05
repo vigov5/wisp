@@ -37,5 +37,12 @@ lto = "thin"
 opt-level = "z"
 strip = "symbols"
 
+# Optimize dependencies (e.g. blake3, iroh) even in debug builds. Without this,
+# deps compile at opt-level=0 and on-device hashing/crypto runs ~25x slower
+# (BLAKE3 measured 28 MB/s debug vs 747 MB/s optimized), making debug transfers
+# painfully slow. The bridge crate itself stays unoptimized for fast rebuilds.
+[profile.dev.package."*"]
+opt-level = 3
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
