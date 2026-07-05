@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -12,6 +13,37 @@ class AndroidFolderResult {
   /// Total size in bytes computed on the native side via the Storage Access
   /// Framework — works regardless of Android scoped-storage restrictions.
   final BigInt sizeBytes;
+}
+
+/// Progress of the native URI → app-cache copy that backs [AndroidFilePicker.
+/// pickFiles] / [AndroidFilePicker.pickFolder]. Emitted while a multi-GB pick
+/// streams so the UI can show a progress bar instead of appearing frozen.
+class AndroidPickProgress {
+  const AndroidPickProgress({
+    required this.bytesCopied,
+    required this.totalBytes,
+    required this.index,
+    required this.count,
+  });
+
+  /// Bytes copied so far across the whole selection.
+  final int bytesCopied;
+
+  /// Total bytes to copy, or 0 when unknown (folder picks) — [fraction] is
+  /// then null and the UI should render an indeterminate indicator.
+  final int totalBytes;
+
+  /// Index of the file currently being copied (0-based).
+  final int index;
+
+  /// Number of items in the selection.
+  final int count;
+
+  /// Copy fraction in [0, 1], or null when [totalBytes] is unknown.
+  double? get fraction {
+    if (totalBytes <= 0) return null;
+    return (bytesCopied / totalBytes).clamp(0.0, 1.0);
+  }
 }
 
 /// Calls a native Android [MethodChannel] that bypasses two [file_selector_android]
@@ -41,11 +73,41 @@ class AndroidFilePicker {
   // re-traversing the directory tree.
   static final Map<String, BigInt> _folderSizeCache = {};
 
+  /// Live progress of the in-flight copy, or null when idle. Watch this with a
+  /// [ValueListenableBuilder] to drive a progress dialog while [pickFiles] /
+  /// [pickFolder] are streaming a large selection into the cache.
+  static final ValueNotifier<AndroidPickProgress?> pickProgress =
+      ValueNotifier<AndroidPickProgress?>(null);
+
+  static bool _wired = false;
+
+  static void _ensureWired() {
+    if (_wired || !Platform.isAndroid) return;
+    _wired = true;
+    _channel.setMethodCallHandler((call) async {
+      if (call.method == 'onPickProgress') {
+        final args = (call.arguments as Map).cast<dynamic, dynamic>();
+        pickProgress.value = AndroidPickProgress(
+          bytesCopied: (args['bytesCopied'] as num?)?.toInt() ?? 0,
+          totalBytes: (args['totalBytes'] as num?)?.toInt() ?? 0,
+          index: (args['index'] as num?)?.toInt() ?? 0,
+          count: (args['count'] as num?)?.toInt() ?? 0,
+        );
+      }
+    });
+  }
+
   /// Opens the system file picker and returns a list of absolute paths to
   /// copies of the selected files stored in the app cache directory.
   static Future<List<String>> pickFiles() async {
-    final result = await _channel.invokeMethod<List<dynamic>>('pickFiles');
-    return result?.cast<String>() ?? const [];
+    _ensureWired();
+    pickProgress.value = null;
+    try {
+      final result = await _channel.invokeMethod<List<dynamic>>('pickFiles');
+      return result?.cast<String>() ?? const [];
+    } finally {
+      pickProgress.value = null;
+    }
   }
 
   /// Opens the system folder picker via [ACTION_OPEN_DOCUMENT_TREE].
@@ -53,9 +115,14 @@ class AndroidFilePicker {
   /// Access Framework, which works under scoped storage on all API levels.
   /// Returns null if the user cancels or the selected path cannot be resolved.
   static Future<AndroidFolderResult?> pickFolder() async {
-    final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
-      'pickFolder',
-    );
+    _ensureWired();
+    pickProgress.value = null;
+    final Map<dynamic, dynamic>? result;
+    try {
+      result = await _channel.invokeMethod<Map<dynamic, dynamic>>('pickFolder');
+    } finally {
+      pickProgress.value = null;
+    }
     if (result == null) return null;
 
     final path = result['path'] as String?;

@@ -33,6 +33,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // Extends FlutterFragmentActivity (not FlutterActivity) so local_auth's
 // BiometricPrompt can attach — it requires a FragmentActivity host.
@@ -48,7 +49,16 @@ class MainActivity : FlutterFragmentActivity() {
         private const val REQUEST_CODE_PICK_SAVE_FOLDER = 2003
         private const val REQUEST_CODE_POST_NOTIF = 4801
         private const val OPEN_TAG = "WispOpenFolder"
+
+        // Minimum bytes copied between two "onPickProgress" events.  Throttles
+        // the platform-channel chatter during a multi-GB copy to ~1 event per
+        // 8 MB (≈375 events for a 3 GB file) while still animating smoothly.
+        private const val PROGRESS_EMIT_BYTES = 8L * 1024 * 1024
     }
+
+    // The file_picker channel, kept so the copy coroutine can push
+    // "onPickProgress" events back to Flutter while a pick is streaming.
+    private var fileChannel: MethodChannel? = null
 
     private var pendingResult: MethodChannel.Result? = null
     private var pendingFolderResult: MethodChannel.Result? = null
@@ -155,10 +165,11 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(
+        fileChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             CHANNEL,
-        ).setMethodCallHandler { call, result ->
+        )
+        fileChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "pickFiles" -> {
                     if (pendingResult != null) {
@@ -424,8 +435,34 @@ class MainActivity : FlutterFragmentActivity() {
             } else {
                 data.data?.let { uris.add(it) }
             }
-            val paths = uris.mapNotNull { uri -> copyUriToCache(uri) }
-            result.success(paths)
+            // Copy on Dispatchers.IO so a multi-GB pick never blocks the main
+            // thread (which froze the UI / triggered an ANR).  Progress is
+            // streamed back to Flutter via "onPickProgress"; result.success
+            // resumes on the main thread once every file is cached.
+            lifecycleScope.launch {
+                val paths = withContext(Dispatchers.IO) {
+                    val sizes = uris.map { resolveSize(it) ?: 0L }
+                    val totalBytes = sizes.sum()
+                    var completedBytes = 0L
+                    var lastEmit = 0L
+                    val out = ArrayList<String>(uris.size)
+                    for ((index, uri) in uris.withIndex()) {
+                        val base = completedBytes
+                        val path = copyUriToCache(uri) { fileCopied ->
+                            val done = base + fileCopied
+                            if (done - lastEmit >= PROGRESS_EMIT_BYTES) {
+                                lastEmit = done
+                                emitPickProgress(done, totalBytes, index, uris.size)
+                            }
+                        }
+                        if (path != null) out.add(path)
+                        completedBytes += sizes[index]
+                    }
+                    emitPickProgress(totalBytes, totalBytes, uris.size, uris.size)
+                    out
+                }
+                result.success(paths)
+            }
             return
         }
         if (requestCode == REQUEST_CODE_PICK_FOLDER) {
@@ -452,8 +489,24 @@ class MainActivity : FlutterFragmentActivity() {
                 File(File(cacheDir, "wisp_picked"), System.currentTimeMillis().toString()),
                 rootDoc.name.ifBlank { "folder" },
             )
-            val sizeBytes = copyDocumentTreeToCache(rootDoc, destDir)
-            result.success(mapOf("path" to destDir.absolutePath, "sizeBytes" to sizeBytes))
+            // Off the main thread, same as the file pick above.  Folder size is
+            // discovered while copying, so progress is indeterminate (totalBytes
+            // = 0) — the bar spins but still shows bytes copied so far.
+            lifecycleScope.launch {
+                val res = withContext(Dispatchers.IO) {
+                    var copied = 0L
+                    var lastEmit = 0L
+                    val sizeBytes = copyDocumentTreeToCache(rootDoc, destDir) { delta ->
+                        copied += delta
+                        if (copied - lastEmit >= PROGRESS_EMIT_BYTES) {
+                            lastEmit = copied
+                            emitPickProgress(copied, 0L, 0, 1)
+                        }
+                    }
+                    mapOf("path" to destDir.absolutePath, "sizeBytes" to sizeBytes)
+                }
+                result.success(res)
+            }
             return
         }
         if (requestCode == REQUEST_CODE_PICK_SAVE_FOLDER) {
@@ -483,8 +536,10 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     // Streams a content URI to the app cache directory to avoid encoding
-    // large files as bytes through the Flutter platform channel.
-    private fun copyUriToCache(uri: Uri): String? {
+    // large files as bytes through the Flutter platform channel.  [onBytes]
+    // is invoked with the running byte count for this file after every chunk
+    // so the caller can report copy progress.
+    private fun copyUriToCache(uri: Uri, onBytes: (Long) -> Unit = {}): String? {
         return try {
             val fileName = resolveFileName(uri) ?: "picked_file"
             val dir = File(File(cacheDir, "wisp_picked"), System.currentTimeMillis().toString())
@@ -493,10 +548,54 @@ class MainActivity : FlutterFragmentActivity() {
             val cacheFile = File(dir, fileName)
             contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(cacheFile).use { output ->
-                    input.copyTo(output, bufferSize = 65_536)
+                    val buffer = ByteArray(65_536)
+                    var copied = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                        copied += read
+                        onBytes(copied)
+                    }
                 }
             }
             cacheFile.absolutePath
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // Posts a copy-progress event to Flutter on the main thread.  A
+    // [totalBytes] of 0 means "unknown" (folder picks), so the Dart side
+    // renders an indeterminate bar.
+    private fun emitPickProgress(bytesCopied: Long, totalBytes: Long, index: Int, count: Int) {
+        runOnUiThread {
+            fileChannel?.invokeMethod(
+                "onPickProgress",
+                mapOf(
+                    "bytesCopied" to bytesCopied,
+                    "totalBytes" to totalBytes,
+                    "index" to index,
+                    "count" to count,
+                ),
+            )
+        }
+    }
+
+    // Total size of a content URI via OpenableColumns.SIZE, or null when the
+    // provider doesn't report it (progress then treats the file as 0 B).
+    private fun resolveSize(uri: Uri): Long? {
+        return try {
+            contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.SIZE),
+                null, null, null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (idx >= 0 && !cursor.isNull(idx)) cursor.getLong(idx) else null
+                } else null
+            }
         } catch (_: Exception) {
             null
         }
@@ -529,19 +628,30 @@ class MainActivity : FlutterFragmentActivity() {
     // streaming chunks via SAF.  Uses a single ContentResolver query per
     // directory level (ported from LocalSend's FastDocumentFile approach) so
     // it scales well to folders with many files.  Returns the total bytes copied.
-    private fun copyDocumentTreeToCache(src: FastDocumentFile, destDir: File): Long {
+    private fun copyDocumentTreeToCache(
+        src: FastDocumentFile,
+        destDir: File,
+        onBytes: (Long) -> Unit = {},
+    ): Long {
         destDir.mkdirs()
         var totalBytes = 0L
         for (child in src.listFiles()) {
             if (child.name.isBlank()) continue
             if (child.isDirectory) {
-                totalBytes += copyDocumentTreeToCache(child, File(destDir, child.name))
+                totalBytes += copyDocumentTreeToCache(child, File(destDir, child.name), onBytes)
             } else if (child.isFile) {
                 val destFile = File(destDir, child.name)
                 try {
                     contentResolver.openInputStream(child.uri)?.use { input ->
                         FileOutputStream(destFile).use { output ->
-                            totalBytes += input.copyTo(output, bufferSize = 65_536)
+                            val buffer = ByteArray(65_536)
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                output.write(buffer, 0, read)
+                                totalBytes += read
+                                onBytes(read.toLong())
+                            }
                         }
                     }
                 } catch (_: Exception) {

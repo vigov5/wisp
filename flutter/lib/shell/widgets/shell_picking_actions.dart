@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -5,8 +7,10 @@ import '../../app/app_router.dart';
 import '../../features/send/application/controller.dart';
 import '../../features/send/application/model.dart';
 import '../../features/send/application/send_selection_picker.dart';
+import '../../features/send/presentation/pick_progress_dialog.dart';
 import '../../features/send/presentation/send_text_editor_page.dart';
 import '../../features/settings/application/controller.dart';
+import '../../platform/android_file_picker.dart';
 
 mixin ShellPickingActions {
   Future<void> openSelectedFiles(
@@ -83,7 +87,7 @@ mixin ShellPickingActions {
     Future<List<SendPickedFile>> Function(SendSelectionPicker picker) pick,
   ) async {
     final pickerService = ref.read(sendSelectionPickerProvider);
-    final files = await pick(pickerService);
+    final files = await _withPickProgress(context, () => pick(pickerService));
     if (files.isEmpty) {
       return;
     }
@@ -93,6 +97,45 @@ mixin ShellPickingActions {
     }
 
     await openSelectedFiles(context, files);
+  }
+
+  /// Runs [run] (a file/folder pick) and, on Android, shows a modal progress
+  /// dialog once the native copy actually starts streaming bytes. Small picks
+  /// that copy instantly never emit progress, so no dialog flashes for them.
+  Future<List<SendPickedFile>> _withPickProgress(
+    BuildContext context,
+    Future<List<SendPickedFile>> Function() run,
+  ) async {
+    if (!Platform.isAndroid) {
+      return run();
+    }
+
+    final future = run();
+    final notifier = AndroidFilePicker.pickProgress;
+    var dialogShown = false;
+
+    void maybeShow() {
+      if (dialogShown || notifier.value == null || !context.mounted) {
+        return;
+      }
+      dialogShown = true;
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const PickProgressDialog(),
+      );
+    }
+
+    notifier.addListener(maybeShow);
+    maybeShow();
+    try {
+      return await future;
+    } finally {
+      notifier.removeListener(maybeShow);
+      if (dialogShown && context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+    }
   }
 
   Future<void> pickFiles(BuildContext context, WidgetRef ref) {
