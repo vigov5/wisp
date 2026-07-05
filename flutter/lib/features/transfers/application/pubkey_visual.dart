@@ -14,6 +14,16 @@ Color colorFromPubkey(String endpointId) {
   return HSLColor.fromAHSL(1, hue.toDouble(), 0.55, 0.55).toColor();
 }
 
+/// Readable text/foreground color for a pubkey-tinted pill or label, adapted to
+/// the current theme. [base] is the pubkey tint (from [colorFromPubkey]): on
+/// light theme it is darkened for contrast against the light tinted pill; on
+/// dark theme it is lightened instead, because a fixed dark shade on the dark
+/// tinted pill was nearly unreadable (especially blue/green hues).
+Color pubkeyTextColor(BuildContext context, Color base) {
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  return HSLColor.fromColor(base).withLightness(isDark ? 0.78 : 0.32).toColor();
+}
+
 /// Truncated "AAAA…ZZZZ" representation for compact display. [headChars] and
 /// [tailChars] control how many characters are kept at each end (default 4/4
 /// for tight tiles; pass larger values where there's room).
@@ -44,7 +54,7 @@ class PubkeyBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = colorFromPubkey(endpointId);
-    final textColor = HSLColor.fromColor(color).withLightness(0.32).toColor();
+    final textColor = pubkeyTextColor(context, color);
     final spec = _spec(size);
 
     final badge = Container(

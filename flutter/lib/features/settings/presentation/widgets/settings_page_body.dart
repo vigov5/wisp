@@ -713,7 +713,7 @@ class _IdentityBadgeRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = colorFromPubkey(endpointId);
-    final textColor = HSLColor.fromColor(color).withLightness(0.32).toColor();
+    final textColor = pubkeyTextColor(context, color);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

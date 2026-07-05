@@ -653,9 +653,7 @@ class _RecentDeviceTile extends ConsumerWidget {
                   style: wispSans(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color: HSLColor.fromColor(
-                      badgeColor,
-                    ).withLightness(0.32).toColor(),
+                    color: pubkeyTextColor(context, badgeColor),
                     letterSpacing: 0.4,
                   ),
                 ),
@@ -788,9 +786,10 @@ class _NearbyDeviceTile extends ConsumerWidget {
                           style: wispSans(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
-                            color: HSLColor.fromColor(
+                            color: pubkeyTextColor(
+                              context,
                               colorFromPubkey(receiver.endpointId),
-                            ).withLightness(0.32).toColor(),
+                            ),
                             letterSpacing: 0.4,
                           ),
                         ),
@@ -848,7 +847,7 @@ class _QrPairedTile extends StatelessWidget {
         : colorFromPubkey(pubkey);
     final badgeText = pubkey.isEmpty
         ? null
-        : HSLColor.fromColor(badgeColor).withLightness(0.32).toColor();
+        : pubkeyTextColor(context, badgeColor);
 
     return InkWell(
       onTap: onTap,
