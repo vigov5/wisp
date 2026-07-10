@@ -15,6 +15,7 @@ import 'features/saved_devices/application/saved_devices_controller.dart';
 import 'features/transfers/feature.dart';
 import 'features/settings/settings_providers.dart';
 import 'features/update/application/update_providers.dart';
+import 'platform/desktop_integration.dart';
 import 'src/rust/frb_generated.dart';
 
 // [args] carries the process launch arguments. On Windows the native runner
@@ -22,6 +23,18 @@ import 'src/rust/frb_generated.dart';
 // paths arrive via the windows_integration method channel instead).
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // A login launch carries the auto-start marker flag (registered by
+  // DesktopIntegration). It starts quietly so it doesn't pop a window in the
+  // user's face; a manual launch shows the window normally. File/folder paths
+  // forwarded by the Windows "Send via Wisp" menu never start with '--', so
+  // stripping our own flags leaves the send paths intact.
+  final bool launchedAtStartup = args.contains(
+    DesktopIntegration.autostartFlag,
+  );
+  final List<String> sendPaths = args
+      .where((arg) => !arg.startsWith('--'))
+      .toList(growable: false);
 
   // Register the SIL OFL 1.1 text for the bundled Noto fonts so it appears in
   // the standard Flutter licenses page (showLicensePage / AboutDialog). Both
@@ -43,6 +56,7 @@ Future<void> main(List<String> args) async {
 
   const initialSize = Size(440, 840);
   final bootstrap = await loadAppBootstrap();
+  final minimizeToTray = bootstrap.initialSettings.minimizeToTray;
   runApp(
     ProviderScope(
       overrides: [
@@ -62,7 +76,7 @@ Future<void> main(List<String> args) async {
         updateRepositoryProvider.overrideWithValue(bootstrap.updateRepository),
         identityStorageProvider.overrideWithValue(bootstrap.identityStorage),
       ],
-      child: WispApp(initialSendPaths: args),
+      child: WispApp(initialSendPaths: sendPaths),
     ),
   );
   if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
@@ -75,8 +89,24 @@ Future<void> main(List<String> args) async {
         title: 'Wisp',
       ),
       () async {
+        if (launchedAtStartup) {
+          // Started with the OS. Stay out of the way: when minimize-to-tray is
+          // on, leave the window hidden (the tray icon, set up by init() just
+          // below, is the entry point); otherwise minimize to the taskbar so
+          // it's still reachable without stealing focus.
+          if (!minimizeToTray) {
+            await windowManager.minimize();
+          }
+          return;
+        }
         await windowManager.show();
       },
     );
+    // Wire the tray + window-close interception and apply the persisted
+    // minimize-to-tray preference. Kept off the critical path (guarded) so a
+    // tray/plugin failure never blocks a usable window.
+    if (DesktopIntegration.isSupported) {
+      await DesktopIntegration.instance.init(minimizeToTray: minimizeToTray);
+    }
   }
 }

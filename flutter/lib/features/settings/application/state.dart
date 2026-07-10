@@ -10,6 +10,8 @@ class AppSettings {
     required this.discoveryServerUrl,
     this.skipClipboardConfirm = false,
     this.themeMode = ThemeMode.system,
+    this.minimizeToTray = false,
+    this.launchAtStartup = false,
   });
 
   final String deviceName;
@@ -25,6 +27,14 @@ class AppSettings {
   /// [ThemeMode.system] so a fresh install matches the OS.
   final ThemeMode themeMode;
 
+  /// Desktop only. When true, the minimize/close buttons hide Wisp to the
+  /// system tray instead of minimizing to the taskbar / quitting. Default off.
+  final bool minimizeToTray;
+
+  /// Desktop only. When true, Wisp is registered to auto-start when the user
+  /// logs in. Mirrors the OS-level state (reconciled at Settings open).
+  final bool launchAtStartup;
+
   AppSettings copyWith({
     String? deviceName,
     String? downloadRoot,
@@ -33,6 +43,8 @@ class AppSettings {
     bool clearDiscoveryServerUrl = false,
     bool? skipClipboardConfirm,
     ThemeMode? themeMode,
+    bool? minimizeToTray,
+    bool? launchAtStartup,
   }) {
     return AppSettings(
       deviceName: deviceName ?? this.deviceName,
@@ -44,6 +56,8 @@ class AppSettings {
           : (discoveryServerUrl ?? this.discoveryServerUrl),
       skipClipboardConfirm: skipClipboardConfirm ?? this.skipClipboardConfirm,
       themeMode: themeMode ?? this.themeMode,
+      minimizeToTray: minimizeToTray ?? this.minimizeToTray,
+      launchAtStartup: launchAtStartup ?? this.launchAtStartup,
     );
   }
 
@@ -57,7 +71,9 @@ class AppSettings {
           discoverableByDefault == other.discoverableByDefault &&
           discoveryServerUrl == other.discoveryServerUrl &&
           skipClipboardConfirm == other.skipClipboardConfirm &&
-          themeMode == other.themeMode;
+          themeMode == other.themeMode &&
+          minimizeToTray == other.minimizeToTray &&
+          launchAtStartup == other.launchAtStartup;
 
   @override
   int get hashCode => Object.hash(
@@ -67,6 +83,8 @@ class AppSettings {
     discoveryServerUrl,
     skipClipboardConfirm,
     themeMode,
+    minimizeToTray,
+    launchAtStartup,
   );
 }
 

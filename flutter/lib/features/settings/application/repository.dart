@@ -10,6 +10,8 @@ const String _discoverableKey = 'settings.discoverable';
 const String _serverUrlKey = 'settings.server_url';
 const String _skipClipboardConfirmKey = 'settings.skip_clipboard_confirm';
 const String _themeModeKey = 'settings.theme_mode';
+const String _minimizeToTrayKey = 'settings.minimize_to_tray';
+const String _launchAtStartupKey = 'settings.launch_at_startup';
 const String _contextMenuPromptedKey = 'settings.context_menu_prompted';
 
 class SettingsRepository {
@@ -36,6 +38,8 @@ class SettingsRepository {
       discoveryServerUrl: defaultRendezvousUrl,
       skipClipboardConfirm: false,
       themeMode: ThemeMode.system,
+      minimizeToTray: false,
+      launchAtStartup: false,
     );
     await save(seeded);
     return seeded;
@@ -59,6 +63,8 @@ class SettingsRepository {
       _themeModeKey,
       _themeModeToString(settings.themeMode),
     );
+    await prefs.setBool(_minimizeToTrayKey, settings.minimizeToTray);
+    await prefs.setBool(_launchAtStartupKey, settings.launchAtStartup);
   }
 
   /// Whether the one-time "add Wisp to the right-click menu?" prompt has been
@@ -84,6 +90,8 @@ class SettingsRepository {
           _normalizeUrl(prefs.getString(_serverUrlKey)) ?? defaultRendezvousUrl,
       skipClipboardConfirm: prefs.getBool(_skipClipboardConfirmKey) ?? false,
       themeMode: _themeModeFromString(prefs.getString(_themeModeKey)),
+      minimizeToTray: prefs.getBool(_minimizeToTrayKey) ?? false,
+      launchAtStartup: prefs.getBool(_launchAtStartupKey) ?? false,
     );
   }
 }

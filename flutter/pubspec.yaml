@@ -54,6 +54,11 @@ dependencies:
   url_launcher: ^6.3.0
   http: ^1.2.0
   pub_semver: ^2.1.4
+  # Desktop-only: system-tray icon (minimize-to-tray), OS launch-at-startup,
+  # and native toast notifications for incoming transfers while hidden.
+  tray_manager: ^0.5.0
+  launch_at_startup: ^0.5.0
+  local_notifier: ^0.1.6
 
 dev_dependencies:
   flutter_test:
@@ -111,6 +116,9 @@ flutter:
   assets:
     - assets/fonts/OFL.txt
     - assets/wisp_rounded_logo.png
+    # Desktop system-tray icons. Windows needs an .ico; macOS/Linux use the PNG.
+    - assets/tray_icon.ico
+    - assets/wisp_square_logo.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../app/app_router.dart';
 import '../../../../platform/android_media_store.dart';
+import '../../../../platform/desktop_integration.dart';
 import '../../../../platform/windows_context_menu.dart';
 import '../../../../src/rust/api/simple.dart' as rust_simple;
 import '../../../../theme/wisp_theme.dart';
@@ -46,14 +47,23 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
   bool _saving = false;
   String _endpointId = '';
   // Windows "Send via Wisp" context-menu state. The registry is the source of
-  // truth, so this mirrors the live registration status and applies changes
-  // immediately (independent of the Save button / _isDirty).
+  // truth; [_initialContextMenuEnabled] mirrors the live registration read at
+  // open, and the toggle is applied on Save (like every other field) so the
+  // Save button reflects the pending change.
   bool _contextMenuEnabled = false;
-  bool _contextMenuBusy = false;
+  bool _initialContextMenuEnabled = false;
   // Update-checker state. The toggle mirrors the persisted preference; the flag
   // gates inline snackbar feedback to user-initiated checks only.
   bool _checkOnStartup = true;
   bool _awaitingManualUpdateResult = false;
+  // Desktop-only window/startup preferences. Applied on Save (they carry OS
+  // side effects: tray, startup registration), so they feed _isDirty too.
+  final bool _isDesktop =
+      Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+  bool _minimizeToTray = false;
+  bool _initialMinimizeToTray = false;
+  bool _launchAtStartup = false;
+  bool _initialLaunchAtStartup = false;
 
   @override
   void initState() {
@@ -82,9 +92,34 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
     if (Platform.isWindows) {
       unawaited(_refreshContextMenuStatus());
     }
+    _minimizeToTray = settings.minimizeToTray;
+    _initialMinimizeToTray = _minimizeToTray;
+    _launchAtStartup = settings.launchAtStartup;
+    _initialLaunchAtStartup = _launchAtStartup;
+    if (_isDesktop) {
+      unawaited(_refreshLaunchAtStartupStatus());
+    }
     _checkOnStartup = ref
         .read(updateControllerProvider.notifier)
         .checkOnStartup();
+  }
+
+  // Reconciles the launch-at-startup toggle with the real OS registration
+  // (registry/LaunchAgent/autostart entry), so a value changed outside the app
+  // is reflected. Desktop only.
+  Future<void> _refreshLaunchAtStartupStatus() async {
+    final enabled = await DesktopIntegration.instance
+        .isLaunchAtStartupEnabled();
+    if (!mounted) return;
+    // Establish the real OS state as the baseline. If the user already flipped
+    // the toggle while this was loading, keep their choice (so it stays dirty)
+    // and only correct the baseline.
+    setState(() {
+      if (_launchAtStartup == _initialLaunchAtStartup) {
+        _launchAtStartup = enabled;
+      }
+      _initialLaunchAtStartup = enabled;
+    });
   }
 
   void _checkForUpdates() {
@@ -116,32 +151,17 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
   }
 
   // Reads the live context-menu registration status from the registry and
-  // updates the toggle to match reality (handles manual registry edits or a
-  // failed write). Windows only.
+  // sets it as the Save baseline (handles manual registry edits or a failed
+  // write). Windows only.
   Future<void> _refreshContextMenuStatus() async {
     final enabled = await WindowsContextMenu.isRegistered();
-    if (mounted) {
-      setState(() => _contextMenuEnabled = enabled);
-    }
-  }
-
-  // Applies the context-menu toggle immediately, then re-reads the registry so
-  // the displayed value reflects the actual outcome.
-  Future<void> _toggleContextMenu(bool value) async {
-    if (_contextMenuBusy) return;
-    setState(() => _contextMenuBusy = true);
-    try {
-      if (value) {
-        await WindowsContextMenu.register();
-      } else {
-        await WindowsContextMenu.unregister();
+    if (!mounted) return;
+    setState(() {
+      if (_contextMenuEnabled == _initialContextMenuEnabled) {
+        _contextMenuEnabled = enabled;
       }
-      await _refreshContextMenuStatus();
-    } finally {
-      if (mounted) {
-        setState(() => _contextMenuBusy = false);
-      }
-    }
+      _initialContextMenuEnabled = enabled;
+    });
   }
 
   @override
@@ -159,7 +179,10 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
         _downloadRootValue.trim() != _initialDownloadRoot.trim() ||
         _serverUrlController.text.trim() != _initialServerUrl.trim() ||
         _discoverable != _initialDiscoverable ||
-        _skipClipboardConfirm != _initialSkipClipboardConfirm;
+        _skipClipboardConfirm != _initialSkipClipboardConfirm ||
+        _minimizeToTray != _initialMinimizeToTray ||
+        _launchAtStartup != _initialLaunchAtStartup ||
+        _contextMenuEnabled != _initialContextMenuEnabled;
   }
 
   void _onFieldChanged() {
@@ -197,7 +220,10 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              style: FilledButton.styleFrom(backgroundColor: kAccentCyanStrong),
+              style: FilledButton.styleFrom(
+                backgroundColor: kAccentCyanStrong,
+                foregroundColor: Colors.white,
+              ),
               child: const Text('Discard'),
             ),
           ],
@@ -213,21 +239,47 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
     }
 
     setState(() => _saving = true);
-    await ref
-        .read(settingsControllerProvider.notifier)
-        .saveSettings(
-          deviceName: _deviceNameController.text,
-          downloadRoot: _downloadRootValue,
-          serverUrl: _serverUrlController.text,
-          discoverableByDefault: _discoverable,
-          skipClipboardConfirm: _skipClipboardConfirm,
-        );
+    final notifier = ref.read(settingsControllerProvider.notifier);
+    await notifier.saveSettings(
+      deviceName: _deviceNameController.text,
+      downloadRoot: _downloadRootValue,
+      serverUrl: _serverUrlController.text,
+      discoverableByDefault: _discoverable,
+      skipClipboardConfirm: _skipClipboardConfirm,
+    );
+
+    // Apply the toggles that carry OS side effects (tray behaviour, startup
+    // registration, shell registry) as part of the same Save. Each only runs
+    // when actually changed; the OS is the source of truth, so we read the
+    // real outcome back afterwards to reset the baseline.
+    if (_minimizeToTray != _initialMinimizeToTray) {
+      await notifier.setMinimizeToTray(_minimizeToTray);
+    }
+    if (_launchAtStartup != _initialLaunchAtStartup) {
+      await notifier.setLaunchAtStartup(_launchAtStartup);
+    }
+    if (Platform.isWindows &&
+        _contextMenuEnabled != _initialContextMenuEnabled) {
+      if (_contextMenuEnabled) {
+        await WindowsContextMenu.register();
+      } else {
+        await WindowsContextMenu.unregister();
+      }
+    }
 
     if (!mounted) {
       return;
     }
 
     final state = ref.read(settingsControllerProvider);
+    // Read back the real OS state (registration can silently fail / be denied).
+    final actualLaunchAtStartup = state.settings.launchAtStartup;
+    final actualContextMenu = Platform.isWindows
+        ? await WindowsContextMenu.isRegistered()
+        : _contextMenuEnabled;
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _saving = false;
       if (state.errorMessage == null) {
@@ -244,6 +296,12 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
         );
         _serverUrlController.text = _initialServerUrl;
         _discoverable = _initialDiscoverable;
+        _minimizeToTray = state.settings.minimizeToTray;
+        _initialMinimizeToTray = _minimizeToTray;
+        _launchAtStartup = actualLaunchAtStartup;
+        _initialLaunchAtStartup = actualLaunchAtStartup;
+        _contextMenuEnabled = actualContextMenu;
+        _initialContextMenuEnabled = actualContextMenu;
       }
     });
 
@@ -533,8 +591,34 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                                 "Show 'Send via Wisp' on files and folders "
                                 'in File Explorer.',
                             value: _contextMenuEnabled,
-                            onChanged: (value) =>
-                                unawaited(_toggleContextMenu(value)),
+                            onChanged: (value) {
+                              setState(() => _contextMenuEnabled = value);
+                            },
+                          ),
+                        ],
+                        if (_isDesktop) ...[
+                          const SizedBox(height: 18),
+                          SettingsToggleField(
+                            title: 'Minimize to tray',
+                            subtitle:
+                                'Keep Wisp running in the system tray when you '
+                                'minimize or close the window, so it can still '
+                                'receive files. Quit from the tray icon.',
+                            value: _minimizeToTray,
+                            onChanged: (value) {
+                              setState(() => _minimizeToTray = value);
+                            },
+                          ),
+                          const SizedBox(height: 18),
+                          SettingsToggleField(
+                            title: 'Launch at startup',
+                            subtitle:
+                                'Start Wisp automatically when you sign in to '
+                                'this computer.',
+                            value: _launchAtStartup,
+                            onChanged: (value) {
+                              setState(() => _launchAtStartup = value);
+                            },
                           ),
                         ],
                         const _SettingsGroupHeader(
@@ -671,7 +755,7 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                   children: [
                     Expanded(
                       child: Text(
-                        'Changes apply after you save.',
+                        'Most changes apply after you save.',
                         style: wispSans(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w400,

@@ -22,6 +22,7 @@ import '../features/settings/application/controller.dart';
 import '../platform/android/keepalive_lifecycle_observer.dart';
 import '../features/usb_cable/application/usb_cable_controller.dart';
 import '../platform/android_share_intent.dart';
+import '../platform/desktop_integration.dart';
 import '../platform/windows_context_menu.dart';
 import '../platform/rust/receiver/source.dart';
 
@@ -352,6 +353,33 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
         final nowActive =
             next.phase != transfer_state.TransferSessionPhase.idle;
         if (!wasIdle || !nowActive) return;
+
+        // Desktop: alert the user with a native toast when an offer arrives
+        // while Wisp isn't focused (hidden in the tray, minimized, or behind
+        // another window). Clicking the toast brings the window forward to the
+        // confirm prompt. No-op when the window is already focused.
+        if (DesktopIntegration.isSupported) {
+          final offer = next.offer;
+          final sender = offer?.displaySenderName ?? 'Someone';
+          final isText = offer?.isTextOffer ?? false;
+          // File offers get one-tap Accept / Decline buttons on the toast.
+          // Text offers omit them — accepting text needs a Copy-vs-Save choice
+          // that only makes sense in the in-app prompt, so the toast just
+          // opens the window.
+          final notifier = ref.read(transfersServiceProvider.notifier);
+          unawaited(
+            DesktopIntegration.instance.notifyIncomingTransfer(
+              title: isText
+                  ? '$sender is sending you text'
+                  : '$sender is sending you files',
+              body: 'Click to review and accept in Wisp.',
+              onAccept: isText ? null : () => unawaited(notifier.acceptOffer()),
+              onDecline: isText
+                  ? null
+                  : () => unawaited(notifier.declineOffer()),
+            ),
+          );
+        }
 
         final currentPath = _router.routeInformationProvider.value.uri.path;
         if (currentPath == AppRoutePaths.receiveTransfer) return;

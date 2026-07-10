@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../settings_providers.dart';
 import 'state.dart';
 import '../../receive/application/service.dart';
+import '../../../platform/desktop_integration.dart';
 
 final settingsControllerProvider =
     NotifierProvider<SettingsController, SettingsState>(SettingsController.new);
@@ -98,6 +99,33 @@ class SettingsController extends Notifier<SettingsState> {
   Future<void> setThemeMode(ThemeMode mode) async {
     if (state.settings.themeMode == mode) return;
     final next = state.settings.copyWith(themeMode: mode);
+    state = state.copyWith(settings: next);
+    await ref.read(settingsRepositoryProvider).save(next);
+  }
+
+  /// Desktop only. Turns minimize-to-tray on/off, persists it, and applies the
+  /// window/tray behaviour immediately (live-apply, like [setThemeMode]).
+  Future<void> setMinimizeToTray(bool enabled) async {
+    if (state.settings.minimizeToTray == enabled) return;
+    final next = state.settings.copyWith(minimizeToTray: enabled);
+    state = state.copyWith(settings: next);
+    await ref.read(settingsRepositoryProvider).save(next);
+    await DesktopIntegration.instance.applyMinimizeToTray(enabled);
+  }
+
+  /// Desktop only. Registers/unregisters OS launch-at-startup, persisting the
+  /// resulting real state (the OS is the source of truth, so the stored flag is
+  /// reconciled to whatever the OS actually reports back).
+  Future<void> setLaunchAtStartup(bool enabled) async {
+    if (state.settings.launchAtStartup == enabled) return;
+    // Optimistic UI update; corrected below if the OS disagrees.
+    state = state.copyWith(
+      settings: state.settings.copyWith(launchAtStartup: enabled),
+    );
+    final actual = await DesktopIntegration.instance.applyLaunchAtStartup(
+      enabled,
+    );
+    final next = state.settings.copyWith(launchAtStartup: actual);
     state = state.copyWith(settings: next);
     await ref.read(settingsRepositoryProvider).save(next);
   }
