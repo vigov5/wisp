@@ -59,7 +59,9 @@ h1 .sub { color: var(--muted); font-weight: 400; font-size: 15px; }
 
 section { margin-top: 22px; }
 section:first-of-type { margin-top: 0; }
-.hidden { display: none; }
+/* Utility must win over component rules that set `display` (e.g. `.decision`,
+   `.sender`), which otherwise override it by source order at equal specificity. */
+.hidden { display: none !important; }
 
 .file-list, .download-list { list-style: none; padding: 0; margin: 0 0 12px; }
 .file-list li, .download-list li {

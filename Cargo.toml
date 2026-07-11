@@ -21,12 +21,15 @@ default-members = [
 exclude = ["flutter/rust"]
 resolver = "2"
 
-# Size-optimized profile for the wasm browser receiver. Only crates built with
+# Optimized profile for the wasm browser receiver. Only crates built with
 # `--profile wasm-release` compile under it, so native release builds are
-# unaffected. Shrinks the ~18 MB debug wasm by an order of magnitude.
+# unaffected. `opt-level = 2` (not `z`) matters a lot here: the receiver is
+# bottlenecked on QUIC AEAD (ring) + blake3 blob verification, which run ~10-30×
+# slower when unoptimized — a size-first `z` build throttles relay throughput.
+# Still an order of magnitude smaller than the ~18 MB debug wasm.
 [profile.wasm-release]
 inherits = "release"
-opt-level = "z"
+opt-level = 2
 lto = true
 codegen-units = 1
 strip = true

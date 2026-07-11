@@ -450,6 +450,13 @@ impl SenderSession {
         }
 
         let _ = registration.shutdown().await;
+
+        // Close gracefully so the peer sees the session end in ~1 RTT (a
+        // CONNECTION_CLOSE frame) instead of waiting out the QUIC idle timeout.
+        // This matters most for the browser receiver: on a Ctrl+C cancel it is
+        // blocked reading the blob stream (not the control channel), so a
+        // dangling connection leaves it stuck on a dead relay path for 5-10s.
+        close_connection_gracefully(&self.endpoint, &connection, &self.blob_strategy).await;
         Ok(outcome)
     }
 
@@ -603,6 +610,26 @@ fn synthetic_text_snapshot(session_id: &str, byte_len: u64) -> TransferSnapshot 
 async fn finish_control_stream(send: &mut iroh::endpoint::SendStream) {
     let _ = send.finish();
     let _ = tokio::time::timeout(Duration::from_secs(2), send.stopped()).await;
+}
+
+/// End the session's transport promptly so the peer isn't left waiting on the
+/// QUIC idle timeout to notice we're done/cancelled.
+///
+/// - **Internal** endpoint (we bound it ourselves, e.g. the CLI): close the
+///   whole endpoint and await the flush, guaranteeing the CONNECTION_CLOSE
+///   frame is transmitted before the endpoint is dropped on return.
+/// - **External/shared** endpoint (e.g. the Flutter app's receiver-service
+///   endpoint): only close *this* connection — the endpoint is long-lived and
+///   flushes on its own; closing it would break everything else sharing it.
+async fn close_connection_gracefully(
+    endpoint: &Endpoint,
+    connection: &Connection,
+    blob_strategy: &BlobServingStrategy,
+) {
+    match blob_strategy {
+        BlobServingStrategy::Internal => endpoint.close().await,
+        _ => connection.close(0u32.into(), b"session complete"),
+    }
 }
 
 enum HandshakeResult {

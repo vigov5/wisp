@@ -128,6 +128,10 @@ function onEvent(event) {
       break;
 
     case 'progress': {
+      // Self-heal the UI: bytes are flowing, so the decision is settled even if
+      // the transferStarted event was missed or arrived late.
+      hide('decision');
+      show('progress');
       // The blob fetch reports total wire bytes (collection metadata + file
       // payload), which can exceed the manifest's file-content total, so clamp
       // for display.
@@ -180,8 +184,10 @@ function onEvent(event) {
       break;
 
     case 'error':
-      hide('decision');
-      setStatus(`Error: ${event.message}`);
+      // The receiver stays live (accept loop keeps running), so clear any
+      // in-flight offer/progress UI and fall back to the waiting state.
+      resetOffer();
+      setStatus(`${event.message} — waiting for a sender…`);
       break;
 
     default:
@@ -205,10 +211,16 @@ function formatEta(secs) {
 
 function wireButtons() {
   $('btn-accept').addEventListener('click', () => {
-    if (receiver) receiver.accept();
+    if (!receiver) return;
+    // Hide the decision immediately; transferStarted/textReady take over next.
+    hide('decision');
+    setStatus('Accepted — starting…');
+    receiver.accept();
   });
   $('btn-decline').addEventListener('click', () => {
-    if (receiver) receiver.decline();
+    if (!receiver) return;
+    hide('decision');
+    receiver.decline();
   });
   $('btn-copy').addEventListener('click', async () => {
     try {
@@ -228,7 +240,9 @@ function wireButtons() {
     URL.revokeObjectURL(url);
   });
   $('btn-cancel').addEventListener('click', () => {
-    if (receiver) receiver.cancel();
+    if (!receiver) return;
+    setStatus('Cancelling…');
+    receiver.cancel();
   });
 }
 

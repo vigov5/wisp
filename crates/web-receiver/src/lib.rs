@@ -469,9 +469,24 @@ async fn handle_connection(
         .await?;
     let mut stream = store
         .remote()
-        .fetch(connection, blob_ticket.clone())
+        .fetch(connection.clone(), blob_ticket.clone())
         .stream();
-    while let Some(item) = stream.next().await {
+
+    // Each step races the next progress item against (a) either connection
+    // dropping — so a sender that dies mid-transfer can't hang us forever — and
+    // (b) a short poll tick, so we make progress even while no bytes are flowing.
+    // Re-polling `stream.next()` after a tick is cancel-safe: the fetch
+    // generator's state lives in the stream, not the dropped future.
+    enum Step {
+        Item(Option<GetProgressItem>),
+        Disconnected,
+        Tick,
+    }
+    let mut since_yield: u32 = 0;
+    loop {
+        // Cancel is checked every iteration, not just on the idle tick: a fast,
+        // steady stream keeps `next` immediately ready, so the tick branch would
+        // otherwise starve and the flag would never be observed.
         if *cancel.borrow() {
             let _ = wire::write_receiver_message(
                 &mut control_send,
@@ -486,16 +501,44 @@ async fn handle_connection(
             emit(on_event, &Event::Cancelled);
             return Ok(());
         }
-        match item {
-            GetProgressItem::Progress(offset) => emit(
+
+        // Yield to the browser event loop periodically. The fetch is CPU-bound
+        // (relay AEAD + blake3 verification) and wasm is single-threaded, so a
+        // burst of already-buffered chunks would run to completion without ever
+        // returning control — freezing the tab. While frozen, queued input never
+        // dispatches (the Cancel click is dropped) and the DOM never repaints
+        // (Accept/Decline stay on screen mid-transfer). A 0-delay timer hands the
+        // event loop one macrotask turn to process both. Every ~8 items keeps the
+        // throughput cost negligible.
+        since_yield += 1;
+        if since_yield >= 8 {
+            since_yield = 0;
+            n0_future::time::sleep(Duration::from_millis(0)).await;
+        }
+
+        let next = async { Step::Item(stream.next().await) };
+        let gone = async {
+            futures_lite::future::or(conn.closed(), connection.closed()).await;
+            Step::Disconnected
+        };
+        let tick = async {
+            n0_future::time::sleep(Duration::from_millis(200)).await;
+            Step::Tick
+        };
+        let step = futures_lite::future::or(next, futures_lite::future::or(gone, tick)).await;
+        match step {
+            Step::Item(Some(GetProgressItem::Progress(offset))) => emit(
                 on_event,
                 &Event::Progress {
                     bytes_received: offset,
                     total_bytes,
                 },
             ),
-            GetProgressItem::Done(_) => break,
-            GetProgressItem::Error(err) => bail!("blob fetch failed: {err}"),
+            Step::Item(Some(GetProgressItem::Done(_))) | Step::Item(None) => break,
+            Step::Item(Some(GetProgressItem::Error(err))) => bail!("blob fetch failed: {err}"),
+            Step::Disconnected => bail!("sender disconnected"),
+            // Idle tick: loop back so the cancel check at the top runs.
+            Step::Tick => {}
         }
     }
 

@@ -222,6 +222,13 @@ async fn consume_sender_run(
             _ = tokio::signal::ctrl_c() => {
                 info!("send.cancel_requested");
                 let _ = cancel_handle.cancel_transfer().await;
+                finish_progress_bar(progress_bar);
+                // Let the send task wind down instead of returning immediately:
+                // it writes the Cancel frame and closes the QUIC connection, so
+                // the receiver sees the disconnect in ~1 RTT rather than after
+                // the idle timeout. Bounded so a wedged transfer can't hang the
+                // CLI on Ctrl+C.
+                let _ = tokio::time::timeout(Duration::from_secs(5), &mut outcome_rx).await;
                 return Err(anyhow!("cancelled"));
             }
             res = &mut outcome_rx => {
