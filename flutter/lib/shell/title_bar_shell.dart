@@ -20,7 +20,19 @@ class TitleBarShell extends StatelessWidget {
         children: [
           if (isDesktop)
             _DesktopTitleBar(showWindowControls: Platform.isWindows),
-          Expanded(child: child),
+          // The desktop window is resizable/maximizable, so cap the content at a
+          // readable column width and center it on wide windows; mobile keeps
+          // full width.
+          Expanded(
+            child: isDesktop
+                ? Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 560),
+                      child: child,
+                    ),
+                  )
+                : child,
+          ),
           // Android 15 (targetSdk 35) enforces edge-to-edge, so the system
           // navigation bar draws over the bottom of the window. Without a
           // bottom inset the gesture/3-button nav bar covers the "Get Wisp for
@@ -57,9 +69,7 @@ class _DesktopTitleBar extends StatelessWidget {
             const SizedBox(width: 12),
             // App label — replaces the native title bar text we hid via
             // `TitleBarStyle.hidden`, so the window is identifiable at a
-            // glance like a normal Windows app.  Maximize button is
-            // intentionally omitted because the window is fixed-size
-            // (see main.dart: maximumSize == initialSize).
+            // glance like a normal Windows app.
             //
             // Skipped on macOS: the app name already shows in the global menu
             // bar, and the native traffic-light buttons sit at the top-left —
@@ -83,6 +93,7 @@ class _DesktopTitleBar extends StatelessWidget {
                 tooltip: 'Minimize',
                 onTap: () => windowManager.minimize(),
               ),
+              const _MaximizeButton(),
               _TitleBarButton(
                 icon: Icons.close_rounded,
                 tooltip: 'Close',
@@ -121,6 +132,60 @@ class _TitleBarButton extends StatelessWidget {
           child: Icon(icon, size: 16, color: context.wc.muted),
         ),
       ),
+    );
+  }
+}
+
+/// Maximize/restore toggle for the custom Windows title bar. Tracks the window
+/// state via [WindowListener] so the icon and tooltip flip between maximize and
+/// restore as the user (or a double-click on the title bar) changes it.
+class _MaximizeButton extends StatefulWidget {
+  const _MaximizeButton();
+
+  @override
+  State<_MaximizeButton> createState() => _MaximizeButtonState();
+}
+
+class _MaximizeButtonState extends State<_MaximizeButton> with WindowListener {
+  bool _maximized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    windowManager.addListener(this);
+    windowManager.isMaximized().then((value) {
+      if (mounted) setState(() => _maximized = value);
+    });
+  }
+
+  @override
+  void dispose() {
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  @override
+  void onWindowMaximize() {
+    if (mounted) setState(() => _maximized = true);
+  }
+
+  @override
+  void onWindowUnmaximize() {
+    if (mounted) setState(() => _maximized = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _TitleBarButton(
+      icon: _maximized ? Icons.filter_none_rounded : Icons.crop_square_rounded,
+      tooltip: _maximized ? 'Restore' : 'Maximize',
+      onTap: () async {
+        if (await windowManager.isMaximized()) {
+          await windowManager.unmaximize();
+        } else {
+          await windowManager.maximize();
+        }
+      },
     );
   }
 }

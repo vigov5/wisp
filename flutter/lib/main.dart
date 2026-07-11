@@ -82,9 +82,12 @@ Future<void> main(List<String> args) async {
   if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
     await windowManager.waitUntilReadyToShow(
       WindowOptions(
+        // Open at the tuned 440x840 and never let the window get narrower/shorter
+        // than that (the layouts are designed for it), but allow it to grow /
+        // maximize — TitleBarShell centers content in a readable column on wider
+        // windows. (No `maximumSize` → resizable + maximizable.)
         size: initialSize,
         minimumSize: initialSize,
-        maximumSize: initialSize,
         center: true,
         title: 'Wisp',
       ),
