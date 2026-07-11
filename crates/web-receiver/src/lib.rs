@@ -5,11 +5,11 @@
 //! `wisp-wire`). All file bytes ride n0 public relays end-to-end; the static
 //! page that loads this wasm module carries none of them.
 //!
-//! Spike 1: hard-coded Accept (no UI gating yet). Registers with the rendezvous
-//! server, displays a code, accepts one inbound control connection, runs the
-//! handshake, fetches the collection into memory, and triggers browser
-//! downloads. Accept/Decline UI, progress polish, and the inline-text path land
-//! in later stages.
+//! Registers with the rendezvous server, displays a code, and accepts inbound
+//! control connections. For each: surfaces the sender's identity, gates the
+//! offer behind an Accept/Decline decision from the UI, then (on accept) fetches
+//! the collection into memory and triggers browser downloads. Per-file progress
+//! polish, cancel, and the inline-text path land in later stages (B2/B3).
 
 mod download;
 mod wire;
@@ -26,12 +26,14 @@ use iroh_blobs::ticket::BlobTicket;
 use iroh_blobs::{ALPN as BLOBS_ALPN, Hash};
 use js_sys::Function;
 use serde::Serialize;
+use std::cell::RefCell;
+use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wisp_wire::message::{
-    Accept, DeviceType, Hello, Identity, ManifestItem, PROTOCOL_VERSION, ReceiverMessage,
-    SenderMessage, TransferCompleted, TransferProgressPayload, TransferResult, TransferRole,
-    TransferStatus,
+    Accept, Cancel, CancelPhase, Decline, DeviceType, Hello, Identity, ManifestItem,
+    PROTOCOL_VERSION, ReceiverMessage, SenderMessage, TransferCompleted, TransferProgressPayload,
+    TransferResult, TransferRole, TransferStatus,
 };
 use wisp_wire::plan::TransferPhase;
 use wisp_wire::rendezvous::RendezvousClient;
@@ -59,6 +61,13 @@ enum Event {
     Registered {
         code: String,
     },
+    /// A sender dialed in; identity is known before the offer arrives.
+    #[serde(rename_all = "camelCase")]
+    Connecting {
+        sender_name: String,
+        sender_device_type: String,
+        sender_pubkey: String,
+    },
     #[serde(rename_all = "camelCase")]
     Offer {
         files: Vec<OfferItem>,
@@ -76,7 +85,15 @@ enum Event {
         size: u64,
         url: String,
     },
+    /// A text/link payload that rode inline in the offer (no file download).
+    TextReady {
+        text: String,
+    },
     Completed,
+    /// The user declined this offer; the receiver stays live for the next one.
+    Declined,
+    /// The user cancelled an in-flight transfer.
+    Cancelled,
     Error {
         message: String,
     },
@@ -88,9 +105,22 @@ struct OfferItem {
     size: u64,
 }
 
+/// The user's decision on a pending offer, sent from `accept()`/`decline()`
+/// back into the in-flight handshake task.
+enum Decision {
+    Accept,
+    Decline,
+}
+
+/// Shared slot holding the decision sender for the currently-pending offer.
+/// `!Send` (Rc) — fine because everything runs on the single browser task.
+type PendingDecision = Rc<RefCell<Option<async_channel::Sender<Decision>>>>;
+
 #[wasm_bindgen]
 pub struct WebReceiver {
     code: String,
+    pending: PendingDecision,
+    cancel: Rc<RefCell<bool>>,
 }
 
 #[wasm_bindgen]
@@ -109,6 +139,32 @@ impl WebReceiver {
     #[wasm_bindgen(js_name = code)]
     pub fn code(&self) -> String {
         self.code.clone()
+    }
+
+    /// Accept the currently-pending offer. No-op if nothing is pending.
+    #[wasm_bindgen(js_name = accept)]
+    pub fn accept(&self) {
+        self.resolve(Decision::Accept);
+    }
+
+    /// Decline the currently-pending offer. No-op if nothing is pending.
+    #[wasm_bindgen(js_name = decline)]
+    pub fn decline(&self) {
+        self.resolve(Decision::Decline);
+    }
+
+    /// Request cancellation of the in-flight transfer. Takes effect at the next
+    /// progress tick; also declines a still-pending offer.
+    #[wasm_bindgen(js_name = cancel)]
+    pub fn cancel(&self) {
+        *self.cancel.borrow_mut() = true;
+        self.resolve(Decision::Decline);
+    }
+
+    fn resolve(&self, decision: Decision) {
+        if let Some(tx) = self.pending.borrow_mut().take() {
+            let _ = tx.try_send(decision);
+        }
     }
 }
 
@@ -134,6 +190,11 @@ async fn run_start(rendezvous_url: String, on_event: Function) -> Result<WebRece
     let code = registration.code.clone();
     emit(&on_event, &Event::Registered { code: code.clone() });
 
+    let pending: PendingDecision = Rc::new(RefCell::new(None));
+    let cancel: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+    let task_pending = pending.clone();
+    let task_cancel = cancel.clone();
+
     spawn_local(async move {
         loop {
             let Some(incoming) = endpoint.accept().await else {
@@ -151,7 +212,17 @@ async fn run_start(rendezvous_url: String, on_event: Function) -> Result<WebRece
                     continue;
                 }
             };
-            if let Err(err) = handle_connection(&endpoint, &store, &conn, &on_event).await {
+            *task_cancel.borrow_mut() = false;
+            if let Err(err) = handle_connection(
+                &endpoint,
+                &store,
+                &conn,
+                &on_event,
+                &task_pending,
+                &task_cancel,
+            )
+            .await
+            {
                 emit(
                     &on_event,
                     &Event::Error {
@@ -159,10 +230,23 @@ async fn run_start(rendezvous_url: String, on_event: Function) -> Result<WebRece
                     },
                 );
             }
+            // Drop any stale decision slot between offers.
+            task_pending.borrow_mut().take();
         }
     });
 
-    Ok(WebReceiver { code })
+    Ok(WebReceiver {
+        code,
+        pending,
+        cancel,
+    })
+}
+
+fn device_type_label(device_type: DeviceType) -> &'static str {
+    match device_type {
+        DeviceType::Phone => "phone",
+        DeviceType::Laptop => "laptop",
+    }
 }
 
 async fn handle_connection(
@@ -170,6 +254,8 @@ async fn handle_connection(
     store: &Store,
     conn: &Connection,
     on_event: &Function,
+    pending: &PendingDecision,
+    cancel: &Rc<RefCell<bool>>,
 ) -> Result<()> {
     let (mut control_send, mut control_recv) = conn.accept_bi().await?;
 
@@ -179,6 +265,14 @@ async fn handle_connection(
         other => bail!("expected Hello, got {:?}", other.kind()),
     };
     let session_id = hello.session_id.clone();
+    emit(
+        on_event,
+        &Event::Connecting {
+            sender_name: hello.identity.device_name.clone(),
+            sender_device_type: device_type_label(hello.identity.device_type).to_owned(),
+            sender_pubkey: hello.identity.endpoint_id.to_string(),
+        },
+    );
     let our_identity = Identity {
         role: TransferRole::Receiver,
         endpoint_id: endpoint.id(),
@@ -221,12 +315,44 @@ async fn handle_connection(
         },
     );
 
-    // Spike 1 handles the blob (file) path only; inline text is a later stage.
-    if offer.inline_text.is_some() {
-        bail!("inline-text transfers not handled yet (Spike 1 is file-only)");
+    // Guard against a malicious/buggy peer shipping an unbounded inline frame.
+    if let Some(text) = &offer.inline_text {
+        if text.len() > wisp_wire::message::INLINE_TEXT_HARD_MAX_BYTES {
+            bail!("inline text exceeds the maximum size");
+        }
     }
 
-    // Hard-coded Accept (no UI gating in Spike 1).
+    // Wait for the user's Accept/Decline (racing a sender disconnect so we don't
+    // hang if they give up while the prompt is open).
+    let (tx, rx) = async_channel::bounded::<Decision>(1);
+    *pending.borrow_mut() = Some(tx);
+    let decision = {
+        let choose = async { rx.recv().await.ok() };
+        let closed = async {
+            conn.closed().await;
+            None
+        };
+        futures_lite::future::or(choose, closed).await
+    };
+    pending.borrow_mut().take();
+
+    match decision {
+        None => return Ok(()), // connection closed while awaiting decision
+        Some(Decision::Decline) => {
+            wire::write_receiver_message(
+                &mut control_send,
+                &ReceiverMessage::Decline(Decline {
+                    session_id: session_id.clone(),
+                    reason: "declined by recipient".to_owned(),
+                }),
+            )
+            .await?;
+            emit(on_event, &Event::Declined);
+            return Ok(());
+        }
+        Some(Decision::Accept) => {}
+    }
+
     wire::write_receiver_message(
         &mut control_send,
         &ReceiverMessage::Accept(Accept {
@@ -234,6 +360,29 @@ async fn handle_connection(
         }),
     )
     .await?;
+
+    // Inline text/link: the payload already arrived in the offer — no blobs, no
+    // uni stream. Hand it to the UI, then close out the control exchange exactly
+    // as the sender expects (TransferResult -> read TransferAck).
+    if let Some(text) = offer.inline_text.clone() {
+        wire::write_receiver_message(
+            &mut control_send,
+            &ReceiverMessage::TransferResult(TransferResult {
+                session_id: session_id.clone(),
+                status: TransferStatus::Ok,
+            }),
+        )
+        .await?;
+        emit(on_event, &Event::TextReady { text });
+        match wire::read_sender_message(&mut control_recv).await {
+            Ok(SenderMessage::TransferAck(_)) => {}
+            Ok(other) => tracing::warn!("expected TransferAck, got {:?}", other.kind()),
+            Err(err) => tracing::warn!("reading TransferAck: {err:#}"),
+        }
+        emit(on_event, &Event::Completed);
+        return Ok(());
+    }
+
     emit(on_event, &Event::TransferStarted);
 
     // MUST open the uni progress stream even if we never write to it, or the
@@ -258,6 +407,20 @@ async fn handle_connection(
         .fetch(connection, blob_ticket.clone())
         .stream();
     while let Some(item) = stream.next().await {
+        if *cancel.borrow() {
+            let _ = wire::write_receiver_message(
+                &mut control_send,
+                &ReceiverMessage::Cancel(Cancel {
+                    session_id: session_id.clone(),
+                    by: TransferRole::Receiver,
+                    phase: CancelPhase::Transferring,
+                    reason: "cancelled by recipient".to_owned(),
+                }),
+            )
+            .await;
+            emit(on_event, &Event::Cancelled);
+            return Ok(());
+        }
         match item {
             GetProgressItem::Progress(offset) => emit(
                 on_event,
