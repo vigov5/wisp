@@ -2,6 +2,8 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 
+#include <algorithm>
+
 #include "flutter_window.h"
 #include "single_instance.h"
 #include "utils.h"
@@ -30,9 +32,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     return EXIT_SUCCESS;
   }
 
+  // A login (auto-start) launch carries the --autostart marker: start the
+  // window hidden so it doesn't flash on screen. The Dart side then keeps it in
+  // the tray or minimizes it per the user's preference.
+  const bool start_hidden =
+      std::find(command_line_arguments.begin(), command_line_arguments.end(),
+                "--autostart") != command_line_arguments.end();
+
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
-  FlutterWindow window(project);
+  FlutterWindow window(project, start_hidden);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(440, 840);
   if (!window.Create(L"Wisp", origin, size)) {

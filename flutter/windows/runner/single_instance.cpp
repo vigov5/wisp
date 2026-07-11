@@ -64,7 +64,32 @@ bool AcquireOrForward(const std::vector<std::string>& args) {
     return false;
   }
 
-  // Another instance owns the window. Forward our paths to it, then exit.
+  // Another instance owns the window. Separate real file/folder paths from our
+  // own launch flags (e.g. --autostart): a flag must never be forwarded as a
+  // "path", nor pull the window to the foreground.
+  std::vector<std::string> paths;
+  bool autostart = false;
+  for (const std::string& arg : args) {
+    if (arg == "--autostart") {
+      autostart = true;
+      continue;
+    }
+    if (arg.rfind("--", 0) == 0) {
+      continue;  // skip any other flags
+    }
+    if (!arg.empty()) {
+      paths.push_back(arg);
+    }
+  }
+
+  // A login (auto-start) relaunch while Wisp is already running: do nothing and
+  // exit quietly. Bringing the window to the foreground here would defeat the
+  // point of starting minimized/hidden.
+  if (autostart && paths.empty()) {
+    return true;
+  }
+
+  // Locate the running window to forward "Send via Wisp" paths to it.
   HWND host = FindHostWindow();
   if (host == nullptr) {
     // Could not locate the host window. Fail open: let this instance run so the
@@ -73,10 +98,8 @@ bool AcquireOrForward(const std::vector<std::string>& args) {
   }
 
   BringToForeground(host);
-  for (const std::string& path : args) {
-    if (!path.empty()) {
-      ForwardPath(host, path);
-    }
+  for (const std::string& path : paths) {
+    ForwardPath(host, path);
   }
   return true;
 }

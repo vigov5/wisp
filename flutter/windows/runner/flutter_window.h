@@ -14,7 +14,11 @@
 class FlutterWindow : public Win32Window {
  public:
   // Creates a new FlutterWindow hosting a Flutter view running |project|.
-  explicit FlutterWindow(const flutter::DartProject& project);
+  // When |start_hidden| is true the window is not shown on the first frame
+  // (used for auto-start/login launches); the Dart side then decides whether to
+  // keep it in the tray or minimize it.
+  explicit FlutterWindow(const flutter::DartProject& project,
+                         bool start_hidden = false);
   virtual ~FlutterWindow();
 
  protected:
@@ -31,6 +35,9 @@ class FlutterWindow : public Win32Window {
 
   // The project to run.
   flutter::DartProject project_;
+
+  // When true, the window is not shown on the first frame (auto-start launch).
+  bool start_hidden_ = false;
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;

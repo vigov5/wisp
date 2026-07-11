@@ -15,8 +15,9 @@ constexpr const char* kWindowsIntegrationChannel =
 
 }  // namespace
 
-FlutterWindow::FlutterWindow(const flutter::DartProject& project)
-    : project_(project) {}
+FlutterWindow::FlutterWindow(const flutter::DartProject& project,
+                             bool start_hidden)
+    : project_(project), start_hidden_(start_hidden) {}
 
 FlutterWindow::~FlutterWindow() {}
 
@@ -65,9 +66,15 @@ bool FlutterWindow::OnCreate() {
         }
       });
 
-  flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
-  });
+  // On a normal launch, show the window once the first frame is ready. On an
+  // auto-start (login) launch, keep it hidden here and let the Dart side
+  // (window_manager) settle the final state — stay in the tray, or minimize —
+  // so Wisp doesn't flash a window in the user's face at login.
+  if (!start_hidden_) {
+    flutter_controller_->engine()->SetNextFrameCallback([&]() {
+      this->Show();
+    });
+  }
 
   // Flutter can complete the first frame before the "show window" callback is
   // registered. The following call ensures a frame is pending to ensure the
