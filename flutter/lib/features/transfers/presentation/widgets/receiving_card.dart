@@ -9,6 +9,7 @@ import 'sending_connection_strip.dart';
 import 'transfer_flow_layout.dart';
 import 'transfer_manifest_panel.dart';
 import 'transfer_presentation_helpers.dart';
+import 'package:app/theme/wisp_theme.dart';
 
 class ReceivingCard extends ConsumerWidget {
   const ReceivingCard({
@@ -79,17 +80,13 @@ class ReceivingCard extends ConsumerWidget {
                     child: TextButton(
                       onPressed: onCancel,
                       style: TextButton.styleFrom(
-                        foregroundColor: const Color(0xFFB34A4A),
-                        backgroundColor: const Color(
-                          0xFFB34A4A,
-                        ).withValues(alpha: 0.08),
+                        foregroundColor: kDanger,
+                        backgroundColor: kDanger.withValues(alpha: 0.08),
                         minimumSize: const Size(0, 48),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                           side: BorderSide(
-                            color: const Color(
-                              0xFFB34A4A,
-                            ).withValues(alpha: 0.15),
+                            color: kDanger.withValues(alpha: 0.15),
                           ),
                         ),
                       ),

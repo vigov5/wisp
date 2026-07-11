@@ -34,7 +34,7 @@ class SavedDevicesPage extends ConsumerWidget {
                 style: wispSans(
                   fontSize: 13.5,
                   fontWeight: FontWeight.w600,
-                  color: const Color(0xFFB34A4A),
+                  color: kDanger,
                 ),
               ),
             ),
@@ -218,12 +218,12 @@ class _SavedDeviceRow extends StatelessWidget {
       direction: DismissDirection.endToStart,
       background: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFFB34A4A).withValues(alpha: 0.12),
+          color: kDanger.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(14),
         ),
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: const Icon(Icons.delete_outline, color: Color(0xFFB34A4A)),
+        child: const Icon(Icons.delete_outline, color: kDanger),
       ),
       onDismissed: (_) => onDelete(),
       child: Container(

@@ -32,10 +32,47 @@ const Color kAccentWarmSurface = Color(0x14F2E7BA);
 const Color kAccentDirect = Color(0xFF4DA372);
 const Color kAccentRelay = Color(0xFFC78F2A);
 
+// Semantic status colors. `kDanger` is the destructive-action red named in the
+// button conventions below (Decline / Cancel / Delete); it was previously
+// hand-written as `Color(0xFFB34A4A)` at ~13 call sites — use this const
+// instead. `kError` is the invalid-input red used by the input theme's error
+// borders.
+const Color kDanger = Color(0xFFB34A4A);
+const Color kError = Color(0xFFCC3333);
+
 const Color kPrimary = kAccentCyanStrong;
 const Color kPrimaryDark = kAccentCyanStrong;
 const Color kPrimaryLight = Color(0xFFA5F3FC);
 const Color kSurface2 = Color(0xFFFAFBFB);
+
+// ─── Spacing & radius scale ──────────────────────────────────────────────────
+// A formal scale for gaps/padding and corner radii. Historically these were
+// bare literals everywhere; the app's de-facto spine is a 4-based scale
+// (4/8/12/16/24) plus a couple of fine adjustments. Prefer these named steps
+// over raw numbers in new/edited code — the web receiver mirrors the same values
+// (web/style.css --space-* / --radius-*). Off-grid one-offs (10/14/18/…) should
+// fold into the nearest step during cleanup. See theme/design-tokens.md.
+abstract final class WispSpace {
+  static const double hair = 2; // hairline nudges
+  static const double xs = 4;
+  static const double tiny = 6;
+  static const double sm = 8;
+  static const double md = 12; // the most common gap
+  static const double lg = 16;
+  static const double xl = 20;
+  static const double xxl = 24;
+  static const double xxxl = 32;
+}
+
+abstract final class WispRadius {
+  static const double sm = 6; // chips / small dialogs
+  static const double control =
+      8; // buttons / inputs (matches component themes)
+  static const double card = 12; // cards / panels (matches cardTheme)
+  static const double surface = 16; // large surfaces / sheets
+  static const double sheet = 24; // bottom sheets / drop zones
+  static const double pill = 999;
+}
 
 // ─── Theme-varying neutrals ──────────────────────────────────────────────────
 // The neutral palette above (kBg, kSurface, kInk, kMuted, …) is the *light*

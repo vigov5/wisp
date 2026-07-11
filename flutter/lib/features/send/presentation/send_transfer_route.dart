@@ -286,14 +286,12 @@ Widget _buildFooter({
     final cancelButton = TextButton(
       onPressed: onExit,
       style: TextButton.styleFrom(
-        foregroundColor: const Color(0xFFB34A4A),
-        backgroundColor: const Color(0xFFB34A4A).withValues(alpha: 0.08),
+        foregroundColor: kDanger,
+        backgroundColor: kDanger.withValues(alpha: 0.08),
         minimumSize: const Size(0, 48),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: BorderSide(
-            color: const Color(0xFFB34A4A).withValues(alpha: 0.15),
-          ),
+          side: BorderSide(color: kDanger.withValues(alpha: 0.15)),
         ),
       ),
       child: const Text('Cancel transfer'),

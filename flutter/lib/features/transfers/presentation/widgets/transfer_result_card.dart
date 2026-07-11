@@ -245,7 +245,7 @@ _TransferResultVisualData _visualForOutcome(TransferResultOutcome outcome) {
     TransferResultOutcome.failed => const _TransferResultVisualData(
       statusLabel: 'Failed',
       accentColor: Color(0xFFCC3333),
-      buttonColor: Color(0xFFB34A4A),
+      buttonColor: kDanger,
       icon: Icons.error_rounded,
     ),
   };

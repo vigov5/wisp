@@ -101,16 +101,12 @@ class OfferCard extends ConsumerWidget {
                 // button (red text + red tint + red border). Radius/height stay
                 // at 14/52 to line up with the Save button beside it.
                 style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFFB34A4A),
-                  backgroundColor: const Color(
-                    0xFFB34A4A,
-                  ).withValues(alpha: 0.08),
+                  foregroundColor: kDanger,
+                  backgroundColor: kDanger.withValues(alpha: 0.08),
                   minimumSize: const Size(0, 52),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
-                    side: BorderSide(
-                      color: const Color(0xFFB34A4A).withValues(alpha: 0.15),
-                    ),
+                    side: BorderSide(color: kDanger.withValues(alpha: 0.15)),
                   ),
                 ),
                 child: const Text(
@@ -406,14 +402,12 @@ class _TextOfferCardState extends ConsumerState<_TextOfferCard> {
         footer: TextButton(
           onPressed: _busy ? null : widget.onDecline,
           style: TextButton.styleFrom(
-            foregroundColor: const Color(0xFFB34A4A),
-            backgroundColor: const Color(0xFFB34A4A).withValues(alpha: 0.08),
+            foregroundColor: kDanger,
+            backgroundColor: kDanger.withValues(alpha: 0.08),
             minimumSize: const Size(double.infinity, 48),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
-              side: BorderSide(
-                color: const Color(0xFFB34A4A).withValues(alpha: 0.15),
-              ),
+              side: BorderSide(color: kDanger.withValues(alpha: 0.15)),
             ),
           ),
           child: const Text(
