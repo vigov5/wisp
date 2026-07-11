@@ -33,7 +33,17 @@ wasm-bindgen "$WASM" --out-dir web/pkg --target web
 # Optional post-pass if binaryen's wasm-opt is on PATH. `-O2` keeps the speed
 # optimizations (the receiver is crypto/hashing-bound over the relay); use `-Oz`
 # only if you need the smallest possible download and can spare throughput.
+#
+# Modern rustc/LLVM emits bulk-memory (memory.copy/fill), sign-ext, and
+# nontrapping-float-to-int for wasm32 by default. Distro binaryen (apt) disables
+# some of these and then fails validation ("bulk memory is disabled"), so
+# explicitly enable the feature set the toolchain produces.
 if command -v wasm-opt >/dev/null 2>&1 && [[ "$PROFILE" == "release" ]]; then
-  wasm-opt -O2 web/pkg/wisp_web_receiver_bg.wasm -o web/pkg/wisp_web_receiver_bg.wasm
+  wasm-opt -O2 \
+    --enable-bulk-memory \
+    --enable-sign-ext \
+    --enable-mutable-globals \
+    --enable-nontrapping-float-to-int \
+    web/pkg/wisp_web_receiver_bg.wasm -o web/pkg/wisp_web_receiver_bg.wasm
 fi
 echo "Bindings written to web/pkg/ ($(du -h web/pkg/wisp_web_receiver_bg.wasm | cut -f1) wasm)"
