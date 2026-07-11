@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Drift — Receive in your browser</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>Drift <span class="sub">web receiver</span></h1>
+
+    <section id="code-section" class="hidden">
+      <p class="label">Enter this code in the sender:</p>
+      <div id="code" class="code">------</div>
+      <p class="hint" id="ttl"></p>
+      <p class="hint" id="relay-hint">Receiving over relay — file bytes flow peer-to-peer, never through this page.</p>
+    </section>
+
+    <section id="status-section">
+      <p id="status" class="status">Starting…</p>
+    </section>
+
+    <section id="offer-section" class="hidden">
+      <p class="label">Incoming</p>
+      <div id="sender" class="sender hidden">
+        <span id="sender-badge" class="sender-badge"></span>
+        <span id="sender-name" class="sender-name"></span>
+      </div>
+      <ul id="file-list" class="file-list"></ul>
+      <p id="offer-warning" class="warn hidden"></p>
+      <div id="decision" class="decision hidden">
+        <button id="btn-decline" class="btn btn-danger" type="button">Decline</button>
+        <button id="btn-accept" class="btn btn-primary" type="button">Accept</button>
+      </div>
+      <div id="progress" class="hidden">
+        <div class="progress-wrap"><div id="progress-bar" class="progress-bar"></div></div>
+        <p id="progress-text" class="hint"></p>
+        <button id="btn-cancel" class="btn btn-danger" type="button">Cancel</button>
+      </div>
+    </section>
+
+    <section id="downloads-section" class="hidden">
+      <p class="label">Downloads</p>
+      <ul id="download-list" class="download-list"></ul>
+    </section>
+
+    <section id="text-section" class="hidden">
+      <p class="label">Received text</p>
+      <pre id="text-content" class="text-content"></pre>
+      <div class="text-actions">
+        <button id="btn-copy" class="btn btn-soft" type="button">Copy</button>
+        <button id="btn-save-text" class="btn btn-soft" type="button">Save .txt</button>
+        <a id="btn-open-link" class="btn btn-primary hidden" target="_blank" rel="noopener noreferrer">Open link</a>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

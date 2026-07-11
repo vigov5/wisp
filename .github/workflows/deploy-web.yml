@@ -1,33 +1,27 @@
-name: Deploy web receiver
+name: Build web receiver
 
-# Builds the browser (wasm) receiver and publishes web/ to GitHub Pages.
-#
-# One-time setup (repo owner): Settings → Pages → Build and deployment →
-# Source: "GitHub Actions". Then either push to main (touching crates/** or
-# web/**) or run this workflow manually. The bytes of any transfer ride n0
-# relays end-to-end, so this static site carries zero transfer bandwidth.
+# Compile gate for the browser (wasm) receiver. GitHub Pages is served from the
+# Jekyll site in main:/docs (which hosts the privacy policy and the receiver at
+# docs/pkg), so the built wasm is committed — this job just verifies it still
+# builds when the Rust or web sources change. After a successful build touching
+# the receiver, run `web/sync-docs.sh` locally and commit the refreshed docs/pkg.
 
 on:
   push:
     branches: [main]
     paths:
-      - "crates/**"
+      - "crates/web-receiver/**"
+      - "crates/wire/**"
       - "web/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
       - ".cargo/config.toml"
       - ".github/workflows/deploy-web.yml"
-  workflow_dispatch: # lets you deploy from any branch to test before merging
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-# Only one Pages deploy at a time; a newer push supersedes an in-flight run.
-concurrency:
-  group: pages
-  cancel-in-progress: true
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/web-receiver/**"
+      - "crates/wire/**"
+      - "web/**"
+  workflow_dispatch:
 
 env:
   # iroh pulls `ring`, whose C sources compile for wasm only with clang. Point
@@ -67,27 +61,3 @@ jobs:
 
       - name: Build release wasm + bindings
         run: bash web/build.sh release
-
-      - name: Assemble static site
-        run: |
-          mkdir -p dist
-          cp web/index.html web/app.js web/style.css dist/
-          cp -r web/pkg dist/pkg
-          ls -la dist dist/pkg
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  deploy:
-    name: Deploy to Pages
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4

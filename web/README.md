@@ -52,27 +52,33 @@ the transfer rides an n0 relay even when the sender is on the same box.
 **Expected:** the browser shows the offer, auto-downloads a byte-identical file,
 and the status reaches “Transfer complete ✓” while the sender exits cleanly.
 
-## Deploy (GitHub Pages via Actions)
+## Deploy (GitHub Pages from `main:/docs`)
 
-`.github/workflows/deploy-web.yml` builds the release wasm (installs the wasm
-target + clang for `ring` + binaryen, pins `wasm-bindgen` to the crate version)
-and publishes a clean `dist/` (index/app/style + `pkg/`) to GitHub Pages.
+GitHub Pages serves the Jekyll site in **`main:/docs`** (which also hosts the
+privacy policy) at **web.wisp.mooo.com**. Pages allows a single source, so the
+receiver is committed alongside it: `docs/{index.html,app.js,style.css}` +
+`docs/pkg/` (the built wasm). The receiver uses relative asset paths and has no
+Jekyll front matter, so it's copied verbatim and served at the site root,
+independent of the site's `baseurl`; the privacy policy stays at
+`/privacy-policy/`.
 
-One-time setup by the repo owner:
+Because the wasm is committed (Pages can't build it on the fly), refresh it
+whenever `crates/web-receiver`, `crates/wire`, or `web/{index.html,app.js,
+style.css}` change:
 
-1. **Settings → Pages → Build and deployment → Source: "GitHub Actions".**
-2. Merge to `main` (any change under `crates/**` or `web/**` triggers it) or run
-   the workflow manually (**Actions → Deploy web receiver → Run workflow**) to
-   deploy a branch before merging.
+```sh
+web/sync-docs.sh          # release build + copy into docs/
+git add docs/ && git commit -m "chore(web): sync receiver into docs"
+```
 
-The deployed page defaults to the production rendezvous
-(`https://rendezvous.wisp.mooo.com`, which already sends permissive CORS). File
-bytes never touch it — only the code/ticket handshake — so the static host
-carries zero transfer bandwidth regardless of file size.
+`.github/workflows/deploy-web.yml` is a **compile gate** — it rebuilds the wasm
+in CI on relevant changes so a stale/broken commit is caught, but does not
+deploy (Pages deploys `docs/` itself).
 
-**Custom domain (optional):** to serve at e.g. `receive.wisp.mooo.com`, add a
-`CNAME` file to the assembled site (put it in `dist/` in the workflow) and point
-that subdomain at GitHub Pages per their custom-domain docs.
+The page defaults to the production rendezvous
+(`https://rendezvous.wisp.mooo.com`, permissive CORS already set). File bytes
+never touch it — only the code/ticket handshake — so the host carries zero
+transfer bandwidth regardless of file size.
 
 ## Notes / limits
 
