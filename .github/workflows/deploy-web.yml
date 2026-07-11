@@ -1,0 +1,93 @@
+name: Deploy web receiver
+
+# Builds the browser (wasm) receiver and publishes web/ to GitHub Pages.
+#
+# One-time setup (repo owner): Settings → Pages → Build and deployment →
+# Source: "GitHub Actions". Then either push to main (touching crates/** or
+# web/**) or run this workflow manually. The bytes of any transfer ride n0
+# relays end-to-end, so this static site carries zero transfer bandwidth.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "web/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/config.toml"
+      - ".github/workflows/deploy-web.yml"
+  workflow_dispatch: # lets you deploy from any branch to test before merging
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deploy at a time; a newer push supersedes an in-flight run.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  # iroh pulls `ring`, whose C sources compile for wasm only with clang. Point
+  # cc-rs at the CI clang/llvm-ar (underscore target form — the dash form isn't
+  # a valid shell identifier). Mirrors web/build.sh's NDK-clang fallback locally.
+  CC_wasm32_unknown_unknown: clang
+  AR_wasm32_unknown_unknown: llvm-ar
+  WASM_BINDGEN_VERSION: 0.2.115 # must match the wasm-bindgen crate in Cargo.lock
+
+jobs:
+  build:
+    name: Build wasm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-receiver
+
+      - name: Install clang/llvm (for ring) + binaryen (wasm-opt)
+        run: sudo apt-get update && sudo apt-get install -y clang llvm binaryen
+
+      - name: Install wasm-bindgen CLI (pinned to the crate version)
+        run: |
+          ver="${WASM_BINDGEN_VERSION}"
+          asset="wasm-bindgen-${ver}-x86_64-unknown-linux-musl"
+          curl -sSL "https://github.com/rustwasm/wasm-bindgen/releases/download/${ver}/${asset}.tar.gz" | tar xz
+          echo "${PWD}/${asset}" >> "${GITHUB_PATH}"
+
+      - name: Build release wasm + bindings
+        run: bash web/build.sh release
+
+      - name: Assemble static site
+        run: |
+          mkdir -p dist
+          cp web/index.html web/app.js web/style.css dist/
+          cp -r web/pkg dist/pkg
+          ls -la dist dist/pkg
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: Deploy to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

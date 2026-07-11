@@ -1,9 +1,15 @@
-# Drift web receiver (Spike 1)
+# Drift web receiver
 
 A no-install browser receiver: open the page, get a 6-char code, a native drift
 sender sends to that code, and the file downloads in the browser. File bytes ride
 n0 public relays end-to-end (the browser is relay-only); this page and the
 rendezvous server only carry the tiny code/ticket handshake.
+
+Capabilities: sender identity + Accept/Decline, inline text/link receive
+(Copy/Save/Open), multi-file with per-transfer progress/speed/ETA, mid-transfer
+cancel, code TTL countdown + rotation, and an over-size warning. The visual
+system mirrors the native app's theme tokens (`web/style.css` ← `flutter/lib/
+theme/wisp_theme.dart`).
 
 ## Build
 
@@ -46,9 +52,33 @@ the transfer rides an n0 relay even when the sender is on the same box.
 **Expected:** the browser shows the offer, auto-downloads a byte-identical file,
 and the status reaches “Transfer complete ✓” while the sender exits cleanly.
 
-## Notes / known Spike-1 limits
+## Deploy (GitHub Pages via Actions)
 
-- File transfers only (inline text/QR/multi-file polish are later stages).
-- Accept is automatic (no accept/decline prompt yet).
-- MemStore: the whole transfer lives in tab memory — keep test files modest.
-- `web/pkg/` is generated; don't commit it (host a freshly built copy).
+`.github/workflows/deploy-web.yml` builds the release wasm (installs the wasm
+target + clang for `ring` + binaryen, pins `wasm-bindgen` to the crate version)
+and publishes a clean `dist/` (index/app/style + `pkg/`) to GitHub Pages.
+
+One-time setup by the repo owner:
+
+1. **Settings → Pages → Build and deployment → Source: "GitHub Actions".**
+2. Merge to `main` (any change under `crates/**` or `web/**` triggers it) or run
+   the workflow manually (**Actions → Deploy web receiver → Run workflow**) to
+   deploy a branch before merging.
+
+The deployed page defaults to the production rendezvous
+(`https://rendezvous.wisp.mooo.com`, which already sends permissive CORS). File
+bytes never touch it — only the code/ticket handshake — so the static host
+carries zero transfer bandwidth regardless of file size.
+
+**Custom domain (optional):** to serve at e.g. `receive.wisp.mooo.com`, add a
+`CNAME` file to the assembled site (put it in `dist/` in the workflow) and point
+that subdomain at GitHub Pages per their custom-domain docs.
+
+## Notes / limits
+
+- **Relay-only, in-memory.** The browser can't hole-punch (no UDP) or persist to
+  disk: every transfer rides an n0 relay and lives entirely in tab memory
+  (`MemStore`). Huge transfers can exhaust the tab — the UI warns past ~1 GiB.
+  LAN/mDNS, QR-scan, USB/AOA, direct P2P, and on-disk resume are out of scope
+  in-browser by design.
+- `web/pkg/` is generated and git-ignored; the CI builds a fresh copy on deploy.
