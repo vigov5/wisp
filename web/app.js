@@ -19,6 +19,23 @@ let receiver = null;
 let totalBytes = 0;
 let lastText = '';
 let progressStart = 0;
+let ttlTimer = null;
+
+function startCountdown(iso) {
+  const end = Date.parse(iso);
+  if (ttlTimer) clearInterval(ttlTimer);
+  if (!end) { $('ttl').textContent = ''; return; }
+  const tick = () => {
+    const remaining = Math.max(0, Math.floor((end - Date.now()) / 1000));
+    const m = Math.floor(remaining / 60);
+    const s = String(remaining % 60).padStart(2, '0');
+    $('ttl').textContent =
+      remaining > 0 ? `Code expires in ${m}:${s}` : 'Code expired — refreshing…';
+    if (remaining <= 0) clearInterval(ttlTimer);
+  };
+  tick();
+  ttlTimer = setInterval(tick, 1000);
+}
 
 const isUrl = (s) => /^https?:\/\/\S+$/i.test(s.trim());
 
@@ -61,6 +78,7 @@ function onEvent(event) {
     case 'registered':
       $('code').textContent = event.code;
       show('code-section');
+      startCountdown(event.expiresAt);
       setStatus('Waiting for a sender…');
       break;
 
@@ -86,6 +104,14 @@ function onEvent(event) {
         const li = document.createElement('li');
         li.textContent = `${f.path} — ${formatBytes(f.size)}`;
         list.appendChild(li);
+      }
+      const warn = $('offer-warning');
+      if (event.tooLarge) {
+        warn.textContent =
+          "This transfer is large and may exceed your browser tab's memory — it might fail.";
+        warn.classList.remove('hidden');
+      } else {
+        warn.classList.add('hidden');
       }
       show('decision');
       setStatus(

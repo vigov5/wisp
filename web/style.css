@@ -73,6 +73,16 @@ section:first-of-type { margin-top: 0; }
 .download-list a { color: var(--accent); text-decoration: none; font-weight: 600; }
 .download-list a:hover { text-decoration: underline; }
 
+.warn {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #b45309;
+  background: rgba(199, 143, 42, 0.12);
+  border: 1px solid rgba(199, 143, 42, 0.35);
+}
+
 .sender {
   display: flex;
   align-items: center;

@@ -28,6 +28,7 @@ use js_sys::Function;
 use serde::Serialize;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wisp_wire::message::{
@@ -37,6 +38,14 @@ use wisp_wire::message::{
 };
 use wisp_wire::plan::TransferPhase;
 use wisp_wire::rendezvous::RendezvousClient;
+
+/// Soft ceiling for a single transfer. Everything lands in wasm linear memory
+/// (MemStore) before download, and browser tabs realistically cap around here,
+/// so we warn the user past this — they can still choose to try.
+const MAX_TRANSFER_BYTES: u64 = 1024 * 1024 * 1024; // 1 GiB
+
+/// How often the idle poller checks whether the code was claimed/expired.
+const CODE_POLL_SECS: u64 = 15;
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -58,8 +67,11 @@ pub fn protocol_version() -> u32 {
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum Event {
+    #[serde(rename_all = "camelCase")]
     Registered {
         code: String,
+        /// RFC3339 expiry of the code, for a UI countdown.
+        expires_at: String,
     },
     /// A sender dialed in; identity is known before the offer arrives.
     #[serde(rename_all = "camelCase")]
@@ -73,6 +85,8 @@ enum Event {
         files: Vec<OfferItem>,
         total_bytes: u64,
         inline_text: Option<String>,
+        /// True when the transfer likely won't fit in browser tab memory.
+        too_large: bool,
     },
     TransferStarted,
     #[serde(rename_all = "camelCase")]
@@ -188,12 +202,60 @@ async fn run_start(rendezvous_url: String, on_event: Function) -> Result<WebRece
         .await
         .context("registering with rendezvous")?;
     let code = registration.code.clone();
-    emit(&on_event, &Event::Registered { code: code.clone() });
+    emit(
+        &on_event,
+        &Event::Registered {
+            code: code.clone(),
+            expires_at: registration.expires_at.clone(),
+        },
+    );
 
     let pending: PendingDecision = Rc::new(RefCell::new(None));
     let cancel: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+    let busy: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+    let current_code: Rc<RefCell<String>> = Rc::new(RefCell::new(code.clone()));
+
+    // Idle poller: keep a live code available. When the current code is claimed
+    // or expires and we're not mid-transfer, mint a fresh one. (The already-
+    // claimed ticket still reaches us endpoint-to-endpoint, so rotating is safe.)
+    {
+        let poll_endpoint = endpoint.clone();
+        let poll_client = client.clone();
+        let poll_on_event = on_event.clone();
+        let poll_busy = busy.clone();
+        let poll_code = current_code.clone();
+        spawn_local(async move {
+            loop {
+                n0_future::time::sleep(Duration::from_secs(CODE_POLL_SECS)).await;
+                if *poll_busy.borrow() {
+                    continue;
+                }
+                let code_now = poll_code.borrow().clone();
+                if let Ok(None) = poll_client.pair_status(&code_now).await {
+                    if *poll_busy.borrow() {
+                        continue;
+                    }
+                    let Ok(ticket) = wisp_wire::ticket::encode_ticket(poll_endpoint.addr()) else {
+                        continue;
+                    };
+                    if let Ok(reg) = poll_client.register_peer(ticket).await {
+                        *poll_code.borrow_mut() = reg.code.clone();
+                        emit(
+                            &poll_on_event,
+                            &Event::Registered {
+                                code: reg.code,
+                                expires_at: reg.expires_at,
+                            },
+                        );
+                    }
+                }
+            }
+        });
+    }
+
     let task_pending = pending.clone();
     let task_cancel = cancel.clone();
+    let task_busy = busy.clone();
 
     spawn_local(async move {
         loop {
@@ -213,6 +275,7 @@ async fn run_start(rendezvous_url: String, on_event: Function) -> Result<WebRece
                 }
             };
             *task_cancel.borrow_mut() = false;
+            *task_busy.borrow_mut() = true;
             if let Err(err) = handle_connection(
                 &endpoint,
                 &store,
@@ -230,6 +293,7 @@ async fn run_start(rendezvous_url: String, on_event: Function) -> Result<WebRece
                     },
                 );
             }
+            *task_busy.borrow_mut() = false;
             // Drop any stale decision slot between offers.
             task_pending.borrow_mut().take();
         }
@@ -312,6 +376,7 @@ async fn handle_connection(
             files,
             total_bytes,
             inline_text: offer.inline_text.clone(),
+            too_large: total_bytes > MAX_TRANSFER_BYTES,
         },
     );
 
