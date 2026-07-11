@@ -5,7 +5,11 @@ use iroh_blobs::Hash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::transfer::types::{TransferFileId, TransferPhase, TransferPlan};
+use crate::plan::{TransferFileId, TransferPhase, TransferPlan};
+
+/// ALPN for the `wisp/transfer/v1` control protocol. The receiver advertises
+/// this on its iroh endpoint; the sender dials it to run the handshake.
+pub const ALPN: &[u8] = b"wisp/transfer/v1";
 
 pub const PROTOCOL_VERSION: u32 = 4;
 
@@ -271,7 +275,7 @@ impl ReceiverMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transfer::types::{TransferPlan, TransferPlanFile};
+    use crate::plan::{TransferPlan, TransferPlanFile};
     use iroh::SecretKey;
 
     #[test]

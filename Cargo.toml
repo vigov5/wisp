@@ -4,9 +4,33 @@ members = [
     "crates/cli",
     "crates/core",
     "crates/server",
+    "crates/wire",
+    "crates/web-receiver",
+]
+# web-receiver is a wasm32-only crate; keep it out of the default set so a bare
+# `cargo build`/`test` (native app dev) skips its heavy browser deps. It's still
+# a member, so `cargo build --target wasm32-unknown-unknown -p wisp-web-receiver`
+# works. See crates/web-receiver/README.md for the wasm build (needs clang).
+default-members = [
+    "crates/app",
+    "crates/cli",
+    "crates/core",
+    "crates/server",
+    "crates/wire",
 ]
 exclude = ["flutter/rust"]
 resolver = "2"
+
+# Size-optimized profile for the wasm browser receiver. Only crates built with
+# `--profile wasm-release` compile under it, so native release builds are
+# unaffected. Shrinks the ~18 MB debug wasm by an order of magnitude.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
 
 [workspace.package]
 edition = "2024"

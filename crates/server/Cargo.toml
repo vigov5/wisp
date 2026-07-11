@@ -12,6 +12,7 @@ rand.workspace = true
 serde.workspace = true
 time.workspace = true
 tokio.workspace = true
+tower-http = { version = "0.6", features = ["cors"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 

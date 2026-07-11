@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Drift — Receive in your browser</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>Drift <span class="sub">web receiver</span></h1>
+
+    <section id="code-section" class="hidden">
+      <p class="label">Enter this code in the sender:</p>
+      <div id="code" class="code">------</div>
+      <p class="hint" id="relay-hint">Receiving over relay — file bytes flow peer-to-peer, never through this page.</p>
+    </section>
+
+    <section id="status-section">
+      <p id="status" class="status">Starting…</p>
+    </section>
+
+    <section id="offer-section" class="hidden">
+      <p class="label">Incoming files</p>
+      <ul id="file-list" class="file-list"></ul>
+      <div class="progress-wrap"><div id="progress-bar" class="progress-bar"></div></div>
+      <p id="progress-text" class="hint"></p>
+    </section>
+
+    <section id="downloads-section" class="hidden">
+      <p class="label">Downloads</p>
+      <ul id="download-list" class="download-list"></ul>
+    </section>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

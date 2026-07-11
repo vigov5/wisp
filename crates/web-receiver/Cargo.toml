@@ -1,0 +1,49 @@
+[package]
+name = "wisp-web-receiver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wisp-wire = { path = "../wire" }
+anyhow = { workspace = true }
+bytes = "1"
+async-channel = "2"
+# io-util gives the AsyncReadExt/AsyncWriteExt used for the u32-length framing on
+# iroh's streams (which impl tokio's async IO traits, incl. on wasm).
+tokio = { version = "1", default-features = false, features = ["io-util"] }
+# Relay-only browser build: default features off (drops native-only `metrics`
+# on iroh and `fs-store`/`rpc` on iroh-blobs, leaving the wasm-safe MemStore).
+iroh = { version = "0.97", default-features = false }
+iroh-blobs = { version = "0.99", default-features = false }
+
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "Blob",
+    "BlobPropertyBag",
+    "Url",
+    "HtmlAnchorElement",
+    "console",
+] }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde-wasm-bindgen = "0.6"
+
+n0-future = "0.3"
+futures-lite = { workspace = true }
+# iroh's transitive RNG pulls both getrandom majors on wasm; enable the browser
+# backend on each. 0.3 also needs the `getrandom_backend="wasm_js"` cfg set in
+# .cargo/config.toml for the wasm target.
+getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
+rand = { workspace = true }
+tracing = { workspace = true }
+console_error_panic_hook = "0.1"

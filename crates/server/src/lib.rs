@@ -113,6 +113,10 @@ pub fn app(state: SharedState) -> Router {
         .route("/v1/pairs", post(register_peer))
         .route("/v1/pairs/{code}/status", get(get_pair_status))
         .route("/v1/pairs/{code}/claim", post(claim_peer))
+        // The browser web-receiver registers/polls cross-origin from a static
+        // page, so allow any origin. Only the ~10 KB code/ticket handshake hits
+        // this server; file bytes never do.
+        .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state)
 }
 

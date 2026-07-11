@@ -5024,6 +5024,22 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "walkdir",
+ "wisp-wire",
+]
+
+[[package]]
+name = "wisp-wire"
+version = "1.7.0"
+dependencies = [
+ "base64",
+ "bincode",
+ "getrandom 0.2.17",
+ "iroh",
+ "iroh-blobs",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

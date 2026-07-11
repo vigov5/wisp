@@ -1,0 +1,7 @@
+# Applies ONLY to wasm32 builds (the browser receiver). Native builds use the
+# host target and are unaffected by this section.
+#
+# getrandom 0.3 needs its backend selected explicitly for wasm; the `wasm_js`
+# Cargo feature must be paired with this cfg (see the getrandom 0.3 docs).
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

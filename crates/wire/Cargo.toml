@@ -1,0 +1,28 @@
+[package]
+name = "wisp-wire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+bincode.workspace = true
+thiserror.workspace = true
+# Declared with default-features = false (NOT the workspace dep, which enables the
+# native-only `address-lookup-mdns`) so this crate — and anything that depends on
+# it for a wasm32 build — stays browser-clean. In a native build Cargo unions
+# these features with wisp-core's fuller iroh/iroh-blobs, so the app is unaffected.
+iroh = { version = "0.97", default-features = false }
+iroh-blobs = { version = "0.99", default-features = false }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+iroh = { version = "0.97", default-features = false }
