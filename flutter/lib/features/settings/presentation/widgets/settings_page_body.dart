@@ -796,8 +796,6 @@ class _IdentityBadgeRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = colorFromPubkey(endpointId);
-    final textColor = pubkeyTextColor(context, color);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -813,32 +811,10 @@ class _IdentityBadgeRow extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.start,
           children: [
-            Tooltip(
-              message: endpointId,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: color.withValues(alpha: 0.45),
-                    width: 0.8,
-                  ),
-                ),
-                child: Text(
-                  shortPubkey(endpointId, headChars: 8, tailChars: 8),
-                  style: wispSans(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                    color: textColor,
-                    letterSpacing: 0.4,
-                  ),
-                  maxLines: 1,
-                ),
-              ),
+            PubkeyBadge(
+              endpointId: endpointId,
+              size: PubkeyBadgeSize.large,
+              tooltip: endpointId,
             ),
             const SizedBox(width: 4),
             IconButton(

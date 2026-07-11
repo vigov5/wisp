@@ -574,7 +574,6 @@ class _RecentDeviceTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final badgeColor = colorFromPubkey(device.endpointId);
     final name = resolveDeviceName(
       ref,
       endpointId: device.endpointId,
@@ -635,29 +634,11 @@ class _RecentDeviceTile extends ConsumerWidget {
               ),
             ],
             const SizedBox(height: 4),
-            Tooltip(
-              message:
+            PubkeyBadge(
+              endpointId: device.endpointId,
+              size: PubkeyBadgeSize.medium,
+              tooltip:
                   'Identity badge (from public key) — same color = same device.',
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: badgeColor.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: badgeColor.withValues(alpha: 0.45),
-                    width: 0.8,
-                  ),
-                ),
-                child: Text(
-                  shortPubkey(device.endpointId),
-                  style: wispSans(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: pubkeyTextColor(context, badgeColor),
-                    letterSpacing: 0.4,
-                  ),
-                ),
-              ),
             ),
             const SizedBox(height: 2),
             Text(
@@ -761,39 +742,11 @@ class _NearbyDeviceTile extends ConsumerWidget {
                   ],
                   if (receiver.endpointId.isNotEmpty) ...[
                     const SizedBox(height: 4),
-                    Tooltip(
-                      message:
+                    PubkeyBadge(
+                      endpointId: receiver.endpointId,
+                      size: PubkeyBadgeSize.medium,
+                      tooltip:
                           'Identity badge (from public key) — same color = same device.',
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colorFromPubkey(
-                            receiver.endpointId,
-                          ).withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: colorFromPubkey(
-                              receiver.endpointId,
-                            ).withValues(alpha: 0.45),
-                            width: 0.8,
-                          ),
-                        ),
-                        child: Text(
-                          shortPubkey(receiver.endpointId),
-                          style: wispSans(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: pubkeyTextColor(
-                              context,
-                              colorFromPubkey(receiver.endpointId),
-                            ),
-                            letterSpacing: 0.4,
-                          ),
-                        ),
-                      ),
                     ),
                   ],
                 ],
@@ -842,12 +795,6 @@ class _QrPairedTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pubkey = receiver.endpointId;
-    final badgeColor = pubkey.isEmpty
-        ? context.wc.muted
-        : colorFromPubkey(pubkey);
-    final badgeText = pubkey.isEmpty
-        ? null
-        : pubkeyTextColor(context, badgeColor);
 
     return InkWell(
       onTap: onTap,
@@ -904,28 +851,9 @@ class _QrPairedTile extends StatelessWidget {
                   ),
                   if (pubkey.isNotEmpty) ...[
                     const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: badgeColor.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: badgeColor.withValues(alpha: 0.45),
-                          width: 0.8,
-                        ),
-                      ),
-                      child: Text(
-                        shortPubkey(pubkey),
-                        style: wispSans(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w700,
-                          color: badgeText,
-                          letterSpacing: 0.4,
-                        ),
-                      ),
+                    PubkeyBadge(
+                      endpointId: pubkey,
+                      size: PubkeyBadgeSize.small,
                     ),
                   ],
                 ],
