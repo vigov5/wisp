@@ -240,19 +240,29 @@ section:first-of-type {
   margin-bottom: var(--space-3);
 }
 .sender-badge {
-  display: inline-grid;
-  place-items: center;
-  min-width: 46px;
-  height: 24px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-pill);
-  color: #fff;
-  font: 700 11px/1 var(--font-mono);
-  letter-spacing: 0.04em;
+  /* Tinted identity pill matching the native PubkeyBadge (medium); the hue-based
+     background / border / text colours are set inline from app.js. */
+  padding: 2px 6px;
+  border: 0.8px solid transparent;
+  border-radius: var(--radius-sm);
+  font: 700 11px/1.3 var(--font-mono);
+  letter-spacing: 0.4px;
+  white-space: nowrap;
 }
 .sender-name {
   font-weight: 600;
   font-size: 14px;
+}
+.device-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  color: var(--wc-muted);
+}
+.device-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
 }
 
 /* ── Buttons — the four native styles (see wisp_theme.dart button conventions).

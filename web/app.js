@@ -52,15 +52,44 @@ function renderText(text) {
   }
 }
 
-// Deterministic colour + short label from a public key, mirroring the native
-// identity badge (pubkey_visual.dart). Full token parity comes in Workstream A.
-function pubkeyColor(pubkey) {
-  let h = 0;
-  for (let i = 0; i < pubkey.length; i++) h = (h * 31 + pubkey.charCodeAt(i)) >>> 0;
-  return `hsl(${h % 360} 60% 45%)`;
+// Identity badge, mirroring native pubkey_visual.dart exactly: hue is the sum of
+// the endpoint id's char codes mod 360; the pill is a tint of HSL(hue,55%,55%)
+// (background 15%, border 45%) with theme-adapted text (lightness 32% light /
+// 78% dark), and the label is the uppercase "AAAA…ZZZZ" short form.
+function pubkeyHue(pubkey) {
+  let hue = 0;
+  for (let i = 0; i < pubkey.length; i++) hue = (hue + pubkey.charCodeAt(i)) % 360;
+  return hue;
+}
+function isDarkTheme() {
+  const attr = document.documentElement.getAttribute('data-theme');
+  if (attr) return attr === 'dark';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+function applyPubkeyBadge(el, pubkey) {
+  const hue = pubkeyHue(pubkey || '');
+  el.style.background = `hsl(${hue} 55% 55% / 0.15)`;
+  el.style.borderColor = `hsl(${hue} 55% 55% / 0.45)`;
+  el.style.color = `hsl(${hue} 55% ${isDarkTheme() ? 78 : 32}%)`;
+  el.textContent = shortPubkey(pubkey);
 }
 function shortPubkey(pubkey) {
-  return pubkey ? pubkey.slice(0, 6) : '';
+  if (!pubkey) return '';
+  const s = pubkey.toUpperCase();
+  return s.length <= 9 ? s : `${s.slice(0, 4)}…${s.slice(-4)}`;
+}
+
+// Device-type glyphs (Material paths) so the sender's kind reads as an icon,
+// like the native RecipientAvatar, instead of the raw "· phone" text.
+const DEVICE_ICON_PATHS = {
+  phone:
+    'M17 1.01 7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z',
+  laptop:
+    'M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4z',
+};
+function deviceIconSvg(type) {
+  const path = DEVICE_ICON_PATHS[type] || DEVICE_ICON_PATHS.laptop;
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/></svg>`;
 }
 
 function resetOffer() {
@@ -86,11 +115,11 @@ function onEvent(event) {
       resetOffer();
       show('offer-section');
       show('sender');
-      const badge = $('sender-badge');
-      badge.style.background = pubkeyColor(event.senderPubkey);
-      badge.textContent = shortPubkey(event.senderPubkey);
-      $('sender-name').textContent =
-        `${event.senderName || 'Unknown device'} · ${event.senderDeviceType}`;
+      applyPubkeyBadge($('sender-badge'), event.senderPubkey);
+      $('sender-name').textContent = event.senderName || 'Unknown device';
+      const deviceIcon = $('sender-device-icon');
+      deviceIcon.innerHTML = deviceIconSvg(event.senderDeviceType);
+      deviceIcon.title = event.senderDeviceType || '';
       setStatus('A sender is connecting…');
       break;
     }
