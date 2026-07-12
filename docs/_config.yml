@@ -1,7 +1,11 @@
 title: Wisp
 description: Peer-to-peer file sharing for any device, anywhere.
-url: https://tienna.cf
-baseurl: /wisp
+# Custom domain served at the root (docs/CNAME = web.wisp.mooo.com). baseurl is
+# empty because the site is at the domain root, not under /wisp as it was on the
+# github.io/wisp project URL — keeping /wisp would make Jekyll asset/theme links
+# resolve to /wisp/... and 404 (e.g. the privacy policy would render unstyled).
+url: https://web.wisp.mooo.com
+baseurl: ""
 
 # Internal dev/planning documents — keep them in the repo for git
 # history but exclude from the published GitHub Pages site so the only
