@@ -1,4 +1,4 @@
-/* Drift web receiver — design tokens mirrored from the native Flutter theme
+/* Wisp web receiver — design tokens mirrored from the native Flutter theme
    (flutter/lib/theme/wisp_theme.dart). Neutrals flip light/dark like the
    `WispColors` ThemeExtension; the cyan/warm/direct/relay accents stay constant
    across both themes, exactly as in native. Keep this file the single source of

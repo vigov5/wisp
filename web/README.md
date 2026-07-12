@@ -1,6 +1,6 @@
-# Drift web receiver
+# Wisp web receiver
 
-A no-install browser receiver: open the page, get a 6-char code, a native drift
+A no-install browser receiver: open the page, get a 6-char code, a native Wisp
 sender sends to that code, and the file downloads in the browser. File bytes ride
 n0 public relays end-to-end (the browser is relay-only); this page and the
 rendezvous server only carry the tiny code/ticket handshake.
