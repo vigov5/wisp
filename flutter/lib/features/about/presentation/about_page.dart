@@ -7,6 +7,7 @@ import '../../../theme/wisp_theme.dart';
 const _repoUrl = 'https://github.com/vigov5/wisp';
 const _issuesUrl = 'https://github.com/vigov5/wisp/issues/new';
 const _releasesUrl = 'https://github.com/vigov5/wisp/releases';
+const _webReceiverUrl = 'https://web.wisp.mooo.com';
 
 class AboutPage extends StatefulWidget {
   const AboutPage({super.key});
@@ -113,6 +114,13 @@ class _AboutPageState extends State<AboutPage> {
             title: 'Get Wisp for desktop',
             subtitle: 'Windows, macOS & Linux builds',
             onTap: () => _open(_releasesUrl),
+          ),
+          const SizedBox(height: 10),
+          _AboutTile(
+            icon: Icons.language_rounded,
+            title: 'Receive in a browser',
+            subtitle: 'web.wisp.mooo.com — no app needed',
+            onTap: () => _open(_webReceiverUrl),
           ),
           const SizedBox(height: 10),
           _AboutTile(
