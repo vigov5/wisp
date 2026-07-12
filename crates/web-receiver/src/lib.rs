@@ -579,23 +579,30 @@ async fn handle_connection(
     .await;
     let _ = progress_send.finish();
 
-    wire::write_receiver_message(
+    // The files are already downloaded, so the transfer is complete from the
+    // recipient's point of view. Send the TransferResult and mark the UI
+    // complete immediately — everything past this point is best-effort cleanup
+    // that must NOT be able to wedge the UI at "in progress" (e.g. a sender that
+    // closes the connection right after its own success instead of sending a
+    // clean TransferAck, which is exactly what a graceful-close native sender
+    // does).
+    let _ = wire::write_receiver_message(
         &mut control_send,
         &ReceiverMessage::TransferResult(TransferResult {
             session_id: session_id.clone(),
             status: TransferStatus::Ok,
         }),
     )
-    .await?;
-
-    // Best-effort: wait for the sender's final ack before closing.
-    match wire::read_sender_message(&mut control_recv).await {
-        Ok(SenderMessage::TransferAck(_)) => {}
-        Ok(other) => tracing::warn!("expected TransferAck, got {:?}", other.kind()),
-        Err(err) => tracing::warn!("reading TransferAck: {err:#}"),
-    }
+    .await;
 
     emit(on_event, &Event::Completed);
+
+    // Best-effort, bounded drain of the sender's final ack so a sender that
+    // never sends it (or drops the connection) can't block the accept loop.
+    let ack = async {
+        let _ = wire::read_sender_message(&mut control_recv).await;
+    };
+    futures_lite::future::or(ack, n0_future::time::sleep(Duration::from_secs(3))).await;
     Ok(())
 }
 
