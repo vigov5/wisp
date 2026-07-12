@@ -118,6 +118,42 @@ h1 .sub {
   font-size: 15px;
   letter-spacing: 0;
 }
+
+/* Centered brand header: logo + title + version/GitHub/author line. */
+.brand {
+  text-align: center;
+  margin-bottom: var(--space-5);
+}
+.brand-logo {
+  width: 64px;
+  height: 64px;
+  display: block;
+  margin: 0 auto var(--space-3);
+}
+.brand h1 {
+  margin: 0 0 var(--space-2);
+}
+.brand-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--wc-muted);
+  font-size: 12.5px;
+}
+.brand-meta a {
+  color: var(--wc-accent-fg);
+  text-decoration: none;
+  font-weight: 600;
+}
+.brand-meta a:hover {
+  text-decoration: underline;
+}
+.brand-meta .dot {
+  color: var(--wc-subtle);
+}
 .label {
   color: var(--wc-muted);
   font-size: 11.5px;
