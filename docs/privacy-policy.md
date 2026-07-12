@@ -6,7 +6,7 @@ permalink: /privacy-policy/
 
 # Wisp — Privacy Policy
 
-**Effective date:** 2026-05-22
+**Effective date:** 2026-07-12
 **App:** Wisp (`dev.vigov5.wisp`)
 **Maintainer:** Nguyen Anh Tien
 **Contact:** nguyenanhtien2210@gmail.com
@@ -106,6 +106,25 @@ their contents.
 For details, see the
 [iroh privacy documentation](https://www.iroh.computer/docs/concepts/privacy).
 
+### 3.4 USB cable transfer (Android phone-to-phone)
+
+When you transfer between two Android phones over a USB cable, Wisp uses
+Android's `VpnService` API to create a **local point-to-point tunnel** across
+the cable, so the same encrypted iroh transfer can run over it exactly as it
+would over Wi-Fi. This is **not** a VPN in the usual sense:
+
+- It does **not** connect to any remote VPN server, and it does **not** route
+  your phone's internet traffic or any app's traffic anywhere.
+- Only the tiny private link between the two phones is routed through it — the
+  `10.42.0.0/30` range covering the two cable endpoints. The rest of your
+  phone's networking is left completely untouched.
+- It runs **only** during an active phone-to-phone USB transfer and stops as
+  soon as the transfer ends or the cable is unplugged.
+- Wisp does not inspect, record, log, or transmit any traffic that crosses it.
+
+Android shows its own system consent dialog before this tunnel can start, and
+you can decline it (you just won't be able to use the USB phone-to-phone mode).
+
 ## 4. Android permissions and why Wisp asks for them
 
 | Permission | Why Wisp needs it |
@@ -118,6 +137,7 @@ For details, see the
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `WAKE_LOCK` | To keep an active iroh transfer running when the app is in the background, so a long file send/receive is not killed by Android. |
 | `POST_NOTIFICATIONS` | To show the foreground-service notification required by Android while a transfer is running. |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Optional — if you tap the "improve background reliability" prompt, Wisp opens the system dialog so you can exempt the app from battery optimisation. We do not bypass anything without your tap. |
+| `BIND_VPN_SERVICE` (VpnService) | Only for phone-to-phone transfers over a USB cable: Wisp creates a local point-to-point tunnel across the cable (the `10.42.0.0/30` link between the two phones) to carry the encrypted transfer. It routes only that link — never your internet or app traffic — connects to no remote VPN server, and inspects/records nothing. Android shows its own consent dialog before it starts (see §3.4). |
 
 You can revoke any of these at any time in your device Settings →
 Apps → Wisp → Permissions; only LAN/QR discovery will be affected.
