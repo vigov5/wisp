@@ -182,6 +182,16 @@ h1 .sub {
   border-radius: var(--radius-md);
   margin-bottom: var(--space-2);
 }
+.code-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.code-row .code {
+  flex: 1;
+  margin-bottom: 0;
+}
 
 section {
   margin-top: var(--space-5);
@@ -256,7 +266,6 @@ section:first-of-type {
 .device-icon {
   display: inline-flex;
   align-items: center;
-  margin-left: auto;
   color: var(--wc-muted);
 }
 .device-icon svg {

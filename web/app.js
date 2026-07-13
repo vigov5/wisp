@@ -255,6 +255,19 @@ function wireButtons() {
     hide('decision');
     receiver.decline();
   });
+  $('btn-copy-code').addEventListener('click', async () => {
+    const code = $('code').textContent.trim();
+    if (!code || code === '------') return;
+    const btn = $('btn-copy-code');
+    try {
+      await navigator.clipboard.writeText(code);
+      const prev = btn.textContent;
+      btn.textContent = 'Copied ✓';
+      setTimeout(() => { btn.textContent = prev; }, 1500);
+    } catch {
+      setStatus('Copy failed — select the code manually.');
+    }
+  });
   $('btn-copy').addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(lastText);

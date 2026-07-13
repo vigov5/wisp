@@ -34,7 +34,10 @@
 
     <section id="code-section" class="hidden">
       <p class="label">Enter this code in the sender:</p>
-      <div id="code" class="code">------</div>
+      <div class="code-row">
+        <div id="code" class="code">------</div>
+        <button id="btn-copy-code" class="btn btn-soft" type="button">Copy code</button>
+      </div>
       <p class="hint" id="ttl"></p>
       <p class="hint" id="relay-hint">Receiving over relay — file bytes flow peer-to-peer, never through this page.</p>
     </section>
@@ -47,8 +50,8 @@
       <p class="label">Incoming</p>
       <div id="sender" class="sender hidden">
         <span id="sender-badge" class="sender-badge"></span>
-        <span id="sender-name" class="sender-name"></span>
         <span id="sender-device-icon" class="device-icon"></span>
+        <span id="sender-name" class="sender-name"></span>
       </div>
       <ul id="file-list" class="file-list"></ul>
       <p id="offer-warning" class="warn hidden"></p>
