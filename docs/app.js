@@ -1,3 +1,4 @@
+import Alpine from './vendor/alpine.esm.js';
 import init, { WebReceiver } from './pkg/wisp_web_receiver.js';
 
 // Rendezvous server the browser registers with. Override with ?rendezvous=... for
@@ -7,49 +8,20 @@ const params = new URLSearchParams(location.search);
 const RENDEZVOUS_URL =
   params.get('rendezvous') || 'https://rendezvous.wisp.mooo.com';
 
-const $ = (id) => document.getElementById(id);
-const show = (id) => $(id).classList.remove('hidden');
-const hide = (id) => $(id).classList.add('hidden');
-
-function setStatus(text) {
-  $('status').textContent = text;
-}
-
-let receiver = null;
-let totalBytes = 0;
-let lastText = '';
-let progressStart = 0;
-let ttlTimer = null;
-
-function startCountdown(iso) {
-  const end = Date.parse(iso);
-  if (ttlTimer) clearInterval(ttlTimer);
-  if (!end) { $('ttl').textContent = ''; return; }
-  const tick = () => {
-    const remaining = Math.max(0, Math.floor((end - Date.now()) / 1000));
-    const m = Math.floor(remaining / 60);
-    const s = String(remaining % 60).padStart(2, '0');
-    $('ttl').textContent =
-      remaining > 0 ? `Code expires in ${m}:${s}` : 'Code expired — refreshing…';
-    if (remaining <= 0) clearInterval(ttlTimer);
-  };
-  tick();
-  ttlTimer = setInterval(tick, 1000);
-}
-
 const isUrl = (s) => /^https?:\/\/\S+$/i.test(s.trim());
 
-function renderText(text) {
-  lastText = text;
-  show('text-section');
-  $('text-content').textContent = text;
-  const open = $('btn-open-link');
-  if (isUrl(text)) {
-    open.href = text.trim();
-    open.classList.remove('hidden');
-  } else {
-    open.classList.add('hidden');
-  }
+function formatBytes(n) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let v = n, u = 0;
+  while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
+  return u === 0 ? `${Math.round(n)} B` : `${v.toFixed(1)} ${units[u]}`;
+}
+
+function formatEta(secs) {
+  if (secs < 60) return `${Math.ceil(secs)}s`;
+  const m = Math.floor(secs / 60);
+  const s = Math.ceil(secs % 60);
+  return `${m}m ${s}s`;
 }
 
 // Identity badge, mirroring native pubkey_visual.dart exactly: hue is the sum of
@@ -66,12 +38,13 @@ function isDarkTheme() {
   if (attr) return attr === 'dark';
   return window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
-function applyPubkeyBadge(el, pubkey) {
+function badgeStyleFor(pubkey) {
   const hue = pubkeyHue(pubkey || '');
-  el.style.background = `hsl(${hue} 55% 55% / 0.15)`;
-  el.style.borderColor = `hsl(${hue} 55% 55% / 0.45)`;
-  el.style.color = `hsl(${hue} 55% ${isDarkTheme() ? 78 : 32}%)`;
-  el.textContent = shortPubkey(pubkey);
+  return (
+    `background:hsl(${hue} 55% 55% / 0.15);` +
+    `border-color:hsl(${hue} 55% 55% / 0.45);` +
+    `color:hsl(${hue} 55% ${isDarkTheme() ? 78 : 32}%)`
+  );
 }
 function shortPubkey(pubkey) {
   if (!pubkey) return '';
@@ -92,215 +65,253 @@ function deviceIconSvg(type) {
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/></svg>`;
 }
 
-function resetOffer() {
-  hide('offer-section');
-  hide('sender');
-  hide('decision');
-  hide('progress');
-  $('file-list').innerHTML = '';
-  $('progress-bar').style.width = '0%';
-  $('progress-text').textContent = '';
-}
+// Single reactive store the whole UI binds to (see index.html). The wasm
+// receiver pushes events into `onEvent`, which mutates state; Alpine re-renders.
+// Button handlers call the wasm methods through `receiver`. Fields prefixed with
+// `_` are bookkeeping the template never reads.
+Alpine.store('rx', {
+  receiver: null,
 
-function onEvent(event) {
-  switch (event.type) {
-    case 'registered':
-      $('code').textContent = event.code;
-      show('code-section');
-      startCountdown(event.expiresAt);
-      setStatus('Waiting for a sender…');
-      break;
+  code: '------',
+  ttl: '',
+  status: 'Loading…',
 
-    case 'connecting': {
-      resetOffer();
-      show('offer-section');
-      show('sender');
-      applyPubkeyBadge($('sender-badge'), event.senderPubkey);
-      $('sender-name').textContent = event.senderName || 'Unknown device';
-      const deviceIcon = $('sender-device-icon');
-      deviceIcon.innerHTML = deviceIconSvg(event.senderDeviceType);
-      deviceIcon.title = event.senderDeviceType || '';
-      setStatus('A sender is connecting…');
-      break;
-    }
+  codeVisible: false,
+  offerVisible: false,
+  senderVisible: false,
+  decisionVisible: false,
+  progressVisible: false,
 
-    case 'offer': {
-      show('offer-section');
-      totalBytes = event.totalBytes;
-      const list = $('file-list');
-      list.innerHTML = '';
-      for (const f of event.files) {
-        const li = document.createElement('li');
-        li.textContent = `${f.path} — ${formatBytes(f.size)}`;
-        list.appendChild(li);
+  sender: { name: '', deviceType: '', pubkey: '' },
+  senderBadge: '',
+  badgeStyle: '',
+  deviceIcon: '',
+
+  files: [],
+  warning: '',
+
+  progressPct: 0,
+  progressText: '',
+
+  downloads: [],
+
+  text: null,
+  isLink: false,
+  textHref: '',
+
+  copyCodeLabel: 'Copy code',
+
+  _totalBytes: 0,
+  _progressStart: 0,
+  _ttlTimer: null,
+  _lastText: '',
+
+  resetOffer() {
+    this.offerVisible = false;
+    this.senderVisible = false;
+    this.decisionVisible = false;
+    this.progressVisible = false;
+    this.files = [];
+    this.progressPct = 0;
+    this.progressText = '';
+  },
+
+  startCountdown(iso) {
+    const end = Date.parse(iso);
+    if (this._ttlTimer) clearInterval(this._ttlTimer);
+    if (!end) { this.ttl = ''; return; }
+    const tick = () => {
+      const remaining = Math.max(0, Math.floor((end - Date.now()) / 1000));
+      const m = Math.floor(remaining / 60);
+      const s = String(remaining % 60).padStart(2, '0');
+      this.ttl =
+        remaining > 0 ? `Code expires in ${m}:${s}` : 'Code expired — refreshing…';
+      if (remaining <= 0) clearInterval(this._ttlTimer);
+    };
+    tick();
+    this._ttlTimer = setInterval(tick, 1000);
+  },
+
+  onEvent(event) {
+    switch (event.type) {
+      case 'registered':
+        this.code = event.code;
+        this.codeVisible = true;
+        this.startCountdown(event.expiresAt);
+        this.status = 'Waiting for a sender…';
+        break;
+
+      case 'connecting':
+        this.resetOffer();
+        this.offerVisible = true;
+        this.senderVisible = true;
+        this.sender = {
+          name: event.senderName || 'Unknown device',
+          deviceType: event.senderDeviceType || '',
+          pubkey: event.senderPubkey || '',
+        };
+        this.senderBadge = shortPubkey(event.senderPubkey);
+        this.badgeStyle = badgeStyleFor(event.senderPubkey);
+        this.deviceIcon = deviceIconSvg(event.senderDeviceType);
+        this.status = 'A sender is connecting…';
+        break;
+
+      case 'offer':
+        this.offerVisible = true;
+        this._totalBytes = event.totalBytes;
+        this.files = event.files.map((f) => ({
+          path: f.path,
+          label: `${f.path} — ${formatBytes(f.size)}`,
+        }));
+        this.warning = event.tooLarge
+          ? "This transfer is large and may exceed your browser tab's memory — it might fail."
+          : '';
+        this.decisionVisible = true;
+        this.status = `Accept ${event.files.length} file(s), ${formatBytes(this._totalBytes)}?`;
+        break;
+
+      case 'transferStarted':
+        this.decisionVisible = false;
+        this.progressVisible = true;
+        this._progressStart = Date.now();
+        this.status = 'Transfer started — downloading over relay…';
+        break;
+
+      case 'progress': {
+        // Self-heal the UI: bytes are flowing, so the decision is settled even if
+        // the transferStarted event was missed or arrived late.
+        this.decisionVisible = false;
+        this.progressVisible = true;
+        // The blob fetch reports total wire bytes (collection metadata + file
+        // payload), which can exceed the manifest's file-content total, so clamp
+        // for display.
+        const received = Math.min(event.bytesReceived, this._totalBytes);
+        this.progressPct = this._totalBytes
+          ? Math.min(100, (received / this._totalBytes) * 100)
+          : 0;
+        const secs = Math.max(0.001, (Date.now() - this._progressStart) / 1000);
+        const speed = received / secs;
+        let line = `${formatBytes(received)} / ${formatBytes(this._totalBytes)}`;
+        if (speed > 0) {
+          line += ` · ${formatBytes(speed)}/s`;
+          const remaining = Math.max(0, this._totalBytes - received);
+          const eta = remaining / speed;
+          if (received < this._totalBytes && isFinite(eta)) line += ` · ETA ${formatEta(eta)}`;
+        }
+        this.progressText = line;
+        break;
       }
-      const warn = $('offer-warning');
-      if (event.tooLarge) {
-        warn.textContent =
-          "This transfer is large and may exceed your browser tab's memory — it might fail.";
-        warn.classList.remove('hidden');
-      } else {
-        warn.classList.add('hidden');
-      }
-      show('decision');
-      setStatus(
-        `Accept ${event.files.length} file(s), ${formatBytes(totalBytes)}?`,
-      );
-      break;
+
+      case 'fileReady':
+        this.downloads.push({
+          path: event.path,
+          url: event.url,
+          label: `${event.path} (${formatBytes(event.size)})`,
+        });
+        break;
+
+      case 'textReady':
+        this.decisionVisible = false;
+        this._lastText = event.text;
+        this.text = event.text;
+        this.isLink = isUrl(event.text);
+        this.textHref = event.text.trim();
+        break;
+
+      case 'completed':
+        // Clear the incoming offer UI (sender badge, file list, progress) so a
+        // stale "INCOMING" card doesn't linger after the files land. The
+        // Downloads list and any received text live in separate sections and
+        // stay visible.
+        this.resetOffer();
+        this.status = 'Transfer complete ✓';
+        break;
+
+      case 'declined':
+        this.resetOffer();
+        this.status = 'Declined. Waiting for a sender…';
+        break;
+
+      case 'cancelled':
+        this.resetOffer();
+        this.status = 'Cancelled. Waiting for a sender…';
+        break;
+
+      case 'error':
+        // The receiver stays live (accept loop keeps running), so clear any
+        // in-flight offer/progress UI and fall back to the waiting state.
+        this.resetOffer();
+        this.status = `${event.message} — waiting for a sender…`;
+        break;
+
+      default:
+        console.warn('unknown event', event);
     }
+  },
 
-    case 'transferStarted':
-      hide('decision');
-      show('progress');
-      progressStart = Date.now();
-      setStatus('Transfer started — downloading over relay…');
-      break;
-
-    case 'progress': {
-      // Self-heal the UI: bytes are flowing, so the decision is settled even if
-      // the transferStarted event was missed or arrived late.
-      hide('decision');
-      show('progress');
-      // The blob fetch reports total wire bytes (collection metadata + file
-      // payload), which can exceed the manifest's file-content total, so clamp
-      // for display.
-      const received = Math.min(event.bytesReceived, totalBytes);
-      const pct = totalBytes ? Math.min(100, (received / totalBytes) * 100) : 0;
-      $('progress-bar').style.width = `${pct}%`;
-      const secs = Math.max(0.001, (Date.now() - progressStart) / 1000);
-      const speed = received / secs;
-      let line = `${formatBytes(received)} / ${formatBytes(totalBytes)}`;
-      if (speed > 0) {
-        line += ` · ${formatBytes(speed)}/s`;
-        const remaining = Math.max(0, totalBytes - received);
-        const eta = remaining / speed;
-        if (received < totalBytes && isFinite(eta)) line += ` · ETA ${formatEta(eta)}`;
-      }
-      $('progress-text').textContent = line;
-      break;
-    }
-
-    case 'fileReady': {
-      show('downloads-section');
-      const li = document.createElement('li');
-      const a = document.createElement('a');
-      a.href = event.url;
-      a.download = event.path;
-      a.textContent = `${event.path} (${formatBytes(event.size)})`;
-      li.appendChild(a);
-      $('download-list').appendChild(li);
-      break;
-    }
-
-    case 'textReady':
-      hide('decision');
-      renderText(event.text);
-      break;
-
-    case 'completed':
-      // Clear the incoming offer UI (sender badge, file list, progress) so a
-      // stale "INCOMING" card doesn't linger after the files land. The
-      // Downloads list and any received text live in separate sections and
-      // stay visible.
-      resetOffer();
-      setStatus('Transfer complete ✓');
-      break;
-
-    case 'declined':
-      resetOffer();
-      setStatus('Declined. Waiting for a sender…');
-      break;
-
-    case 'cancelled':
-      resetOffer();
-      setStatus('Cancelled. Waiting for a sender…');
-      break;
-
-    case 'error':
-      // The receiver stays live (accept loop keeps running), so clear any
-      // in-flight offer/progress UI and fall back to the waiting state.
-      resetOffer();
-      setStatus(`${event.message} — waiting for a sender…`);
-      break;
-
-    default:
-      console.warn('unknown event', event);
-  }
-}
-
-function formatBytes(n) {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let v = n, u = 0;
-  while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
-  return u === 0 ? `${Math.round(n)} B` : `${v.toFixed(1)} ${units[u]}`;
-}
-
-function formatEta(secs) {
-  if (secs < 60) return `${Math.ceil(secs)}s`;
-  const m = Math.floor(secs / 60);
-  const s = Math.ceil(secs % 60);
-  return `${m}m ${s}s`;
-}
-
-function wireButtons() {
-  $('btn-accept').addEventListener('click', () => {
-    if (!receiver) return;
+  accept() {
+    if (!this.receiver) return;
     // Hide the decision immediately; transferStarted/textReady take over next.
-    hide('decision');
-    setStatus('Accepted — starting…');
-    receiver.accept();
-  });
-  $('btn-decline').addEventListener('click', () => {
-    if (!receiver) return;
-    hide('decision');
-    receiver.decline();
-  });
-  $('btn-copy-code').addEventListener('click', async () => {
-    const code = $('code').textContent.trim();
-    if (!code || code === '------') return;
-    const btn = $('btn-copy-code');
+    this.decisionVisible = false;
+    this.status = 'Accepted — starting…';
+    this.receiver.accept();
+  },
+
+  decline() {
+    if (!this.receiver) return;
+    this.decisionVisible = false;
+    this.receiver.decline();
+  },
+
+  cancel() {
+    if (!this.receiver) return;
+    this.status = 'Cancelling…';
+    this.receiver.cancel();
+  },
+
+  async copyCode() {
+    if (!this.code || this.code === '------') return;
     try {
-      await navigator.clipboard.writeText(code);
-      const prev = btn.textContent;
-      btn.textContent = 'Copied ✓';
-      setTimeout(() => { btn.textContent = prev; }, 1500);
+      await navigator.clipboard.writeText(this.code);
+      this.copyCodeLabel = 'Copied ✓';
+      setTimeout(() => { this.copyCodeLabel = 'Copy code'; }, 1500);
     } catch {
-      setStatus('Copy failed — select the code manually.');
+      this.status = 'Copy failed — select the code manually.';
     }
-  });
-  $('btn-copy').addEventListener('click', async () => {
+  },
+
+  async copyText() {
     try {
-      await navigator.clipboard.writeText(lastText);
-      setStatus('Copied to clipboard ✓');
+      await navigator.clipboard.writeText(this._lastText);
+      this.status = 'Copied to clipboard ✓';
     } catch {
-      setStatus('Copy failed — select and copy manually.');
+      this.status = 'Copy failed — select and copy manually.';
     }
-  });
-  $('btn-save-text').addEventListener('click', () => {
-    const blob = new Blob([lastText], { type: 'text/plain' });
+  },
+
+  saveText() {
+    const blob = new Blob([this._lastText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = 'message.txt';
     a.click();
     URL.revokeObjectURL(url);
-  });
-  $('btn-cancel').addEventListener('click', () => {
-    if (!receiver) return;
-    setStatus('Cancelling…');
-    receiver.cancel();
-  });
-}
+  },
+});
+
+window.Alpine = Alpine;
+Alpine.start();
 
 async function main() {
-  setStatus('Loading…');
-  wireButtons();
+  const rx = Alpine.store('rx');
+  rx.status = 'Loading…';
   await init();
   try {
-    receiver = await WebReceiver.start(RENDEZVOUS_URL, onEvent);
-    console.log('receiver started, code:', receiver.code());
+    rx.receiver = await WebReceiver.start(RENDEZVOUS_URL, (e) => rx.onEvent(e));
+    console.log('receiver started, code:', rx.receiver.code());
   } catch (err) {
-    setStatus(`Failed to start: ${err}`);
+    rx.status = `Failed to start: ${err}`;
     console.error(err);
   }
 }

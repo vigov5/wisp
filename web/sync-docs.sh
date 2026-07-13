@@ -26,6 +26,8 @@ sed -i "s|<span id=\"app-version\">[^<]*</span>|<span id=\"app-version\">v${VERS
 echo "Stamped version v${VERSION} into web/index.html"
 
 cp web/index.html web/app.js web/style.css docs/
+mkdir -p docs/vendor
+cp web/vendor/alpine.esm.js docs/vendor/
 mkdir -p docs/pkg
 # Only the two runtime artifacts — skip the .d.ts typings wasm-bindgen also emits.
 cp web/pkg/wisp_web_receiver.js web/pkg/wisp_web_receiver_bg.wasm docs/pkg/

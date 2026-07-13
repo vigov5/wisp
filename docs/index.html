@@ -7,7 +7,11 @@
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-  <main class="card">
+  <!-- Alpine drives the whole card off a single reactive store ($store.rx),
+       populated by the wasm receiver's event callback in app.js. x-cloak hides
+       the tree until Alpine initialises so sections don't flash before their
+       x-show flags apply. -->
+  <main class="card" x-data x-cloak>
     <header class="brand">
       <img
         class="brand-logo"
@@ -32,52 +36,74 @@
       </p>
     </header>
 
-    <section id="code-section" class="hidden">
+    <section id="code-section" x-show="$store.rx.codeVisible">
       <p class="label">Enter this code in the sender:</p>
       <div class="code-row">
-        <div id="code" class="code">------</div>
-        <button id="btn-copy-code" class="btn btn-soft" type="button">Copy code</button>
+        <div class="code" x-text="$store.rx.code">------</div>
+        <button
+          class="btn btn-soft btn-stack"
+          type="button"
+          @click="$store.rx.copyCode()"
+          :title="$store.rx.copyCodeLabel"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+          <span x-text="$store.rx.copyCodeLabel">Copy code</span>
+        </button>
       </div>
-      <p class="hint" id="ttl"></p>
-      <p class="hint" id="relay-hint">Receiving over relay — file bytes flow peer-to-peer, never through this page.</p>
+      <p class="hint" x-text="$store.rx.ttl"></p>
+      <p class="hint">Receiving over relay — file bytes flow peer-to-peer, never through this page.</p>
     </section>
 
     <section id="status-section">
-      <p id="status" class="status">Starting…</p>
+      <p class="status" x-text="$store.rx.status">Starting…</p>
     </section>
 
-    <section id="offer-section" class="hidden">
+    <section id="offer-section" x-show="$store.rx.offerVisible">
       <p class="label">Incoming</p>
-      <div id="sender" class="sender hidden">
-        <span id="sender-badge" class="sender-badge"></span>
-        <span id="sender-device-icon" class="device-icon"></span>
-        <span id="sender-name" class="sender-name"></span>
+      <div class="sender" x-show="$store.rx.senderVisible">
+        <span class="sender-badge" :style="$store.rx.badgeStyle" x-text="$store.rx.senderBadge"></span>
+        <span class="device-icon" x-html="$store.rx.deviceIcon" :title="$store.rx.sender.deviceType"></span>
+        <span class="sender-name" x-text="$store.rx.sender.name"></span>
       </div>
-      <ul id="file-list" class="file-list"></ul>
-      <p id="offer-warning" class="warn hidden"></p>
-      <div id="decision" class="decision hidden">
-        <button id="btn-decline" class="btn btn-danger" type="button">Decline</button>
-        <button id="btn-accept" class="btn btn-primary" type="button">Accept</button>
+      <ul class="file-list">
+        <template x-for="f in $store.rx.files" :key="f.path">
+          <li x-text="f.label"></li>
+        </template>
+      </ul>
+      <p class="warn" x-show="$store.rx.warning" x-text="$store.rx.warning"></p>
+      <div class="decision" x-show="$store.rx.decisionVisible">
+        <button class="btn btn-danger" type="button" @click="$store.rx.decline()">Decline</button>
+        <button class="btn btn-primary" type="button" @click="$store.rx.accept()">Accept</button>
       </div>
-      <div id="progress" class="hidden">
-        <div class="progress-wrap"><div id="progress-bar" class="progress-bar"></div></div>
-        <p id="progress-text" class="hint"></p>
-        <button id="btn-cancel" class="btn btn-danger" type="button">Cancel</button>
+      <div x-show="$store.rx.progressVisible">
+        <div class="progress-wrap"><div class="progress-bar" :style="`width:${$store.rx.progressPct}%`"></div></div>
+        <p class="hint" x-text="$store.rx.progressText"></p>
+        <button class="btn btn-danger" type="button" @click="$store.rx.cancel()">Cancel</button>
       </div>
     </section>
 
-    <section id="downloads-section" class="hidden">
+    <section id="downloads-section" x-show="$store.rx.downloads.length">
       <p class="label">Downloads</p>
-      <ul id="download-list" class="download-list"></ul>
+      <ul class="download-list">
+        <template x-for="d in $store.rx.downloads" :key="d.url">
+          <li><a :href="d.url" :download="d.path" x-text="d.label"></a></li>
+        </template>
+      </ul>
     </section>
 
-    <section id="text-section" class="hidden">
+    <section id="text-section" x-show="$store.rx.text !== null">
       <p class="label">Received text</p>
-      <pre id="text-content" class="text-content"></pre>
+      <pre class="text-content" x-text="$store.rx.text"></pre>
       <div class="text-actions">
-        <button id="btn-copy" class="btn btn-soft" type="button">Copy</button>
-        <button id="btn-save-text" class="btn btn-soft" type="button">Save .txt</button>
-        <a id="btn-open-link" class="btn btn-primary hidden" target="_blank" rel="noopener noreferrer">Open link</a>
+        <button class="btn btn-soft" type="button" @click="$store.rx.copyText()">Copy</button>
+        <button class="btn btn-soft" type="button" @click="$store.rx.saveText()">Save .txt</button>
+        <a
+          class="btn btn-primary"
+          x-show="$store.rx.isLink"
+          :href="$store.rx.textHref"
+          target="_blank"
+          rel="noopener noreferrer"
+        >Open link</a>
       </div>
     </section>
   </main>

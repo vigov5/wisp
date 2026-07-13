@@ -205,6 +205,11 @@ section:first-of-type {
      specificity. */
   display: none !important;
 }
+/* Alpine hides the whole card until it initialises, so sections don't flash
+   visible before their x-show flags apply. */
+[x-cloak] {
+  display: none !important;
+}
 
 .file-list,
 .download-list {
@@ -325,6 +330,21 @@ section:first-of-type {
 }
 .btn-soft:hover {
   background: var(--accent-cyan-hover);
+}
+
+/* Stacked variant (Copy code): icon above its label. */
+.btn-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: var(--space-3) var(--space-4);
+  line-height: 1.1;
+}
+.btn-stack svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
 }
 
 /* Received text — mono on the native dark code surface. */
