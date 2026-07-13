@@ -14,6 +14,17 @@ cd "$(dirname "$0")/.."   # repo root
 
 web/build.sh release
 
+# Single source of truth for the displayed version is flutter/pubspec.yaml
+# (`version: 1.12.0+15` → "1.12.0"). Stamp it into web/index.html so the brand
+# header never drifts from the app version; the copy into docs/ inherits it.
+VERSION="$(sed -n 's/^version: *\([0-9][0-9.]*\).*/\1/p' flutter/pubspec.yaml)"
+if [[ -z "$VERSION" ]]; then
+  echo "error: could not read version from flutter/pubspec.yaml" >&2
+  exit 1
+fi
+sed -i "s|<span id=\"app-version\">[^<]*</span>|<span id=\"app-version\">v${VERSION}</span>|" web/index.html
+echo "Stamped version v${VERSION} into web/index.html"
+
 cp web/index.html web/app.js web/style.css docs/
 mkdir -p docs/pkg
 # Only the two runtime artifacts — skip the .d.ts typings wasm-bindgen also emits.
