@@ -30,6 +30,7 @@ class SendTransferState {
     this.snapshot,
     this.remoteDeviceType,
     this.remoteEndpointId,
+    this.remoteEphemeral,
     this.remoteTicket,
     this.connectionPath,
     this.connectionCandidates = const [],
@@ -62,6 +63,10 @@ class SendTransferState {
   final String? remoteDeviceType;
   final String? remoteEndpointId;
 
+  /// True when the peer is the browser receiver's ephemeral identity — it can't
+  /// be reconnected to, so it isn't remembered in Recent/Saved.
+  final bool? remoteEphemeral;
+
   /// Re-serialized ticket of the resolved peer.  Populated for both
   /// code-based and nearby sends once the destination resolves, so
   /// `_completeTransfer` can persist it to saved devices as `lastTicket`.
@@ -91,6 +96,7 @@ class SendTransferState {
     rust_transfer.TransferSnapshotData? snapshot,
     String? remoteDeviceType,
     String? remoteEndpointId,
+    bool? remoteEphemeral,
     String? remoteTicket,
     ConnectionPathInfo? connectionPath,
     List<ConnectionCandidateInfo>? connectionCandidates,
@@ -108,6 +114,7 @@ class SendTransferState {
       snapshot: snapshot ?? this.snapshot,
       remoteDeviceType: remoteDeviceType ?? this.remoteDeviceType,
       remoteEndpointId: remoteEndpointId ?? this.remoteEndpointId,
+      remoteEphemeral: remoteEphemeral ?? this.remoteEphemeral,
       remoteTicket: remoteTicket ?? this.remoteTicket,
       connectionPath: connectionPath ?? this.connectionPath,
       connectionCandidates: connectionCandidates ?? this.connectionCandidates,

@@ -342,6 +342,8 @@ async fn handle_connection(
         endpoint_id: endpoint.id(),
         device_name: "Browser".to_owned(),
         device_type: DeviceType::Laptop,
+        web: true,
+        ephemeral: true,
     };
     wire::write_receiver_message(
         &mut control_send,

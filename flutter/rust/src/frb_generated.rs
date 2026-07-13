@@ -1268,6 +1268,17 @@ impl SseDecode for Option<String> {
     }
 }
 
+impl SseDecode for Option<bool> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<bool>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::diagnostics::DiagnosticsActionData> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1597,6 +1608,7 @@ impl SseDecode for crate::api::sender::SendTransferEvent {
             <Option<crate::api::transfer::TransferSnapshotData>>::sse_decode(deserializer);
         let mut var_remoteDeviceType = <Option<String>>::sse_decode(deserializer);
         let mut var_remoteEndpointId = <Option<String>>::sse_decode(deserializer);
+        let mut var_remoteEphemeral = <Option<bool>>::sse_decode(deserializer);
         let mut var_remoteTicket = <Option<String>>::sse_decode(deserializer);
         let mut var_connectionPath =
             <Option<crate::api::sender::SendConnectionPath>>::sse_decode(deserializer);
@@ -1615,6 +1627,7 @@ impl SseDecode for crate::api::sender::SendTransferEvent {
             snapshot: var_snapshot,
             remote_device_type: var_remoteDeviceType,
             remote_endpoint_id: var_remoteEndpointId,
+            remote_ephemeral: var_remoteEphemeral,
             remote_ticket: var_remoteTicket,
             connection_path: var_connectionPath,
             connection_candidates: var_connectionCandidates,
@@ -2377,6 +2390,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::sender::SendTransferEvent {
             self.snapshot.into_into_dart().into_dart(),
             self.remote_device_type.into_into_dart().into_dart(),
             self.remote_endpoint_id.into_into_dart().into_dart(),
+            self.remote_ephemeral.into_into_dart().into_dart(),
             self.remote_ticket.into_into_dart().into_dart(),
             self.connection_path.into_into_dart().into_dart(),
             self.connection_candidates.into_into_dart().into_dart(),
@@ -2886,6 +2900,16 @@ impl SseEncode for Option<String> {
     }
 }
 
+impl SseEncode for Option<bool> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <bool>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::diagnostics::DiagnosticsActionData> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3127,6 +3151,7 @@ impl SseEncode for crate::api::sender::SendTransferEvent {
         <Option<crate::api::transfer::TransferSnapshotData>>::sse_encode(self.snapshot, serializer);
         <Option<String>>::sse_encode(self.remote_device_type, serializer);
         <Option<String>>::sse_encode(self.remote_endpoint_id, serializer);
+        <Option<bool>>::sse_encode(self.remote_ephemeral, serializer);
         <Option<String>>::sse_encode(self.remote_ticket, serializer);
         <Option<crate::api::sender::SendConnectionPath>>::sse_encode(
             self.connection_path,

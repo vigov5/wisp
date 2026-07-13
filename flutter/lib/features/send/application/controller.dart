@@ -441,6 +441,8 @@ class SendController extends _$SendController {
           update.remoteDeviceType ?? currentState.transfer.remoteDeviceType,
       remoteEndpointId:
           update.remoteEndpointId ?? currentState.transfer.remoteEndpointId,
+      remoteEphemeral:
+          update.remoteEphemeral ?? currentState.transfer.remoteEphemeral,
       remoteTicket: update.remoteTicket ?? currentState.transfer.remoteTicket,
       connectionPath:
           update.connectionPath ?? currentState.transfer.connectionPath,
@@ -632,9 +634,12 @@ class SendController extends _$SendController {
     // Persist on success or mid-transfer cancel — both mean the peer was real
     // and reachable.  Skip on declined/failed: declined = peer rejected (don't
     // pin in Recent), failed = uncertain whether a connection ever happened.
+    // Never remember an ephemeral peer (the browser receiver mints a fresh key
+    // each session, so a saved tile could never reconnect to it).
     final shouldRemember =
-        result.outcome == SendTransferOutcome.success ||
-        result.outcome == SendTransferOutcome.cancelled;
+        (result.outcome == SendTransferOutcome.success ||
+            result.outcome == SendTransferOutcome.cancelled) &&
+        transfer.remoteEphemeral != true;
     if (shouldRemember) {
       final endpointId = transfer.remoteEndpointId;
       if (endpointId != null && endpointId.isNotEmpty) {

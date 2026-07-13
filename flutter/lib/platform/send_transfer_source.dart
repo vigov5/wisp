@@ -64,6 +64,7 @@ class SendTransferUpdate {
     this.snapshot,
     this.remoteDeviceType,
     this.remoteEndpointId,
+    this.remoteEphemeral,
     this.remoteTicket,
     this.connectionPath,
     this.connectionCandidates = const [],
@@ -179,6 +180,10 @@ class SendTransferUpdate {
   final String? remoteDeviceType;
   final String? remoteEndpointId;
 
+  /// True when the peer is the browser receiver's ephemeral identity — the
+  /// controller skips remembering it in Recent/Saved.
+  final bool? remoteEphemeral;
+
   /// Re-serialized peer ticket — flows from Rust once `claim_peer` resolves
   /// so the controller can persist it via saved-devices `lastTicket`.
   final String? remoteTicket;
@@ -286,6 +291,7 @@ class LocalSendTransferSource implements SendTransferSource {
       snapshot: event.snapshot,
       remoteDeviceType: event.remoteDeviceType,
       remoteEndpointId: event.remoteEndpointId,
+      remoteEphemeral: event.remoteEphemeral,
       remoteTicket: event.remoteTicket,
       connectionPath: ConnectionPathInfo.fromSender(event.connectionPath),
       connectionCandidates: ConnectionCandidateInfo.listFromSender(

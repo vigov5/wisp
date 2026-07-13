@@ -81,6 +81,10 @@ class SendTransferEvent {
   final String? remoteDeviceType;
   final String? remoteEndpointId;
 
+  /// True when the peer is a throwaway browser-receiver identity (ephemeral
+  /// key). Dart skips remembering it in Recent/Saved. `None` until known.
+  final bool? remoteEphemeral;
+
   /// Re-serialized ticket of the resolved peer address (see
   /// `wisp_app::types::SendEvent::remote_ticket`).  Surfaced to Dart so
   /// the saved-devices repo can persist a `lastTicket` for code-based
@@ -105,6 +109,7 @@ class SendTransferEvent {
     this.snapshot,
     this.remoteDeviceType,
     this.remoteEndpointId,
+    this.remoteEphemeral,
     this.remoteTicket,
     this.connectionPath,
     required this.connectionCandidates,
@@ -123,6 +128,7 @@ class SendTransferEvent {
       snapshot.hashCode ^
       remoteDeviceType.hashCode ^
       remoteEndpointId.hashCode ^
+      remoteEphemeral.hashCode ^
       remoteTicket.hashCode ^
       connectionPath.hashCode ^
       connectionCandidates.hashCode ^
@@ -143,6 +149,7 @@ class SendTransferEvent {
           snapshot == other.snapshot &&
           remoteDeviceType == other.remoteDeviceType &&
           remoteEndpointId == other.remoteEndpointId &&
+          remoteEphemeral == other.remoteEphemeral &&
           remoteTicket == other.remoteTicket &&
           connectionPath == other.connectionPath &&
           connectionCandidates == other.connectionCandidates &&

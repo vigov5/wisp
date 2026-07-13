@@ -145,6 +145,7 @@ impl SendSession {
                 snapshot: None,
                 remote_device_type: None,
                 remote_endpoint_id: None,
+                remote_ephemeral: None,
                 remote_ticket: None,
                 connection_path: None,
                 connection_candidates: Vec::new(),
@@ -223,6 +224,8 @@ impl SendSession {
             endpoint_id: endpoint.addr().id,
             device_name: self.draft.config().device_name.clone(),
             device_type,
+            web: false,
+            ephemeral: false,
         };
         let watcher_endpoint = endpoint.clone();
         let peer_endpoint_id = resolved.peer_endpoint_id;
@@ -572,6 +575,7 @@ pub(crate) fn failed_event_from_error(
         snapshot,
         remote_device_type: None,
         remote_endpoint_id: None,
+        remote_ephemeral: None,
         remote_ticket: None,
         connection_path: None,
         connection_candidates: Vec::new(),
@@ -598,6 +602,7 @@ fn map_sender_event(
             snapshot: None,
             remote_device_type: None,
             remote_endpoint_id: None,
+            remote_ephemeral: None,
             remote_ticket: None,
             connection_path: None,
             connection_candidates: Vec::new(),
@@ -607,6 +612,8 @@ fn map_sender_event(
             receiver_device_name,
             receiver_device_type,
             receiver_endpoint_id,
+            receiver_web,
+            receiver_ephemeral,
             prepared_plan,
             ..
         } => {
@@ -620,8 +627,13 @@ fn map_sender_event(
                 bytes_sent: 0,
                 plan: Some(prepared_plan),
                 snapshot: None,
-                remote_device_type: Some(device_type_label(receiver_device_type)),
+                remote_device_type: Some(if receiver_web {
+                    "web".to_owned()
+                } else {
+                    device_type_label(receiver_device_type)
+                }),
                 remote_endpoint_id: Some(receiver_endpoint_id.to_string()),
+                remote_ephemeral: Some(receiver_ephemeral),
                 remote_ticket: None,
                 connection_path: None,
                 connection_candidates: Vec::new(),
@@ -632,6 +644,8 @@ fn map_sender_event(
             receiver_device_name,
             receiver_device_type,
             receiver_endpoint_id,
+            receiver_web,
+            receiver_ephemeral,
             prepared_plan,
             ..
         } => {
@@ -645,8 +659,13 @@ fn map_sender_event(
                 bytes_sent: 0,
                 plan: Some(prepared_plan),
                 snapshot: None,
-                remote_device_type: Some(device_type_label(receiver_device_type)),
+                remote_device_type: Some(if receiver_web {
+                    "web".to_owned()
+                } else {
+                    device_type_label(receiver_device_type)
+                }),
                 remote_endpoint_id: Some(receiver_endpoint_id.to_string()),
+                remote_ephemeral: Some(receiver_ephemeral),
                 remote_ticket: None,
                 connection_path: None,
                 connection_candidates: Vec::new(),
@@ -668,6 +687,7 @@ fn map_sender_event(
             snapshot: None,
             remote_device_type: None,
             remote_endpoint_id: None,
+            remote_ephemeral: None,
             remote_ticket: None,
             connection_path: None,
             connection_candidates: Vec::new(),
@@ -700,6 +720,7 @@ fn map_sender_event(
                 snapshot: current_snapshot.clone(),
                 remote_device_type: None,
                 remote_endpoint_id: None,
+                remote_ephemeral: None,
                 remote_ticket: None,
                 connection_path: None,
                 connection_candidates: Vec::new(),
@@ -719,6 +740,7 @@ fn map_sender_event(
                 snapshot: None,
                 remote_device_type: None,
                 remote_endpoint_id: None,
+                remote_ephemeral: None,
                 remote_ticket: None,
                 connection_path: None,
                 connection_candidates: Vec::new(),
@@ -747,6 +769,7 @@ fn map_sender_event(
             },
             remote_device_type: None,
             remote_endpoint_id: None,
+            remote_ephemeral: None,
             remote_ticket: None,
             connection_path: None,
             connection_candidates: Vec::new(),
@@ -769,6 +792,7 @@ fn map_sender_event(
             snapshot: Some(snapshot.clone()),
             remote_device_type: None,
             remote_endpoint_id: None,
+            remote_ephemeral: None,
             remote_ticket: None,
             connection_path: None,
             connection_candidates: Vec::new(),
@@ -803,6 +827,7 @@ mod tests {
             snapshot: None,
             remote_device_type: None,
             remote_endpoint_id: None,
+            remote_ephemeral: None,
             remote_ticket: None,
             connection_path: None,
             connection_candidates: Vec::new(),

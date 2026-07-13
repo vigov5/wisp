@@ -37,6 +37,10 @@ pub struct SendEvent {
     pub snapshot: Option<TransferSnapshot>,
     pub remote_device_type: Option<String>,
     pub remote_endpoint_id: Option<String>,
+    /// True when the peer is a throwaway identity (the browser receiver's
+    /// ephemeral key). The Dart side skips remembering it in Recent/Saved since
+    /// it can't be reconnected to. `None` until the peer identity is known.
+    pub remote_ephemeral: Option<bool>,
     /// Re-serialized ticket of the resolved peer addr.  For code-based sends
     /// the ticket is owned by the rendezvous server, not the original
     /// request, so we surface it here once `claim_peer` returns — the Dart

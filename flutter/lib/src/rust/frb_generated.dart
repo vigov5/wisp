@@ -1048,6 +1048,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool dco_decode_box_autoadd_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
+  }
+
+  @protected
   DiagnosticsActionData dco_decode_box_autoadd_diagnostics_action_data(
     dynamic raw,
   ) {
@@ -1273,6 +1279,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   String? dco_decode_opt_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  bool? dco_decode_opt_box_autoadd_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_bool(raw);
   }
 
   @protected
@@ -1515,8 +1527,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SendTransferEvent dco_decode_send_transfer_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 14)
-      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
+    if (arr.length != 15)
+      throw Exception('unexpected arr length: expect 15 but see ${arr.length}');
     return SendTransferEvent(
       phase: dco_decode_send_transfer_phase(arr[0]),
       destinationLabel: dco_decode_String(arr[1]),
@@ -1528,10 +1540,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       snapshot: dco_decode_opt_box_autoadd_transfer_snapshot_data(arr[7]),
       remoteDeviceType: dco_decode_opt_String(arr[8]),
       remoteEndpointId: dco_decode_opt_String(arr[9]),
-      remoteTicket: dco_decode_opt_String(arr[10]),
-      connectionPath: dco_decode_opt_box_autoadd_send_connection_path(arr[11]),
-      connectionCandidates: dco_decode_list_send_connection_candidate(arr[12]),
-      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[13]),
+      remoteEphemeral: dco_decode_opt_box_autoadd_bool(arr[10]),
+      remoteTicket: dco_decode_opt_String(arr[11]),
+      connectionPath: dco_decode_opt_box_autoadd_send_connection_path(arr[12]),
+      connectionCandidates: dco_decode_list_send_connection_candidate(arr[13]),
+      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[14]),
     );
   }
 
@@ -1722,6 +1735,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   bool sse_decode_bool(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  bool sse_decode_box_autoadd_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_bool(deserializer));
   }
 
   @protected
@@ -2021,6 +2040,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  bool? sse_decode_opt_box_autoadd_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_bool(deserializer));
     } else {
       return null;
     }
@@ -2348,6 +2378,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     );
     var var_remoteDeviceType = sse_decode_opt_String(deserializer);
     var var_remoteEndpointId = sse_decode_opt_String(deserializer);
+    var var_remoteEphemeral = sse_decode_opt_box_autoadd_bool(deserializer);
     var var_remoteTicket = sse_decode_opt_String(deserializer);
     var var_connectionPath = sse_decode_opt_box_autoadd_send_connection_path(
       deserializer,
@@ -2369,6 +2400,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       snapshot: var_snapshot,
       remoteDeviceType: var_remoteDeviceType,
       remoteEndpointId: var_remoteEndpointId,
+      remoteEphemeral: var_remoteEphemeral,
       remoteTicket: var_remoteTicket,
       connectionPath: var_connectionPath,
       connectionCandidates: var_connectionCandidates,
@@ -2625,6 +2657,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_bool(bool self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self, serializer);
   }
 
   @protected
@@ -2907,6 +2945,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_bool(bool? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_bool(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_diagnostics_action_data(
     DiagnosticsActionData? self,
     SseSerializer serializer,
@@ -3185,6 +3233,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     );
     sse_encode_opt_String(self.remoteDeviceType, serializer);
     sse_encode_opt_String(self.remoteEndpointId, serializer);
+    sse_encode_opt_box_autoadd_bool(self.remoteEphemeral, serializer);
     sse_encode_opt_String(self.remoteTicket, serializer);
     sse_encode_opt_box_autoadd_send_connection_path(
       self.connectionPath,

@@ -77,6 +77,9 @@ pub struct SendTransferEvent {
     pub snapshot: Option<TransferSnapshotData>,
     pub remote_device_type: Option<String>,
     pub remote_endpoint_id: Option<String>,
+    /// True when the peer is a throwaway browser-receiver identity (ephemeral
+    /// key). Dart skips remembering it in Recent/Saved. `None` until known.
+    pub remote_ephemeral: Option<bool>,
     /// Re-serialized ticket of the resolved peer address (see
     /// `wisp_app::types::SendEvent::remote_ticket`).  Surfaced to Dart so
     /// the saved-devices repo can persist a `lastTicket` for code-based
@@ -287,6 +290,7 @@ fn terminal_event_for_app_error(destination_label: String, error: AppError) -> S
         snapshot: None,
         remote_device_type: None,
         remote_endpoint_id: None,
+        remote_ephemeral: None,
         remote_ticket: None,
         connection_path: None,
         connection_candidates: Vec::new(),
@@ -306,6 +310,7 @@ fn terminal_internal_failure_event(destination_label: String, detail: String) ->
         snapshot: None,
         remote_device_type: None,
         remote_endpoint_id: None,
+        remote_ephemeral: None,
         remote_ticket: None,
         connection_path: None,
         connection_candidates: Vec::new(),
@@ -356,6 +361,7 @@ fn map_event(event: AppSendEvent) -> SendTransferEvent {
         snapshot: event.snapshot.map(map_snapshot),
         remote_device_type: event.remote_device_type,
         remote_endpoint_id: event.remote_endpoint_id,
+        remote_ephemeral: event.remote_ephemeral,
         remote_ticket: event.remote_ticket,
         connection_path: event.connection_path.map(map_connection_path),
         connection_candidates: event
@@ -482,6 +488,7 @@ mod tests {
             snapshot: None,
             remote_device_type: None,
             remote_endpoint_id: None,
+        remote_ephemeral: None,
             remote_ticket: None,
             connection_path,
             error: None,

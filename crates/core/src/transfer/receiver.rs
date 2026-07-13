@@ -777,6 +777,8 @@ async fn do_handshake(
                     endpoint_id: endpoint.addr().id,
                     device_name: request.device_name.clone(),
                     device_type: to_protocol_device_type(request.device_type),
+                    web: false,
+                    ephemeral: false,
                 }
             })).await?;
             // The sender is now known (Hello carries its identity). Surface it

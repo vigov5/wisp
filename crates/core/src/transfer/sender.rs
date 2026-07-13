@@ -79,6 +79,8 @@ pub enum SenderEvent {
         receiver_device_name: String,
         receiver_device_type: DeviceType,
         receiver_endpoint_id: EndpointId,
+        receiver_web: bool,
+        receiver_ephemeral: bool,
         prepared_plan: TransferPlan,
     },
     Accepted {
@@ -86,6 +88,8 @@ pub enum SenderEvent {
         receiver_device_name: String,
         receiver_device_type: DeviceType,
         receiver_endpoint_id: EndpointId,
+        receiver_web: bool,
+        receiver_ephemeral: bool,
         prepared_plan: TransferPlan,
     },
     Declined {
@@ -368,6 +372,8 @@ impl SenderSession {
                     receiver_device_name: peer.identity.device_name.clone(),
                     receiver_device_type: peer.identity.device_type,
                     receiver_endpoint_id: peer.identity.endpoint_id,
+                    receiver_web: peer.identity.web,
+                    receiver_ephemeral: peer.identity.ephemeral,
                     prepared_plan: prepared_plan.clone(),
                 });
             }
@@ -740,6 +746,8 @@ where
         receiver_device_name: peer_hello.identity.device_name,
         receiver_device_type: peer_hello.identity.device_type,
         receiver_endpoint_id: peer_hello.identity.endpoint_id,
+        receiver_web: peer_hello.identity.web,
+        receiver_ephemeral: peer_hello.identity.ephemeral,
         prepared_plan,
     });
     Ok(handler)
@@ -991,6 +999,8 @@ mod tests {
                         endpoint_id: expected_receiver_endpoint_id,
                         device_name: "receiver".to_owned(),
                         device_type: DeviceType::Laptop,
+                        web: false,
+                        ephemeral: false,
                     },
                 }),
             )
@@ -1041,6 +1051,7 @@ mod tests {
                 receiver_device_type: _,
                 receiver_endpoint_id: endpoint_id,
                 prepared_plan,
+                ..
             }] if session_id == "session-1"
                 && receiver_device_name == "receiver"
                 && *endpoint_id == expected_receiver_endpoint_id
@@ -1287,6 +1298,8 @@ mod tests {
             endpoint_id: SecretKey::from_bytes(&[1; 32]).public(),
             device_name: "sender".to_owned(),
             device_type: DeviceType::Laptop,
+            web: false,
+            ephemeral: false,
         }
     }
 

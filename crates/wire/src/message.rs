@@ -61,6 +61,18 @@ pub struct Identity {
     pub endpoint_id: EndpointId,
     pub device_name: String,
     pub device_type: DeviceType,
+    /// True when this peer is the browser receiver, so the other side can render
+    /// a web glyph for it instead of the phone/laptop `device_type`. Optional on
+    /// the wire (`default` = false) so peers that predate the field still
+    /// deserialize.
+    #[serde(default)]
+    pub web: bool,
+    /// True when this identity is throwaway — no persistent key, so it changes
+    /// every session (the default browser receiver). The peer uses this to skip
+    /// remembering it in Recent/Saved devices, since it can never be reconnected
+    /// to. A future browser receiver with a persisted key would send `false`.
+    #[serde(default)]
+    pub ephemeral: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -288,6 +300,8 @@ mod tests {
                 endpoint_id: SecretKey::from_bytes(&[1; 32]).public(),
                 device_name: "sam-mac".to_owned(),
                 device_type: DeviceType::Laptop,
+                web: false,
+                ephemeral: false,
             },
         });
 
@@ -376,6 +390,8 @@ mod tests {
                     endpoint_id: SecretKey::from_bytes(&[1; 32]).public(),
                     device_name: "sam-mac".to_owned(),
                     device_type: DeviceType::Laptop,
+                    web: false,
+                    ephemeral: false,
                 },
             }),
             SenderMessage::Offer(Offer {
@@ -408,6 +424,8 @@ mod tests {
                     endpoint_id: SecretKey::from_bytes(&[2; 32]).public(),
                     device_name: "phone".to_owned(),
                     device_type: DeviceType::Phone,
+                    web: false,
+                    ephemeral: false,
                 },
             }),
             ReceiverMessage::Accept(Accept {

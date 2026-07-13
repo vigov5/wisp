@@ -333,6 +333,8 @@ mod tests {
             endpoint_id: SecretKey::from_bytes(&[2; 32]).public(),
             device_name: "receiver".to_owned(),
             device_type: DeviceType::Laptop,
+            web: false,
+            ephemeral: false,
         });
 
         let sender_task = tokio::spawn(async move {
@@ -346,6 +348,8 @@ mod tests {
                         endpoint_id: SecretKey::from_bytes(&[1; 32]).public(),
                         device_name: "sender".to_owned(),
                         device_type: DeviceType::Phone,
+                        web: false,
+                        ephemeral: false,
                     },
                 }),
             )

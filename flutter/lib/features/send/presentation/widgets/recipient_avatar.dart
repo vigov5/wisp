@@ -148,8 +148,11 @@ class _RecipientAvatarState extends State<RecipientAvatar>
 
   @override
   Widget build(BuildContext context) {
-    final isPhone = widget.deviceType.toLowerCase() == 'phone';
-    final icon = isPhone ? Icons.smartphone_rounded : Icons.laptop_mac_rounded;
+    final icon = switch (widget.deviceType.toLowerCase()) {
+      'phone' => Icons.smartphone_rounded,
+      'web' => Icons.language_rounded,
+      _ => Icons.laptop_mac_rounded,
+    };
     final isRippling = _rippleController.isAnimating;
 
     return Column(
