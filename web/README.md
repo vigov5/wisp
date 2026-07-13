@@ -1,15 +1,29 @@
-# Wisp web receiver
+# Wisp web (receive + send)
 
-A no-install browser receiver: open the page, get a 6-char code, a native Wisp
-sender sends to that code, and the file downloads in the browser. File bytes ride
-n0 public relays end-to-end (the browser is relay-only); this page and the
-rendezvous server only carry the tiny code/ticket handshake.
+A no-install browser peer that both **receives** and **sends** over the same
+`wisp/transfer/v1` protocol as the native apps. A `Receive`/`Send` toggle picks
+the mode; file bytes ride n0 public relays end-to-end (the browser is
+relay-only), so this page and the rendezvous server only ever carry the tiny
+code/ticket handshake.
 
-Capabilities: sender identity + Accept/Decline, inline text/link receive
-(Copy/Save/Open), multi-file with per-transfer progress/speed/ETA, mid-transfer
-cancel, code TTL countdown + rotation, and an over-size warning. The visual
-system mirrors the native app's theme tokens (`web/style.css` ← `flutter/lib/
-theme/wisp_theme.dart`).
+**Receive:** open the page, get a 6-char code, a peer sends to it, and the files
+download in the browser. Sender identity + Accept/Decline, inline text/link
+receive (Copy/Save/Open), progress/speed/ETA, mid-transfer cancel, code TTL
+countdown + rotation, over-size warning. A single file downloads directly; a
+**multi-file / folder** transfer is bundled into one **`.zip`** (STORED, no
+compression) so the folder structure survives — a browser can't rebuild a tree on
+disk. This applies to *any* sender, including a native app sending a folder.
+
+**Send:** switch to `Send` (or open with `?mode=send`), enter the recipient's
+code, and send a text/link (rides the offer frame inline), or **files / a whole
+folder** (`webkitdirectory`, paths preserved). File bytes are staged in an
+in-memory blob store and served from the tab over the blobs ALPN — the receiver
+dials back and fetches, same pull model as native, RAM-bound. The receiver can be
+a browser or any native Wisp app (web→native delivers a real folder tree, not a
+zip). Because Send is lazy, a `?mode=send` visit never registers a receive code.
+
+The visual system mirrors the native app's theme tokens (`web/style.css` ←
+`flutter/lib/theme/wisp_theme.dart`).
 
 ## Build
 
@@ -51,6 +65,14 @@ the transfer rides an n0 relay even when the sender is on the same box.
 
 **Expected:** the browser shows the offer, auto-downloads a byte-identical file,
 and the status reaches “Transfer complete ✓” while the sender exits cleanly.
+
+### Testing browser *send*
+
+The browser can also be the sender. Open a receiver (native `wisp receive`, or a
+second browser tab in `Receive` mode) to get a code, then in a `Send` tab (or
+`?...&mode=send`) enter that code and send text or a file. Two browser tabs work
+on one machine — the transfer still rides a relay. Verified end-to-end web→web:
+inline text, and a file arrives byte-identical (checksum match).
 
 ## Deploy (GitHub Pages from `main:/docs`)
 

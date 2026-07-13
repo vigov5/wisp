@@ -1,15 +1,21 @@
 # wisp-web-receiver
 
-Browser (wasm32) file receiver for drift. A relay-only iroh endpoint +
-iroh-blobs `MemStore` that speaks the receiver half of the `wisp/transfer/v1`
-v4 control protocol (shared schema from `wisp-wire`). File bytes ride n0 public
+Browser (wasm32) peer for drift — both **receive** and **send** halves of the
+`wisp/transfer/v1` v4 control protocol (shared schema from `wisp-wire`) over a
+relay-only iroh endpoint + iroh-blobs `MemStore`. File bytes ride n0 public
 relays end-to-end; the static page that loads this wasm module carries none of
 them.
 
-Status: **Spike 0 (compile gate) is green.** `src/lib.rs` currently just proves
-the iroh 0.97 + iroh-blobs 0.99 (MemStore) + wisp-wire surface links for wasm.
-The real receiver (rendezvous register → accept `wisp/transfer/v1` → MemStore
-fetch → browser download) lands in Spike 1+.
+Two wasm-bindgen entry points, both driven from `web/app.js`:
+- [`WebReceiver`] (`src/lib.rs`) — register a code, accept inbound
+  `wisp/transfer/v1`, fetch the collection into `MemStore`, trigger downloads.
+- [`WebSender`] (`src/send.rs`) — claim a code, dial the receiver, and send
+  inline text/link (rides the offer) or a single file (staged in `MemStore` and
+  served from the tab via an `iroh::protocol::Router` on the blobs ALPN, so the
+  receiver dials back and fetches). RAM-bound; multi-file is future work.
+
+Despite the crate name, it's the whole browser transfer surface; the name is
+kept to avoid churn in `web/build.sh` / `sync-docs.sh` / the `pkg/` filenames.
 
 ## Building for the browser
 

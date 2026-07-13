@@ -3,7 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Wisp — Receive in your browser</title>
+  <title>Wisp — send &amp; receive files in your browser</title>
+  <!-- Set the theme before first paint (no flash). Default dark; remembers the
+       user's choice. Explicit data-theme wins over prefers-color-scheme. -->
+  <script>
+    (function () {
+      var t = 'dark';
+      try {
+        t = localStorage.getItem('wisp-theme') || 'dark';
+      } catch (e) {}
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
@@ -12,6 +23,17 @@
        the tree until Alpine initialises so sections don't flash before their
        x-show flags apply. -->
   <main class="card" x-data x-cloak>
+    <!-- Light/dark toggle (default dark). Shows the current mode's glyph. -->
+    <button
+      class="theme-toggle"
+      type="button"
+      @click="$store.rx.toggleTheme()"
+      :title="$store.rx.theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+      aria-label="Toggle light/dark theme"
+    >
+      <svg x-show="$store.rx.theme === 'dark'" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/></svg>
+      <svg x-show="$store.rx.theme === 'light'" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 8c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/></svg>
+    </button>
     <header class="brand">
       <img
         class="brand-logo"
@@ -20,7 +42,8 @@
         width="64"
         height="64"
       />
-      <h1>Wisp <span class="sub">web receiver</span></h1>
+      <h1>Wisp</h1>
+      <p class="tagline">Send &amp; receive files in your browser — peer-to-peer, no install.</p>
       <p class="brand-meta">
         <!-- Kept in sync with flutter/pubspec.yaml by web/sync-docs.sh; don't edit by hand. -->
         <span id="app-version">v1.12.0</span>
@@ -36,6 +59,29 @@
       </p>
     </header>
 
+    <!-- Mode switch: Receive (default) ↔ Send. Picking Receive lazily binds the
+         receiver + registers a code; Send never does. -->
+    <div class="seg" role="tablist">
+      <button
+        class="seg-btn"
+        type="button"
+        role="tab"
+        :aria-selected="$store.rx.mode === 'receive'"
+        :class="{ 'seg-active': $store.rx.mode === 'receive' }"
+        @click="$store.rx.setMode('receive')"
+      >Receive</button>
+      <button
+        class="seg-btn"
+        type="button"
+        role="tab"
+        :aria-selected="$store.rx.mode === 'send'"
+        :class="{ 'seg-active': $store.rx.mode === 'send' }"
+        @click="$store.rx.setMode('send')"
+      >Send</button>
+    </div>
+
+    <!-- ══ Receive ══════════════════════════════════════════════════════════ -->
+    <div x-show="$store.rx.mode === 'receive'">
     <section id="code-section" x-show="$store.rx.codeVisible">
       <p class="label">Enter this code in the sender:</p>
       <div class="code-row">
@@ -70,6 +116,8 @@
           <li x-text="f.label"></li>
         </template>
       </ul>
+      <!-- Inline text/link offer: preview the payload before Accept. -->
+      <pre class="text-content" x-show="$store.rx.offerText !== null" x-text="$store.rx.offerText"></pre>
       <p class="warn" x-show="$store.rx.warning" x-text="$store.rx.warning"></p>
       <div class="decision" x-show="$store.rx.decisionVisible">
         <button class="btn btn-danger" type="button" @click="$store.rx.decline()">Decline</button>
@@ -106,6 +154,122 @@
         >Open link</a>
       </div>
     </section>
+    </div>
+    <!-- ══ Send (text / link) ══════════════════════════════════════════════ -->
+    <div x-show="$store.rx.mode === 'send'" x-cloak>
+      <!-- Form — shown while idle or after a recoverable error, so the user can
+           fix the code/text and retry without losing what they typed. -->
+      <section
+        x-show="$store.rx.sendPhase === 'idle' || $store.rx.sendPhase === 'error'"
+      >
+        <p class="label">Receiver code</p>
+        <input
+          class="text-input code-input"
+          type="text"
+          maxlength="6"
+          autocapitalize="characters"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="ABC123"
+          x-model="$store.rx.sendForm.code"
+          @keydown.enter.prevent="$store.rx.doSend()"
+        />
+        <p class="label" style="margin-top: var(--space-4)">Text or link</p>
+        <textarea
+          class="text-input text-area"
+          rows="4"
+          placeholder="Type or paste text, or a link…"
+          x-model="$store.rx.sendForm.text"
+          :disabled="!!$store.rx.sendForm.fileLabel"
+        ></textarea>
+
+        <p class="or-rule"><span>or send files</span></p>
+        <div class="pick-row">
+          <label class="file-pick">
+            <input type="file" multiple @change="$store.rx.ingestFiles($event)" />
+            <span class="file-pick-label">Choose files…</span>
+          </label>
+          <label class="file-pick">
+            <!-- webkitdirectory: pick a whole folder; the tree round-trips and
+                 the receiver bundles it back into one .zip. -->
+            <input type="file" webkitdirectory @change="$store.rx.ingestFiles($event)" />
+            <span class="file-pick-label">Choose a folder…</span>
+          </label>
+        </div>
+        <div class="picked" x-show="$store.rx.sendForm.fileLabel">
+          <span class="picked-label" x-text="$store.rx.sendForm.fileLabel"></span>
+          <button class="btn-link" type="button" @click="$store.rx.clearFiles()">Remove</button>
+        </div>
+
+        <button
+          class="btn btn-primary btn-block"
+          type="button"
+          @click="$store.rx.doSend()"
+        >Send</button>
+        <p class="warn" x-show="$store.rx.sendPhase === 'error'" x-text="$store.rx.sendStatus"></p>
+        <p class="hint">
+          Ask the recipient to open this page, pick <strong>Receive</strong>, and
+          read you their 6-character code. It flows peer-to-peer over relay — never
+          through this page or any server. A folder arrives as a single
+          <code>.zip</code>.
+        </p>
+        <p class="hint hint-warn">
+          ⚠ Everything is held in this tab's memory (RAM) while sending —
+          very large files or folders aren't recommended and may fail.
+        </p>
+      </section>
+
+      <!-- In-flight: connecting / waiting for the recipient / delivering. -->
+      <section x-show="$store.rx.sendBusy">
+        <p class="label">Sending to</p>
+        <div
+          class="sender"
+          x-show="$store.rx.sendReceiver.name && $store.rx.sendPhase !== 'connecting'"
+        >
+          <span class="sender-badge" :style="$store.rx.sendBadgeStyle" x-text="$store.rx.sendBadge"></span>
+          <span class="device-icon" x-html="$store.rx.sendDeviceIcon"></span>
+          <span class="sender-name" x-text="$store.rx.sendReceiver.name"></span>
+        </div>
+        <div x-show="$store.rx.sendPhase === 'accepted' && $store.rx.sendProgressPct > 0">
+          <div class="progress-wrap">
+            <div class="progress-bar" :style="`width:${$store.rx.sendProgressPct}%`"></div>
+          </div>
+        </div>
+        <p class="status" x-text="$store.rx.sendStatus"></p>
+        <button
+          class="btn btn-danger btn-block"
+          type="button"
+          @click="$store.rx.cancelSend()"
+        >Cancel</button>
+      </section>
+
+      <!-- Terminal: sent / declined / cancelled. -->
+      <section
+        x-show="$store.rx.sendPhase === 'done' || $store.rx.sendPhase === 'declined' || $store.rx.sendPhase === 'cancelled'"
+      >
+        <p class="status" x-text="$store.rx.sendStatus"></p>
+        <button
+          class="btn btn-primary btn-block"
+          type="button"
+          @click="$store.rx.resetSend()"
+        >Send another</button>
+      </section>
+    </div>
+
+    <!-- Native apps: shown in both modes so browser users can grab the full
+         app (LAN/direct P2P, QR pairing, on-disk saves — none possible here). -->
+    <footer class="native-cta">
+      <span>Also available as a native app:</span>
+      <span class="native-links">
+        <a href="https://github.com/vigov5/wisp/releases/latest" target="_blank" rel="noopener noreferrer">macOS</a>
+        <span class="dot">·</span>
+        <a href="https://github.com/vigov5/wisp/releases/latest" target="_blank" rel="noopener noreferrer">Windows</a>
+        <span class="dot">·</span>
+        <a href="https://github.com/vigov5/wisp/releases/latest" target="_blank" rel="noopener noreferrer">Linux</a>
+        <span class="dot">·</span>
+        <a href="https://play.google.com/store/apps/details?id=dev.vigov5.wisp" target="_blank" rel="noopener noreferrer">Android</a>
+      </span>
+    </footer>
   </main>
 
   <script type="module" src="./app.js"></script>

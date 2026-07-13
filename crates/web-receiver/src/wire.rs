@@ -52,6 +52,56 @@ where
         kind: message.kind(),
         message: serde_json::to_value(message).context("serializing receiver message")?,
     };
+    write_envelope(writer, envelope).await
+}
+
+/// Read one framed [`ReceiverMessage`], validating protocol version and role.
+/// The sender half of the browser build uses this to read the peer's replies.
+pub async fn read_receiver_message<R>(reader: &mut R) -> Result<ReceiverMessage>
+where
+    R: AsyncRead + Unpin,
+{
+    let len = reader.read_u32().await.context("reading frame length")? as usize;
+    if len > MAX_MESSAGE_BYTES {
+        bail!("frame too large: {len} > {MAX_MESSAGE_BYTES}");
+    }
+    let mut buf = vec![0u8; len];
+    reader
+        .read_exact(&mut buf)
+        .await
+        .context("reading frame body")?;
+    let envelope: MessageEnvelope = serde_json::from_slice(&buf).context("parsing envelope")?;
+    if envelope.version != PROTOCOL_VERSION {
+        bail!(
+            "unsupported protocol version {} (want {PROTOCOL_VERSION})",
+            envelope.version
+        );
+    }
+    if envelope.role != TransferRole::Receiver {
+        bail!("expected receiver role, got {:?}", envelope.role);
+    }
+    serde_json::from_value(envelope.message).context("parsing receiver message")
+}
+
+/// Write one framed [`SenderMessage`]. The browser sender uses this to drive
+/// the handshake (Hello / Offer / TransferAck / Cancel).
+pub async fn write_sender_message<W>(writer: &mut W, message: &SenderMessage) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    let envelope = MessageEnvelope {
+        version: PROTOCOL_VERSION,
+        role: message.role(),
+        kind: message.kind(),
+        message: serde_json::to_value(message).context("serializing sender message")?,
+    };
+    write_envelope(writer, envelope).await
+}
+
+async fn write_envelope<W>(writer: &mut W, envelope: MessageEnvelope) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
     let bytes = serde_json::to_vec(&envelope).context("serializing envelope")?;
     if bytes.len() > MAX_MESSAGE_BYTES {
         bail!("frame too large: {} > {MAX_MESSAGE_BYTES}", bytes.len());

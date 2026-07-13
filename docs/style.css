@@ -96,12 +96,43 @@ body {
 
 /* Card — native cardTheme: surface fill, hairline border, 12px radius, flat. */
 .card {
+  position: relative;
   width: 100%;
   max-width: 440px;
   background: var(--wc-surface);
   border: 1px solid var(--wc-border);
   border-radius: var(--radius-md);
   padding: var(--space-6);
+}
+
+/* Light/dark toggle — a quiet icon button in the card's top-right corner. */
+.theme-toggle {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--wc-border);
+  border-radius: var(--radius-sm);
+  background: var(--wc-surface2);
+  color: var(--wc-muted);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.theme-toggle:hover {
+  color: var(--wc-ink);
+  border-color: var(--accent-cyan);
+}
+.theme-toggle svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
 }
 
 /* Type scale — mirrors the native TextTheme. */
@@ -132,6 +163,13 @@ h1 .sub {
 }
 .brand h1 {
   margin: 0 0 var(--space-2);
+}
+/* One-line feature blurb under the wordmark (repo-style description). */
+.tagline {
+  margin: 0 0 var(--space-3);
+  color: var(--wc-muted);
+  font-size: 13.5px;
+  line-height: 1.45;
 }
 .brand-meta {
   display: flex;
@@ -345,6 +383,193 @@ section:first-of-type {
   width: 20px;
   height: 20px;
   fill: currentColor;
+}
+
+/* Segmented Receive/Send switch — a pill track with the active tab filled,
+   mirroring the native segmented control. */
+.seg {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: var(--space-5);
+  background: var(--wc-fill);
+  border: 1px solid var(--wc-border);
+  border-radius: var(--radius-sm);
+}
+.seg-btn {
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--wc-muted);
+  font: 600 13.5px/1 var(--font-sans);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.seg-btn:hover:not(.seg-active) {
+  color: var(--wc-ink);
+}
+.seg-active {
+  background: var(--wc-surface);
+  color: var(--wc-ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+:root[data-theme="dark"] .seg-active {
+  background: var(--wc-surface2);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .seg-active {
+    background: var(--wc-surface2);
+  }
+}
+
+/* Send form fields — native text-field look: surface2 fill, hairline border. */
+.text-input {
+  width: 100%;
+  padding: var(--space-3);
+  background: var(--wc-surface2);
+  color: var(--wc-ink);
+  border: 1px solid var(--wc-border);
+  border-radius: var(--radius-sm);
+  font: 400 14px/1.4 var(--font-sans);
+}
+.text-input::placeholder {
+  color: var(--wc-subtle);
+}
+.text-input:focus {
+  outline: none;
+  /* Match the native inputDecorationTheme focus ring (kAccentCyanStrong). */
+  border-color: var(--accent-cyan-strong);
+}
+.code-input {
+  font: 700 20px/1.2 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: center;
+}
+.text-area {
+  resize: vertical;
+  min-height: 88px;
+}
+.btn-block {
+  width: 100%;
+  margin-top: var(--space-4);
+}
+
+/* "or attach a file" divider — a centred label across a hairline rule. */
+.or-rule {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 var(--space-3);
+  color: var(--wc-muted);
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.or-rule::before,
+.or-rule::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--wc-border);
+}
+
+/* Two side-by-side pickers: files (multiple) and folder (webkitdirectory). */
+.pick-row {
+  display: flex;
+  gap: var(--space-3);
+}
+/* File/folder picker styled as a dashed drop-zone-ish button. The native
+   <input type=file> is hidden; the label is the visible control. */
+.file-pick {
+  flex: 1;
+  display: block;
+  padding: var(--space-3);
+  border: 1px dashed var(--wc-border);
+  border-radius: var(--radius-sm);
+  background: var(--wc-surface2);
+  cursor: pointer;
+  text-align: center;
+}
+.file-pick:hover {
+  border-color: var(--accent-cyan);
+}
+.file-pick input[type="file"] {
+  display: none;
+}
+.file-pick-label {
+  color: var(--wc-ink);
+  font-size: 13px;
+  word-break: break-all;
+}
+/* Summary of the picked files + a remove link. */
+.picked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--wc-border);
+  border-radius: var(--radius-sm);
+  background: var(--wc-surface2);
+  font-size: 13px;
+}
+.picked-label {
+  word-break: break-all;
+}
+.btn-link {
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--danger);
+  font: 600 12.5px/1 var(--font-sans);
+  cursor: pointer;
+}
+.btn-link:hover {
+  text-decoration: underline;
+}
+/* RAM caution — native relay amber, distinct from the neutral hint. */
+.hint-warn {
+  margin-top: var(--space-2);
+  color: var(--accent-relay);
+}
+.hint code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* Native-app footer — a hairline-topped note pointing browser users at the
+   full apps (which can do LAN/direct/QR/disk-save the browser can't). */
+.native-cta {
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--wc-border);
+  text-align: center;
+  color: var(--wc-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.native-links {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+}
+.native-links a {
+  color: var(--wc-accent-fg);
+  text-decoration: none;
+  font-weight: 600;
+}
+.native-links a:hover {
+  text-decoration: underline;
 }
 
 /* Received text — mono on the native dark code surface. */

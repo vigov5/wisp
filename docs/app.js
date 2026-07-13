@@ -1,5 +1,5 @@
 import Alpine from './vendor/alpine.esm.js';
-import init, { WebReceiver } from './pkg/wisp_web_receiver.js';
+import init, { WebReceiver, WebSender } from './pkg/wisp_web_receiver.js';
 
 // Rendezvous server the browser registers with. Override with ?rendezvous=... for
 // local testing (e.g. ?rendezvous=http://localhost:8787). File bytes never touch
@@ -72,6 +72,17 @@ function deviceIconSvg(type) {
 Alpine.store('rx', {
   receiver: null,
 
+  // 'receive' | 'send' — which half of the card is showing. The receiver is
+  // lazy: it only binds an endpoint + registers a code once receive mode is
+  // actually entered (see ensureReceiver), so a send-only visit never burns a
+  // pairing code.
+  mode: 'receive',
+  _receiverStarted: false,
+
+  // 'dark' | 'light' — the inline <head> script already stamped data-theme
+  // before paint; this mirrors it for the toggle glyph, defaulting to dark.
+  theme: 'dark',
+
   code: '------',
   ttl: '',
   status: 'Loading…',
@@ -88,6 +99,9 @@ Alpine.store('rx', {
   deviceIcon: '',
 
   files: [],
+  // The inline text/link riding in the offer, shown as a preview *before*
+  // Accept so the user knows what they're accepting. null on a file offer.
+  offerText: null,
   warning: '',
 
   progressPct: 0,
@@ -101,6 +115,22 @@ Alpine.store('rx', {
 
   copyCodeLabel: 'Copy code',
 
+  // ── Send (text/link/files) ──────────────────────────────────────────────────
+  // Form inputs and the flow's phase, driven by WebSender events.
+  sendForm: { code: '', text: '', fileLabel: '' },
+  // idle | connecting | waiting | accepted | done | declined | cancelled | error
+  sendPhase: 'idle',
+  sendStatus: '',
+  sendProgressPct: 0,
+  sendReceiver: { name: '', deviceType: '', web: false, pubkey: '' },
+  sendBadge: '',
+  sendBadgeStyle: '',
+  sendDeviceIcon: '',
+  _sender: null,
+  // Picked files (kept off the reactive tree — only a summary label is bound):
+  // [{ file, path }], where path is the folder-relative path for a folder pick.
+  _files: [],
+
   _totalBytes: 0,
   _progressStart: 0,
   _ttlTimer: null,
@@ -112,6 +142,7 @@ Alpine.store('rx', {
     this.decisionVisible = false;
     this.progressVisible = false;
     this.files = [];
+    this.offerText = null;
     this.progressPct = 0;
     this.progressText = '';
   },
@@ -159,6 +190,20 @@ Alpine.store('rx', {
       case 'offer':
         this.offerVisible = true;
         this._totalBytes = event.totalBytes;
+        // Inline text/link: no files, no size — an empty manifest. Show the
+        // text itself and prompt "Accept this text/link?" instead of the
+        // nonsensical "Accept 0 file(s), 0 B?" the file path would produce.
+        if (event.inlineText != null) {
+          this.offerText = event.inlineText;
+          this.files = [];
+          this.warning = '';
+          this.decisionVisible = true;
+          this.status = isUrl(event.inlineText)
+            ? 'Accept this link?'
+            : 'Accept this text?';
+          break;
+        }
+        this.offerText = null;
         this.files = event.files.map((f) => ({
           path: f.path,
           label: `${f.path} — ${formatBytes(f.size)}`,
@@ -298,22 +343,248 @@ Alpine.store('rx', {
     a.click();
     URL.revokeObjectURL(url);
   },
+
+  // ── Theme ────────────────────────────────────────────────────────────────
+  toggleTheme() {
+    this.theme = this.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', this.theme);
+    try {
+      localStorage.setItem('wisp-theme', this.theme);
+    } catch (e) {
+      /* private mode / storage disabled — the toggle still works this session */
+    }
+    // Identity badges are tinted per-theme (text lightness flips), so recolor
+    // any that are currently on screen.
+    if (this.sender.pubkey) this.badgeStyle = badgeStyleFor(this.sender.pubkey);
+    if (this.sendReceiver.pubkey) this.sendBadgeStyle = badgeStyleFor(this.sendReceiver.pubkey);
+  },
+
+  // ── Mode + lazy receiver ────────────────────────────────────────────────
+  setMode(mode) {
+    this.mode = mode;
+    if (mode === 'receive') this.ensureReceiver();
+  },
+
+  // Bind the receiver + register a code the first time receive mode is shown.
+  // Idempotent: switching back and forth reuses the one live receiver.
+  async ensureReceiver() {
+    if (this._receiverStarted) return;
+    this._receiverStarted = true;
+    this.status = 'Loading…';
+    try {
+      await wasmReady;
+      this.receiver = await WebReceiver.start(RENDEZVOUS_URL, (e) => this.onEvent(e));
+    } catch (err) {
+      this._receiverStarted = false;
+      this.status = `Failed to start: ${err}`;
+      console.error(err);
+    }
+  },
+
+  // ── Send (text/link/files) ──────────────────────────────────────────────────
+  // Both the file picker and the folder picker feed here; a folder pick carries
+  // webkitRelativePath so the tree round-trips (the receiver zips it back). Picks
+  // are *additive* (deduped by path) so you can combine loose files with a
+  // folder; a repeat pick of the same path just refreshes it.
+  ingestFiles(event) {
+    const incoming = Array.from(event.target.files || []).map((f) => ({
+      file: f,
+      path: f.webkitRelativePath || f.name,
+    }));
+    const byPath = new Map(this._files.map((e) => [e.path, e]));
+    for (const e of incoming) byPath.set(e.path, e);
+    this._files = Array.from(byPath.values());
+    this._refreshFileLabel();
+    // Let the same file/folder be re-picked later (change won't fire otherwise).
+    event.target.value = '';
+  },
+
+  // Summary label: name after the common top folder only when *every* file
+  // shares one (matching the receiver's zip-naming rule — else it's
+  // `wisp-files.zip`); otherwise just a count.
+  _refreshFileLabel() {
+    const files = this._files;
+    const total = files.reduce((s, e) => s + e.file.size, 0);
+    if (files.length === 0) {
+      this.sendForm.fileLabel = '';
+    } else if (files.length === 1) {
+      this.sendForm.fileLabel = `${files[0].path} · ${formatBytes(total)}`;
+    } else {
+      const tops = new Set(
+        files.map((e) => (e.path.includes('/') ? e.path.split('/')[0] : null)),
+      );
+      const prefix = tops.size === 1 && !tops.has(null) ? `${[...tops][0]}/ — ` : '';
+      this.sendForm.fileLabel = `${prefix}${files.length} files · ${formatBytes(total)}`;
+    }
+  },
+
+  clearFiles() {
+    this._files = [];
+    this.sendForm.fileLabel = '';
+  },
+
+  async doSend() {
+    const code = this.sendForm.code.trim().toUpperCase();
+    const text = this.sendForm.text;
+    const files = this._files;
+    if (code.length !== 6) {
+      this.sendPhase = 'error';
+      this.sendStatus = 'Enter the 6-character code from the receiver.';
+      return;
+    }
+    if (!files.length && !text.trim()) {
+      this.sendPhase = 'error';
+      this.sendStatus = 'Enter some text or a link, or add files.';
+      return;
+    }
+    this.sendPhase = 'connecting';
+    this.sendProgressPct = 0;
+    this.sendStatus = 'Connecting…';
+    try {
+      await wasmReady;
+      const cb = (e) => this.onSendEvent(e);
+      if (files.length) {
+        // Read every file into memory — the wasm store is RAM-bound, so the
+        // whole batch has to fit in the tab.
+        const paths = files.map((e) => e.path);
+        const blobs = await Promise.all(
+          files.map(async (e) => new Uint8Array(await e.file.arrayBuffer())),
+        );
+        this._sender = await WebSender.sendFiles(
+          RENDEZVOUS_URL,
+          code,
+          paths,
+          blobs,
+          'Browser',
+          cb,
+        );
+      } else {
+        this._sender = await WebSender.sendText(RENDEZVOUS_URL, code, text, 'Browser', cb);
+      }
+    } catch (err) {
+      // Rejected before the background task started — almost always a bad or
+      // expired code, or a claim/connect failure worth showing on the form.
+      this.sendPhase = 'error';
+      this.sendStatus = `${err}`.replace(/^Error:\s*/, '');
+      console.error(err);
+    }
+  },
+
+  onSendEvent(event) {
+    switch (event.type) {
+      case 'connecting':
+        this.sendPhase = 'connecting';
+        this.sendStatus = 'Connecting over relay…';
+        break;
+
+      case 'waitingForDecision':
+        this.sendPhase = 'waiting';
+        this.sendReceiver = {
+          name: event.receiverName || 'Device',
+          deviceType: event.receiverDeviceType || '',
+          web: !!event.receiverWeb,
+          pubkey: event.receiverPubkey || '',
+        };
+        this.sendBadge = shortPubkey(event.receiverPubkey);
+        this.sendBadgeStyle = badgeStyleFor(event.receiverPubkey);
+        // A web receiver reads as a laptop glyph (matching native).
+        this.sendDeviceIcon = deviceIconSvg(
+          event.receiverWeb ? 'laptop' : event.receiverDeviceType,
+        );
+        this.sendStatus = `Waiting for ${this.sendReceiver.name} to accept…`;
+        break;
+
+      case 'accepted':
+        this.sendPhase = 'accepted';
+        this.sendStatus = 'Accepted — delivering…';
+        break;
+
+      case 'transferStarted':
+        this.sendPhase = 'accepted';
+        this.sendProgressPct = 0;
+        this.sendStatus = 'Sending file over relay…';
+        break;
+
+      case 'progress': {
+        this.sendPhase = 'accepted';
+        this.sendProgressPct = event.totalBytes
+          ? Math.min(100, (event.bytesSent / event.totalBytes) * 100)
+          : 0;
+        this.sendStatus = `${formatBytes(event.bytesSent)} / ${formatBytes(event.totalBytes)}`;
+        break;
+      }
+
+      case 'completed':
+        this.sendPhase = 'done';
+        this.sendStatus = 'Sent ✓';
+        this._sender = null;
+        break;
+
+      case 'declined':
+        this.sendPhase = 'declined';
+        this.sendStatus = event.reason
+          ? `Declined: ${event.reason}`
+          : 'Declined by the recipient.';
+        this._sender = null;
+        break;
+
+      case 'cancelled':
+        this.sendPhase = 'cancelled';
+        this.sendStatus = 'Cancelled.';
+        this._sender = null;
+        break;
+
+      case 'error':
+        this.sendPhase = 'error';
+        this.sendStatus = event.message;
+        this._sender = null;
+        break;
+
+      default:
+        console.warn('unknown send event', event);
+    }
+  },
+
+  cancelSend() {
+    if (this._sender) {
+      this.sendStatus = 'Cancelling…';
+      this._sender.cancel();
+    }
+  },
+
+  // Return to the form to send again (keeps the code, clears text + files).
+  resetSend() {
+    this.sendPhase = 'idle';
+    this.sendStatus = '';
+    this.sendProgressPct = 0;
+    this.sendForm.text = '';
+    this.clearFiles();
+    this._sender = null;
+  },
+
+  get sendBusy() {
+    return (
+      this.sendPhase === 'connecting' ||
+      this.sendPhase === 'waiting' ||
+      this.sendPhase === 'accepted'
+    );
+  },
 });
+
+// Kick off the wasm module load once; both halves await this before touching
+// WebReceiver / WebSender.
+const wasmReady = init();
 
 window.Alpine = Alpine;
 Alpine.start();
 
-async function main() {
-  const rx = Alpine.store('rx');
-  rx.status = 'Loading…';
-  await init();
-  try {
-    rx.receiver = await WebReceiver.start(RENDEZVOUS_URL, (e) => rx.onEvent(e));
-    console.log('receiver started, code:', rx.receiver.code());
-  } catch (err) {
-    rx.status = `Failed to start: ${err}`;
-    console.error(err);
-  }
-}
+// Land on receive by default (the "receive in a browser" entry), or send when
+// linked with ?mode=send — which, thanks to the lazy receiver, registers no
+// pairing code for a send-only visit.
+// Mirror the theme the inline <head> script already applied, so the toggle
+// glyph starts correct.
+Alpine.store('rx').theme =
+  document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
 
-main();
+const initialMode = params.get('mode') === 'send' ? 'send' : 'receive';
+Alpine.store('rx').setMode(initialMode);

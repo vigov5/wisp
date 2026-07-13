@@ -12,7 +12,11 @@
 //! polish, cancel, and the inline-text path land in later stages (B2/B3).
 
 mod download;
+mod send;
 mod wire;
+mod zip;
+
+pub use send::WebSender;
 
 use anyhow::{Context, Result, bail};
 use futures_lite::StreamExt;
@@ -313,6 +317,30 @@ fn device_type_label(device_type: DeviceType) -> &'static str {
     }
 }
 
+/// Name the bundled download. When every file sits under one top-level folder
+/// (a folder send), name the zip after it (`album/…` → `album.zip`); otherwise
+/// use a neutral name.
+fn zip_archive_name(files: &[(String, Vec<u8>)]) -> String {
+    match files.first().and_then(|(p, _)| top_segment(p)) {
+        Some(top)
+            if files
+                .iter()
+                .all(|(p, _)| top_segment(p).as_deref() == Some(top.as_str())) =>
+        {
+            format!("{top}.zip")
+        }
+        _ => "wisp-files.zip".to_owned(),
+    }
+}
+
+/// The first path segment when `path` lives inside a folder (`a/b.txt` → `a`);
+/// `None` for a bare top-level file (no separator).
+fn top_segment(path: &str) -> Option<String> {
+    let norm = path.replace('\\', "/");
+    let norm = norm.trim_start_matches('/');
+    norm.find('/').map(|idx| norm[..idx].to_owned())
+}
+
 async fn handle_connection(
     endpoint: &Endpoint,
     store: &Store,
@@ -577,17 +605,42 @@ async fn handle_connection(
         }
     }
 
-    // Read the collection (path → hash), then hand each file to the browser.
+    // Read the collection (path → hash) into memory.
     let root_hash: Hash = blob_ticket.hash();
     let collection = Collection::load(root_hash, store).await?;
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     for (path, hash) in collection.into_iter() {
-        let bytes = store.get_bytes(hash).await?;
-        let url = download::trigger_download(&path, &bytes)?;
+        let bytes = store.get_bytes(hash).await?.to_vec();
+        files.push((path, bytes));
+    }
+
+    if files.len() <= 1 {
+        // Single file: download it directly under its own name.
+        for (path, bytes) in &files {
+            let url = download::trigger_download(path, bytes)?;
+            emit(
+                on_event,
+                &Event::FileReady {
+                    path: path.clone(),
+                    size: bytes.len() as u64,
+                    url,
+                },
+            );
+        }
+    } else {
+        // Multi-file / folder: pack into one STORED zip so the folder structure
+        // survives and the user gets a single download. A browser can't rebuild
+        // a directory tree on disk, and per-file `<a download>`s flatten the
+        // paths — so bundling is the only way the structure round-trips.
+        let zip_name = zip_archive_name(&files);
+        let archive = zip::build_stored_zip(&files);
+        let size = archive.len() as u64;
+        let url = download::trigger_download(&zip_name, &archive)?;
         emit(
             on_event,
             &Event::FileReady {
-                path,
-                size: bytes.len() as u64,
+                path: zip_name,
+                size,
                 url,
             },
         );
