@@ -209,14 +209,17 @@ h1 .sub {
   font-weight: 500;
 }
 
-/* Pairing code — mono on the native dark code surface. */
+/* Pairing code — mono on a theme surface with a hairline border and ink text,
+   matching the native idle-card code chip (context.wc.surface / border / ink),
+   so it flips light/dark instead of sitting on a fixed dark slab. */
 .code {
   font: 700 40px/1.1 var(--font-mono);
   letter-spacing: 0.18em;
-  color: var(--accent-cyan);
+  color: var(--wc-ink);
   text-align: center;
   padding: var(--space-5);
-  background: var(--wc-code-bg);
+  background: var(--wc-surface2);
+  border: 1px solid var(--wc-border);
   border-radius: var(--radius-md);
   margin-bottom: var(--space-2);
 }
