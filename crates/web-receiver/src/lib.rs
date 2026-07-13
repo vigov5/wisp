@@ -481,66 +481,99 @@ async fn handle_connection(
     // generator's state lives in the stream, not the dropped future.
     enum Step {
         Item(Option<GetProgressItem>),
+        // A framed message that arrived on the control channel mid-transfer.
+        Control(Result<SenderMessage>),
         Disconnected,
         Tick,
     }
-    let mut since_yield: u32 = 0;
-    loop {
-        // Cancel is checked every iteration, not just on the idle tick: a fast,
-        // steady stream keeps `next` immediately ready, so the tick branch would
-        // otherwise starve and the flag would never be observed.
-        if *cancel.borrow() {
-            let _ = wire::write_receiver_message(
-                &mut control_send,
-                &ReceiverMessage::Cancel(Cancel {
-                    session_id: session_id.clone(),
-                    by: TransferRole::Receiver,
-                    phase: CancelPhase::Transferring,
-                    reason: "cancelled by recipient".to_owned(),
-                }),
-            )
-            .await;
-            emit(on_event, &Event::Cancelled);
-            return Ok(());
-        }
+    // Listen on the control channel for a sender-initiated Cancel *while* the
+    // blob fetch runs. The sender writes `Cancel` on the control stream before
+    // it tears the connection down (sender.rs), so watching here reacts in
+    // ~1 RTT instead of waiting out the connection drop / QUIC idle timeout —
+    // and lets us show a clean "cancelled" instead of a "sender disconnected"
+    // error. One long-lived read future is polled across iterations; recreating
+    // it each turn could drop a partially-read frame, so once it resolves we
+    // stop racing it. The block scopes the `&mut control_recv` borrow so the
+    // completion handshake below can reuse the stream.
+    {
+        let mut control_read = Some(Box::pin(wire::read_sender_message(&mut control_recv)));
+        let mut since_yield: u32 = 0;
+        loop {
+            // Cancel is checked every iteration, not just on the idle tick: a fast,
+            // steady stream keeps `next` immediately ready, so the tick branch would
+            // otherwise starve and the flag would never be observed.
+            if *cancel.borrow() {
+                let _ = wire::write_receiver_message(
+                    &mut control_send,
+                    &ReceiverMessage::Cancel(Cancel {
+                        session_id: session_id.clone(),
+                        by: TransferRole::Receiver,
+                        phase: CancelPhase::Transferring,
+                        reason: "cancelled by recipient".to_owned(),
+                    }),
+                )
+                .await;
+                emit(on_event, &Event::Cancelled);
+                return Ok(());
+            }
 
-        // Yield to the browser event loop periodically. The fetch is CPU-bound
-        // (relay AEAD + blake3 verification) and wasm is single-threaded, so a
-        // burst of already-buffered chunks would run to completion without ever
-        // returning control — freezing the tab. While frozen, queued input never
-        // dispatches (the Cancel click is dropped) and the DOM never repaints
-        // (Accept/Decline stay on screen mid-transfer). A 0-delay timer hands the
-        // event loop one macrotask turn to process both. Every ~8 items keeps the
-        // throughput cost negligible.
-        since_yield += 1;
-        if since_yield >= 8 {
-            since_yield = 0;
-            n0_future::time::sleep(Duration::from_millis(0)).await;
-        }
+            // Yield to the browser event loop periodically. The fetch is CPU-bound
+            // (relay AEAD + blake3 verification) and wasm is single-threaded, so a
+            // burst of already-buffered chunks would run to completion without ever
+            // returning control — freezing the tab. While frozen, queued input never
+            // dispatches (the Cancel click is dropped) and the DOM never repaints
+            // (Accept/Decline stay on screen mid-transfer). A 0-delay timer hands the
+            // event loop one macrotask turn to process both. Every ~8 items keeps the
+            // throughput cost negligible.
+            since_yield += 1;
+            if since_yield >= 8 {
+                since_yield = 0;
+                n0_future::time::sleep(Duration::from_millis(0)).await;
+            }
 
-        let next = async { Step::Item(stream.next().await) };
-        let gone = async {
-            futures_lite::future::or(conn.closed(), connection.closed()).await;
-            Step::Disconnected
-        };
-        let tick = async {
-            n0_future::time::sleep(Duration::from_millis(200)).await;
-            Step::Tick
-        };
-        let step = futures_lite::future::or(next, futures_lite::future::or(gone, tick)).await;
-        match step {
-            Step::Item(Some(GetProgressItem::Progress(offset))) => emit(
-                on_event,
-                &Event::Progress {
-                    bytes_received: offset,
-                    total_bytes,
-                },
-            ),
-            Step::Item(Some(GetProgressItem::Done(_))) | Step::Item(None) => break,
-            Step::Item(Some(GetProgressItem::Error(err))) => bail!("blob fetch failed: {err}"),
-            Step::Disconnected => bail!("sender disconnected"),
-            // Idle tick: loop back so the cancel check at the top runs.
-            Step::Tick => {}
+            let next = async { Step::Item(stream.next().await) };
+            let gone = async {
+                futures_lite::future::or(conn.closed(), connection.closed()).await;
+                Step::Disconnected
+            };
+            let tick = async {
+                n0_future::time::sleep(Duration::from_millis(200)).await;
+                Step::Tick
+            };
+            let step = match control_read.as_mut() {
+                Some(cr) => {
+                    let ctrl = async { Step::Control(cr.await) };
+                    futures_lite::future::or(
+                        next,
+                        futures_lite::future::or(ctrl, futures_lite::future::or(gone, tick)),
+                    )
+                    .await
+                }
+                None => futures_lite::future::or(next, futures_lite::future::or(gone, tick)).await,
+            };
+            match step {
+                Step::Item(Some(GetProgressItem::Progress(offset))) => emit(
+                    on_event,
+                    &Event::Progress {
+                        bytes_received: offset,
+                        total_bytes,
+                    },
+                ),
+                Step::Item(Some(GetProgressItem::Done(_))) | Step::Item(None) => break,
+                Step::Item(Some(GetProgressItem::Error(err))) => bail!("blob fetch failed: {err}"),
+                // Sender asked to cancel mid-transfer — stop and show it cleanly.
+                Step::Control(Ok(SenderMessage::Cancel(_))) => {
+                    emit(on_event, &Event::Cancelled);
+                    return Ok(());
+                }
+                // Any other control message (or a read error) mid-transfer is
+                // unexpected; stop listening and let the stream / disconnect
+                // branches drive the outcome.
+                Step::Control(_) => control_read = None,
+                Step::Disconnected => bail!("sender disconnected"),
+                // Idle tick: loop back so the cancel check at the top runs.
+                Step::Tick => {}
+            }
         }
     }
 
