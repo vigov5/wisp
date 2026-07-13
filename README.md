@@ -3,10 +3,9 @@
 > Samarth Verma. Heavy ❤️ to the upstream project — Wisp diverges in UX
 > direction (Android-first polish, QR code pairing, self-diagnose tooling) and runs its own
 > rendezvous infrastructure so we don't lean on Drift's resources.
-
-> [!WARNING]
-> Wisp is still rough around the edges. If something breaks, feels confusing, or does not work on your device, please open an issue:
-> https://github.com/vigov5/wisp/issues/new
+>
+> Found a bug, or something feels confusing? We'd love to hear it — please
+> [open an issue](https://github.com/vigov5/wisp/issues/new).
 
 <p align="center">
   <img src="flutter/assets/wisp_rounded_logo.png" width="96" alt="Wisp Logo">
@@ -19,12 +18,21 @@
 </p>
 
 <p align="center">
+  <a href="https://play.google.com/store/apps/details?id=dev.vigov5.wisp"><img src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" alt="Get it on Google Play" height="48"></a>
+</p>
+
+<p align="center">
+  <a href="https://web.wisp.mooo.com"><strong>🌐 Send &amp; receive right in your browser →</strong></a><br>
+  <sub>No install — works on any device with a modern browser.</sub>
+</p>
+
+<p align="center">
   <img src="flutter/assets/demo.gif" width="500" alt="Wisp Demo">
 </p>
 
 Wisp is a free and open-source app for sending files directly between devices, built using [iroh](https://www.iroh.computer/).
 
-It is designed to feel as simple as AirDrop, but without being limited to Apple devices or nearby-only transfers. Pick files, connect to another device, and send.
+It is designed to feel as simple as AirDrop, but without being limited to Apple devices or nearby-only transfers. Pick files, connect to another device, and send. Now on [**Google Play**](https://play.google.com/store/apps/details?id=dev.vigov5.wisp) for Android, and with a **no-install [web app](https://web.wisp.mooo.com)** for everyone else.
 
 ## Features
 
@@ -39,6 +47,9 @@ It is designed to feel as simple as AirDrop, but without being limited to Apple 
 
 - **Send text and links, not just files**
   Share a snippet of text or a link straight across. The receiver can copy it to the clipboard or open the link in one tap.
+
+- **No-install web app** — [web.wisp.mooo.com](https://web.wisp.mooo.com)
+  Open the page in any modern browser to **send and receive** — text, links, files, or a whole folder (folders arrive as a single `.zip`) — no install, no account. It talks the same protocol as the native apps, so browser ↔ phone ↔ desktop all interoperate. File bytes ride an encrypted peer-to-peer relay and never touch the page or any server. Includes a light/dark theme toggle. (Browser transfers are relay-only and held in tab memory, so LAN/QR/USB and very large files stay in the native apps.)
 
 - **Saved devices**
   After a successful transfer, the other device shows up in a "Recent" list so you can pick it again without re-scanning or re-typing a code. Give saved devices your own nicknames (pinned to their key). (Auto-approve / trusted-device flow is on the roadmap.)
@@ -56,7 +67,7 @@ It is designed to feel as simple as AirDrop, but without being limited to Apple 
   Still waiting to connect? Step back from the connecting screen to your draft to pick a different device or connection method, without re-selecting your files.
 
 - **Cross-platform**
-  Wisp currently provides builds for macOS, Windows, Linux, and Android. iOS support is planned.
+  Native builds for macOS, Windows, Linux, and Android (on [Google Play](https://play.google.com/store/apps/details?id=dev.vigov5.wisp)), plus a [no-install web app](https://web.wisp.mooo.com). iOS support is planned.
 
 - **End-to-end encrypted connections**
   Files are sent over an end-to-end encrypted peer-to-peer connection. Files are never stored in the cloud, and only the sender and receiver can read them.
@@ -71,10 +82,11 @@ It is designed to feel as simple as AirDrop, but without being limited to Apple 
 
 | Platform | Download |
 | --- | --- |
+| **Web** | **[Open the web app →](https://web.wisp.mooo.com)** — no install, runs in any modern browser |
+| **Android** | <a href="https://play.google.com/store/apps/details?id=dev.vigov5.wisp"><img src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" alt="Get it on Google Play" height="48"></a><br>**Now on Google Play** · or [sideload the APK →](https://github.com/vigov5/wisp/releases/latest) |
 | macOS | [Latest release →](https://github.com/vigov5/wisp/releases/latest) |
 | Windows | [Latest release →](https://github.com/vigov5/wisp/releases/latest) |
 | Linux | [Latest release →](https://github.com/vigov5/wisp/releases/latest) |
-| Android | <a href="https://play.google.com/store/apps/details?id=dev.vigov5.wisp"><img src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" alt="Get it on Google Play" height="40"></a> · [APK (sideload) →](https://github.com/vigov5/wisp/releases/latest) |
 | iOS | Coming soon |
 
 > [!TIP]
@@ -92,6 +104,10 @@ See [`flutter/README.md`](flutter/README.md) for build instructions.
 
 ## Getting started
 
+> In a hurry, or on a device you can't install on? Just open
+> **[web.wisp.mooo.com](https://web.wisp.mooo.com)** and send or receive right
+> in the browser — it works with the native apps too.
+
 1. Choose or drop the files you want to send.
 2. Pick a recipient — one of:
    - a nearby device discovered on your LAN,
@@ -103,7 +119,7 @@ See [`flutter/README.md`](flutter/README.md) for build instructions.
 
 ## Contributing
 
-Wisp is usable, but still early. Contributions, testing, bug reports, and UX feedback are welcome.
+Contributions, testing, bug reports, and UX feedback are welcome.
 
 Some of the things planned next:
 
@@ -111,10 +127,12 @@ Some of the things planned next:
 - [x] Remember recent devices for quick re-send
 - [x] Self-diagnose connection test
 - [x] Offline QR pairing
+- [x] No-install web app (send & receive in the browser)
+- [x] Publish the Android app on Google Play
 - [ ] Trusted devices with auto-approve (skip the accept prompt on known peers)
-- [ ] Dark / light theme
+- [ ] Dark / light theme in the native apps _(already in the web app)_
 - [ ] Keep Wisp listening in the background
-- [ ] Set up app distribution through app stores and package managers
+- [ ] Set up desktop distribution through package managers
 - [ ] Add iOS support
 
 ## License
