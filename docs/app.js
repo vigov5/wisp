@@ -198,7 +198,11 @@ function onEvent(event) {
       break;
 
     case 'completed':
-      $('progress-bar').style.width = '100%';
+      // Clear the incoming offer UI (sender badge, file list, progress) so a
+      // stale "INCOMING" card doesn't linger after the files land. The
+      // Downloads list and any received text live in separate sections and
+      // stay visible.
+      resetOffer();
       setStatus('Transfer complete ✓');
       break;
 
