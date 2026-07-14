@@ -1425,29 +1425,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ReceiverTransferEvent dco_decode_receiver_transfer_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 18)
-      throw Exception('unexpected arr length: expect 18 but see ${arr.length}');
+    if (arr.length != 20)
+      throw Exception('unexpected arr length: expect 20 but see ${arr.length}');
     return ReceiverTransferEvent(
       phase: dco_decode_receiver_transfer_phase(arr[0]),
       senderName: dco_decode_String(arr[1]),
       senderDeviceType: dco_decode_String(arr[2]),
-      destinationLabel: dco_decode_String(arr[3]),
-      saveRootLabel: dco_decode_String(arr[4]),
-      statusMessage: dco_decode_String(arr[5]),
-      itemCount: dco_decode_u_64(arr[6]),
-      totalSizeBytes: dco_decode_u_64(arr[7]),
-      bytesReceived: dco_decode_u_64(arr[8]),
-      plan: dco_decode_opt_box_autoadd_transfer_plan_data(arr[9]),
-      snapshot: dco_decode_opt_box_autoadd_transfer_snapshot_data(arr[10]),
-      totalSizeLabel: dco_decode_String(arr[11]),
-      files: dco_decode_list_receiver_transfer_file(arr[12]),
-      inlineText: dco_decode_opt_String(arr[13]),
+      senderWeb: dco_decode_bool(arr[3]),
+      senderEphemeral: dco_decode_bool(arr[4]),
+      destinationLabel: dco_decode_String(arr[5]),
+      saveRootLabel: dco_decode_String(arr[6]),
+      statusMessage: dco_decode_String(arr[7]),
+      itemCount: dco_decode_u_64(arr[8]),
+      totalSizeBytes: dco_decode_u_64(arr[9]),
+      bytesReceived: dco_decode_u_64(arr[10]),
+      plan: dco_decode_opt_box_autoadd_transfer_plan_data(arr[11]),
+      snapshot: dco_decode_opt_box_autoadd_transfer_snapshot_data(arr[12]),
+      totalSizeLabel: dco_decode_String(arr[13]),
+      files: dco_decode_list_receiver_transfer_file(arr[14]),
+      inlineText: dco_decode_opt_String(arr[15]),
       connectionPath: dco_decode_opt_box_autoadd_receiver_connection_path(
-        arr[14],
+        arr[16],
       ),
-      senderEndpointId: dco_decode_opt_String(arr[15]),
-      senderTicket: dco_decode_opt_String(arr[16]),
-      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[17]),
+      senderEndpointId: dco_decode_opt_String(arr[17]),
+      senderTicket: dco_decode_opt_String(arr[18]),
+      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[19]),
     );
   }
 
@@ -2240,6 +2242,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_phase = sse_decode_receiver_transfer_phase(deserializer);
     var var_senderName = sse_decode_String(deserializer);
     var var_senderDeviceType = sse_decode_String(deserializer);
+    var var_senderWeb = sse_decode_bool(deserializer);
+    var var_senderEphemeral = sse_decode_bool(deserializer);
     var var_destinationLabel = sse_decode_String(deserializer);
     var var_saveRootLabel = sse_decode_String(deserializer);
     var var_statusMessage = sse_decode_String(deserializer);
@@ -2264,6 +2268,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       phase: var_phase,
       senderName: var_senderName,
       senderDeviceType: var_senderDeviceType,
+      senderWeb: var_senderWeb,
+      senderEphemeral: var_senderEphemeral,
       destinationLabel: var_destinationLabel,
       saveRootLabel: var_saveRootLabel,
       statusMessage: var_statusMessage,
@@ -3129,6 +3135,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_receiver_transfer_phase(self.phase, serializer);
     sse_encode_String(self.senderName, serializer);
     sse_encode_String(self.senderDeviceType, serializer);
+    sse_encode_bool(self.senderWeb, serializer);
+    sse_encode_bool(self.senderEphemeral, serializer);
     sse_encode_String(self.destinationLabel, serializer);
     sse_encode_String(self.saveRootLabel, serializer);
     sse_encode_String(self.statusMessage, serializer);

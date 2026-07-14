@@ -130,7 +130,7 @@ impl ReceiverSession {
         // — `failed_offer_event` with a non-empty sender_name surfaces in the
         // UI, whereas the old empty-name path was suppressed as a bogus
         // "unknown sender" card.
-        let mut connecting_sender: Option<(String, DeviceType, String)> = None;
+        let mut connecting_sender: Option<(String, DeviceType, bool, bool, String)> = None;
         let mut events_done = false;
         let offer = loop {
             // `biased`: drain pending events before resolving the offer so the
@@ -142,6 +142,8 @@ impl ReceiverSession {
                         Some(CoreReceiverEvent::SenderConnected {
                             sender_device_name,
                             sender_device_type,
+                            sender_web,
+                            sender_ephemeral,
                             sender_endpoint_id,
                             ..
                         }) => {
@@ -150,6 +152,8 @@ impl ReceiverSession {
                             connecting_sender = Some((
                                 sender_label.clone(),
                                 sender_device_type,
+                                sender_web,
+                                sender_ephemeral,
                                 endpoint_id_str.clone(),
                             ));
                             let _ = cmd_tx
@@ -158,6 +162,8 @@ impl ReceiverSession {
                                         save_root_label.clone(),
                                         sender_label,
                                         sender_device_type,
+                                        sender_web,
+                                        sender_ephemeral,
                                         endpoint_id_str,
                                     ),
                                 })
@@ -207,6 +213,8 @@ impl ReceiverSession {
 
         let sender_label = display_sender_label(&offer.sender_device_name);
         let sender_device_type = offer.sender_device_type;
+        let sender_web = offer.sender_web;
+        let sender_ephemeral = offer.sender_ephemeral;
         let resume_from_bytes = offer.resume_from_bytes;
         let plan = match TransferPlan::try_new(
             offer.session_id.clone(),
@@ -238,6 +246,8 @@ impl ReceiverSession {
                             save_root_label.clone(),
                             sender_label.clone(),
                             sender_device_type,
+                            sender_web,
+                            sender_ephemeral,
                             "Transfer failed.".to_owned(),
                             UserFacingError::internal(
                                 "Transfer failed",
@@ -285,6 +295,8 @@ impl ReceiverSession {
             phase: ReceiverOfferPhase::OfferReady,
             sender_name: sender_label.clone(),
             sender_device_type: device_type_to_str(sender_device_type),
+            sender_web,
+            sender_ephemeral,
             destination_label: sender_label.clone(),
             save_root_label: save_root_label.clone(),
             status_message: format!("{sender_label} wants to send you files."),
@@ -355,6 +367,8 @@ impl ReceiverSession {
                             sender_label.clone(),
                             save_root_label.clone(),
                             sender_device_type,
+                            sender_web,
+                            sender_ephemeral,
                             Some(current_path.lock().unwrap().clone()),
                             Some(remote_id_str.clone()),
                             plan.total_files as u64,
@@ -401,6 +415,8 @@ impl ReceiverSession {
                                 sender_label.clone(),
                                 save_root_label.clone(),
                                 sender_device_type,
+                                sender_web,
+                                sender_ephemeral,
                                 Some(current_path.lock().unwrap().clone()),
                                 Some(remote_id_str.clone()),
                                 snapshot.total_files as u64,
@@ -442,6 +458,8 @@ impl ReceiverSession {
                             save_root_label.clone(),
                             sender_label.clone(),
                             sender_device_type,
+                            sender_web,
+                            sender_ephemeral,
                             "Transfer failed.".to_owned(),
                             UserFacingError::from(error),
                             offer.file_count,
@@ -513,6 +531,8 @@ impl ReceiverSession {
                     sender_label,
                     save_root_label,
                     sender_device_type,
+                    sender_web,
+                    sender_ephemeral,
                     final_path.clone(),
                     Some(remote_id_str.clone()),
                     sender_ticket.clone(),
@@ -525,6 +545,8 @@ impl ReceiverSession {
                     phase: ReceiverOfferPhase::Declined,
                     sender_name: sender_label.clone(),
                     sender_device_type: device_type_to_str(sender_device_type),
+                    sender_web,
+                    sender_ephemeral,
                     destination_label: sender_label,
                     save_root_label,
                     status_message: "Transfer cancelled.".to_owned(),
@@ -547,6 +569,8 @@ impl ReceiverSession {
                     phase: ReceiverOfferPhase::Cancelled,
                     sender_name: sender_label.clone(),
                     sender_device_type: device_type_to_str(sender_device_type),
+                    sender_web,
+                    sender_ephemeral,
                     destination_label: sender_label,
                     save_root_label,
                     status_message: "Transfer cancelled.".to_owned(),
@@ -574,6 +598,8 @@ impl ReceiverSession {
                 save_root_label,
                 sender_label,
                 sender_device_type,
+                sender_web,
+                sender_ephemeral,
                 "Transfer failed.".to_owned(),
                 UserFacingError::from(error),
                 offer.file_count,
@@ -597,6 +623,8 @@ impl ReceiverSession {
                 save_root_label,
                 sender_label,
                 sender_device_type,
+                sender_web,
+                sender_ephemeral,
                 "Transfer failed.".to_owned(),
                 UserFacingError::internal("Transfer failed", format!("{error}")),
                 offer.file_count,
@@ -706,6 +734,8 @@ fn completed_offer_event(
     sender_name: String,
     save_root_label: String,
     sender_device_type: DeviceType,
+    sender_web: bool,
+    sender_ephemeral: bool,
     connection_path: Option<ConnectionPath>,
     sender_endpoint_id: Option<String>,
     sender_ticket: Option<String>,
@@ -718,6 +748,8 @@ fn completed_offer_event(
         phase: ReceiverOfferPhase::Completed,
         sender_name: sender_name.clone(),
         sender_device_type: device_type_to_str(sender_device_type),
+        sender_web,
+        sender_ephemeral,
         destination_label: save_root_label.clone(),
         save_root_label,
         status_message: "Files saved.".to_owned(),
@@ -752,6 +784,8 @@ fn build_offer_event(
     sender_label: String,
     save_root_label: String,
     sender_device_type: DeviceType,
+    sender_web: bool,
+    sender_ephemeral: bool,
     connection_path: Option<ConnectionPath>,
     sender_endpoint_id: Option<String>,
     file_count: u64,
@@ -766,6 +800,8 @@ fn build_offer_event(
         phase,
         sender_name: sender_label.clone(),
         sender_device_type: device_type_to_str(sender_device_type),
+        sender_web,
+        sender_ephemeral,
         destination_label: sender_label,
         save_root_label,
         status_message: match phase {
@@ -806,6 +842,8 @@ fn failed_offer_event(
     save_root_label: String,
     sender_name: String,
     sender_device_type: DeviceType,
+    sender_web: bool,
+    sender_ephemeral: bool,
     status_message: String,
     error: UserFacingError,
     item_count: u64,
@@ -826,6 +864,8 @@ fn failed_offer_event(
         phase: ReceiverOfferPhase::Failed,
         sender_name,
         sender_device_type: device_type_to_str(sender_device_type),
+        sender_web,
+        sender_ephemeral,
         destination_label,
         save_root_label,
         status_message,
@@ -852,6 +892,8 @@ fn connecting_offer_event(
     save_root_label: String,
     sender_name: String,
     sender_device_type: DeviceType,
+    sender_web: bool,
+    sender_ephemeral: bool,
     sender_endpoint_id: String,
 ) -> ReceiverOfferEvent {
     let destination_label = sender_name.clone();
@@ -859,6 +901,8 @@ fn connecting_offer_event(
         phase: ReceiverOfferPhase::Connecting,
         sender_name: sender_name.clone(),
         sender_device_type: device_type_to_str(sender_device_type),
+        sender_web,
+        sender_ephemeral,
         destination_label,
         save_root_label,
         status_message: format!("{sender_name} is connecting…"),
@@ -886,13 +930,14 @@ async fn send_pre_offer_failure(
     offer_id: u64,
     save_root_label: &str,
     fallback_device_type: DeviceType,
-    connecting_sender: Option<&(String, DeviceType, String)>,
+    connecting_sender: Option<&(String, DeviceType, bool, bool, String)>,
     error: UserFacingError,
 ) {
-    let (sender_name, sender_device_type, sender_endpoint_id) = match connecting_sender {
-        Some((name, dt, id)) => (name.clone(), *dt, Some(id.clone())),
-        None => (String::new(), fallback_device_type, None),
-    };
+    let (sender_name, sender_device_type, sender_web, sender_ephemeral, sender_endpoint_id) =
+        match connecting_sender {
+            Some((name, dt, web, eph, id)) => (name.clone(), *dt, *web, *eph, Some(id.clone())),
+            None => (String::new(), fallback_device_type, false, false, None),
+        };
     let _ = cmd_tx
         .send(ReceiverCommand::OfferFinished {
             offer_id,
@@ -900,6 +945,8 @@ async fn send_pre_offer_failure(
                 save_root_label.to_owned(),
                 sender_name,
                 sender_device_type,
+                sender_web,
+                sender_ephemeral,
                 "Transfer failed.".to_owned(),
                 error,
                 0,
@@ -938,6 +985,8 @@ mod tests {
             "Downloads".to_owned(),
             "Maya".to_owned(),
             DeviceType::Laptop,
+            false,
+            false,
             "endpoint-123".to_owned(),
         );
 
@@ -952,6 +1001,35 @@ mod tests {
         assert!(event.error.is_none());
     }
 
+    #[test]
+    fn offer_events_carry_web_and_ephemeral_flags() {
+        // The browser peer's identity (web + ephemeral) must survive into the
+        // UI event so the receiver can render a globe and skip saving it to
+        // Recent.
+        let web = connecting_offer_event(
+            "Downloads".to_owned(),
+            "Browser".to_owned(),
+            DeviceType::Laptop,
+            true,
+            true,
+            "endpoint-web".to_owned(),
+        );
+        assert!(web.sender_web);
+        assert!(web.sender_ephemeral);
+
+        // A native peer stays unflagged (globe/guard don't misfire).
+        let native = connecting_offer_event(
+            "Downloads".to_owned(),
+            "Maya".to_owned(),
+            DeviceType::Phone,
+            false,
+            false,
+            "endpoint-maya".to_owned(),
+        );
+        assert!(!native.sender_web);
+        assert!(!native.sender_ephemeral);
+    }
+
     #[tokio::test]
     async fn pre_offer_failure_is_attributed_to_known_sender() {
         // When the Hello was read before the offer stalled, the failure must
@@ -961,6 +1039,8 @@ mod tests {
         let identity = (
             "Maya".to_owned(),
             DeviceType::Laptop,
+            false,
+            false,
             "endpoint-123".to_owned(),
         );
         send_pre_offer_failure(
@@ -1032,6 +1112,8 @@ mod tests {
             "Downloads".to_owned(),
             "Maya".to_owned(),
             DeviceType::Laptop,
+            false,
+            false,
             "Transfer failed.".to_owned(),
             crate::error::UserFacingError::internal("Transfer failed", "boom"),
             0,
@@ -1106,6 +1188,8 @@ mod tests {
             "Downloads".to_owned(),
             "Maya".to_owned(),
             DeviceType::Laptop,
+            false,
+            false,
             "Transfer failed.".to_owned(),
             crate::error::UserFacingError::internal("Transfer failed", "boom"),
             2,
@@ -1146,6 +1230,8 @@ mod tests {
             "Sender".to_owned(),
             "Downloads".to_owned(),
             DeviceType::Laptop,
+            false,
+            false,
             Some(direct.clone()),
             None,
             0,
@@ -1183,6 +1269,8 @@ mod tests {
             "Maya".to_owned(),
             "Downloads".to_owned(),
             DeviceType::Laptop,
+            false,
+            false,
             Some(ConnectionPath {
                 kind: ConnectionPathKind::Direct,
                 relay_url: None,

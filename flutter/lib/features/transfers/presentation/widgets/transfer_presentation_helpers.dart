@@ -34,6 +34,11 @@ String deviceTypeLabel(DeviceType type) {
   };
 }
 
+/// Device-type string for [RecipientAvatar], which renders `'web'` as a globe.
+/// A browser peer overrides its laptop/phone type so it reads as a web app.
+String avatarDeviceType(TransferIdentity identity) =>
+    identity.web ? 'web' : deviceTypeLabel(identity.deviceType);
+
 Widget buildSubtitleText(String text) {
   return Text(
     text,

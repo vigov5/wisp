@@ -488,7 +488,7 @@ mod tests {
             snapshot: None,
             remote_device_type: None,
             remote_endpoint_id: None,
-        remote_ephemeral: None,
+            remote_ephemeral: None,
             remote_ticket: None,
             connection_path,
             error: None,

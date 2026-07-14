@@ -76,7 +76,7 @@ class OfferCard extends ConsumerWidget {
         ),
         illustration: RecipientAvatar(
           deviceName: senderName,
-          deviceType: deviceTypeLabel(offer.sender.deviceType),
+          deviceType: avatarDeviceType(offer.sender),
           animate: animate,
           mode: SendingStripMode.waitingOnRecipient,
           // Mirrors crates/core/src/transfer/receiver.rs decision timer
@@ -287,7 +287,7 @@ class _TextOfferCardState extends ConsumerState<_TextOfferCard> {
         ),
         illustration: RecipientAvatar(
           deviceName: senderName,
-          deviceType: deviceTypeLabel(widget.offer.sender.deviceType),
+          deviceType: avatarDeviceType(widget.offer.sender),
           animate: widget.animate,
           mode: SendingStripMode.waitingOnRecipient,
           countdownDuration: const Duration(seconds: 120),

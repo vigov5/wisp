@@ -174,6 +174,13 @@ class ReceiverTransferEvent {
   final ReceiverTransferPhase phase;
   final String senderName;
   final String senderDeviceType;
+
+  /// True when the sender is a browser (web) peer — UI shows a globe.
+  final bool senderWeb;
+
+  /// True when the sender identity is ephemeral (browser/CLI) — not persisted
+  /// to the saved-devices list.
+  final bool senderEphemeral;
   final String destinationLabel;
   final String saveRootLabel;
   final String statusMessage;
@@ -197,6 +204,8 @@ class ReceiverTransferEvent {
     required this.phase,
     required this.senderName,
     required this.senderDeviceType,
+    required this.senderWeb,
+    required this.senderEphemeral,
     required this.destinationLabel,
     required this.saveRootLabel,
     required this.statusMessage,
@@ -219,6 +228,8 @@ class ReceiverTransferEvent {
       phase.hashCode ^
       senderName.hashCode ^
       senderDeviceType.hashCode ^
+      senderWeb.hashCode ^
+      senderEphemeral.hashCode ^
       destinationLabel.hashCode ^
       saveRootLabel.hashCode ^
       statusMessage.hashCode ^
@@ -243,6 +254,8 @@ class ReceiverTransferEvent {
           phase == other.phase &&
           senderName == other.senderName &&
           senderDeviceType == other.senderDeviceType &&
+          senderWeb == other.senderWeb &&
+          senderEphemeral == other.senderEphemeral &&
           destinationLabel == other.destinationLabel &&
           saveRootLabel == other.saveRootLabel &&
           statusMessage == other.statusMessage &&

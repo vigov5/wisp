@@ -58,7 +58,7 @@ class ReceivingCard extends ConsumerWidget {
 
         illustration: RecipientAvatar(
           deviceName: senderName,
-          deviceType: deviceTypeLabel(offer.sender.deviceType),
+          deviceType: avatarDeviceType(offer.sender),
           animate: animate,
           mode: SendingStripMode.transferring,
           progress: progress.progressFraction,

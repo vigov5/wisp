@@ -71,6 +71,8 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
     required String senderName,
     String senderEndpointId = 'endpoint-1',
     String senderDeviceType = 'laptop',
+    bool senderWeb = false,
+    bool senderEphemeral = false,
     String destinationLabel = 'Downloads',
     String saveRootLabel = 'Downloads',
     String statusMessage = 'Incoming offer',
@@ -101,6 +103,8 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
       phase: rust_receiver.ReceiverTransferPhase.offerReady,
       senderName: senderName,
       senderDeviceType: senderDeviceType,
+      senderWeb: senderWeb,
+      senderEphemeral: senderEphemeral,
       destinationLabel: destinationLabel,
       saveRootLabel: saveRootLabel,
       statusMessage: statusMessage,
@@ -124,6 +128,8 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
     required String senderName,
     String senderEndpointId = 'endpoint-1',
     String senderDeviceType = 'laptop',
+    bool senderWeb = false,
+    bool senderEphemeral = false,
     String destinationLabel = 'Downloads',
     String saveRootLabel = 'Downloads',
     String statusMessage = 'is connecting…',
@@ -137,6 +143,8 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
       phase: rust_receiver.ReceiverTransferPhase.connecting,
       senderName: senderName,
       senderDeviceType: senderDeviceType,
+      senderWeb: senderWeb,
+      senderEphemeral: senderEphemeral,
       destinationLabel: destinationLabel,
       saveRootLabel: saveRootLabel,
       statusMessage: statusMessage,
@@ -153,7 +161,10 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
 
   void emitCompletedTransfer({
     required String senderName,
+    String senderEndpointId = 'endpoint-1',
     String senderDeviceType = 'laptop',
+    bool senderWeb = false,
+    bool senderEphemeral = false,
     String destinationLabel = 'Downloads',
     String saveRootLabel = 'Downloads',
     String statusMessage = 'Transfer complete',
@@ -175,11 +186,15 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
         ];
     lastIncomingSenderName = senderName;
     lastIncomingFiles = completedFiles;
+    lastIncomingSenderEndpointId = senderEndpointId;
     _lastIncomingEvent = rust_receiver.ReceiverTransferEvent(
       phase: rust_receiver.ReceiverTransferPhase.completed,
       senderName: senderName,
       senderDeviceType: senderDeviceType,
+      senderWeb: senderWeb,
+      senderEphemeral: senderEphemeral,
       destinationLabel: destinationLabel,
+      senderEndpointId: senderEndpointId,
       saveRootLabel: saveRootLabel,
       statusMessage: statusMessage,
       itemCount: BigInt.from(completedFiles.length),
@@ -218,6 +233,8 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
   void emitCancelledTransfer({
     required String senderName,
     String senderDeviceType = 'laptop',
+    bool senderWeb = false,
+    bool senderEphemeral = false,
     String destinationLabel = 'Downloads',
     String saveRootLabel = 'Downloads',
     String statusMessage =
@@ -244,6 +261,8 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
       phase: rust_receiver.ReceiverTransferPhase.cancelled,
       senderName: senderName,
       senderDeviceType: senderDeviceType,
+      senderWeb: senderWeb,
+      senderEphemeral: senderEphemeral,
       destinationLabel: destinationLabel,
       saveRootLabel: saveRootLabel,
       statusMessage: statusMessage,

@@ -1461,6 +1461,8 @@ impl SseDecode for crate::api::receiver::ReceiverTransferEvent {
         let mut var_phase = <crate::api::receiver::ReceiverTransferPhase>::sse_decode(deserializer);
         let mut var_senderName = <String>::sse_decode(deserializer);
         let mut var_senderDeviceType = <String>::sse_decode(deserializer);
+        let mut var_senderWeb = <bool>::sse_decode(deserializer);
+        let mut var_senderEphemeral = <bool>::sse_decode(deserializer);
         let mut var_destinationLabel = <String>::sse_decode(deserializer);
         let mut var_saveRootLabel = <String>::sse_decode(deserializer);
         let mut var_statusMessage = <String>::sse_decode(deserializer);
@@ -1485,6 +1487,8 @@ impl SseDecode for crate::api::receiver::ReceiverTransferEvent {
             phase: var_phase,
             sender_name: var_senderName,
             sender_device_type: var_senderDeviceType,
+            sender_web: var_senderWeb,
+            sender_ephemeral: var_senderEphemeral,
             destination_label: var_destinationLabel,
             save_root_label: var_saveRootLabel,
             status_message: var_statusMessage,
@@ -2209,6 +2213,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::receiver::ReceiverTransferEve
             self.phase.into_into_dart().into_dart(),
             self.sender_name.into_into_dart().into_dart(),
             self.sender_device_type.into_into_dart().into_dart(),
+            self.sender_web.into_into_dart().into_dart(),
+            self.sender_ephemeral.into_into_dart().into_dart(),
             self.destination_label.into_into_dart().into_dart(),
             self.save_root_label.into_into_dart().into_dart(),
             self.status_message.into_into_dart().into_dart(),
@@ -3050,6 +3056,8 @@ impl SseEncode for crate::api::receiver::ReceiverTransferEvent {
         <crate::api::receiver::ReceiverTransferPhase>::sse_encode(self.phase, serializer);
         <String>::sse_encode(self.sender_name, serializer);
         <String>::sse_encode(self.sender_device_type, serializer);
+        <bool>::sse_encode(self.sender_web, serializer);
+        <bool>::sse_encode(self.sender_ephemeral, serializer);
         <String>::sse_encode(self.destination_label, serializer);
         <String>::sse_encode(self.save_root_label, serializer);
         <String>::sse_encode(self.status_message, serializer);

@@ -86,6 +86,11 @@ pub struct ReceiverTransferEvent {
     pub phase: ReceiverTransferPhase,
     pub sender_name: String,
     pub sender_device_type: String,
+    /// True when the sender is a browser (web) peer — UI shows a globe.
+    pub sender_web: bool,
+    /// True when the sender identity is ephemeral (browser/CLI) — not persisted
+    /// to the saved-devices list.
+    pub sender_ephemeral: bool,
     pub destination_label: String,
     pub save_root_label: String,
     pub status_message: String,
@@ -623,6 +628,8 @@ fn map_event(event: AppReceiverOfferEvent) -> ReceiverTransferEvent {
         },
         sender_name: event.sender_name,
         sender_device_type: event.sender_device_type,
+        sender_web: event.sender_web,
+        sender_ephemeral: event.sender_ephemeral,
         destination_label: event.destination_label,
         save_root_label: event.save_root_label,
         status_message: event.status_message,

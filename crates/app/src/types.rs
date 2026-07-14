@@ -122,6 +122,11 @@ pub struct ReceiverOfferEvent {
     pub phase: ReceiverOfferPhase,
     pub sender_name: String,
     pub sender_device_type: String,
+    /// True when the sender is a browser (web) peer — the UI shows a globe.
+    pub sender_web: bool,
+    /// True when the sender's identity is ephemeral (browser or CLI): a fresh key
+    /// per session, so it must not be persisted to the saved-devices list.
+    pub sender_ephemeral: bool,
     pub destination_label: String,
     pub save_root_label: String,
     pub status_message: String,

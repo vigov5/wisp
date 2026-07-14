@@ -85,7 +85,13 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
           final result = _mapResult(event);
           _stopKeepalive();
           final endpointId = offer.senderEndpointId;
-          if (endpointId != null && endpointId.isNotEmpty) {
+          // Don't remember browser / ephemeral peers: their key is fresh each
+          // session, so a saved entry is dead on arrival (and clutters Recent
+          // with a "browser" that can never be re-dialed).
+          if (endpointId != null &&
+              endpointId.isNotEmpty &&
+              !offer.sender.web &&
+              !offer.sender.ephemeral) {
             unawaited(
               ref
                   .read(savedDevicesProvider.notifier)
@@ -149,8 +155,12 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
           // Persist a recent-device entry even though the transfer didn't
           // finish — the peer was reachable and the user may want to retry
           // later.  Uses bytesReceived (partial) for the totalBytes counter.
+          // Browser / ephemeral peers are skipped (their key won't survive).
           final endpointId = offer.senderEndpointId;
-          if (endpointId != null && endpointId.isNotEmpty) {
+          if (endpointId != null &&
+              endpointId.isNotEmpty &&
+              !offer.sender.web &&
+              !offer.sender.ephemeral) {
             unawaited(
               ref
                   .read(savedDevicesProvider.notifier)
@@ -271,6 +281,8 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
         endpointId: '',
         deviceName: event.senderName,
         deviceType: _mapDeviceType(event.senderDeviceType),
+        web: event.senderWeb,
+        ephemeral: event.senderEphemeral,
       ),
       manifest: TransferManifest(
         items: event.files

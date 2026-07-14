@@ -70,6 +70,12 @@ pub struct ReceiverOffer {
     pub resume_from_bytes: u64,
     pub sender_device_name: String,
     pub sender_device_type: crate::protocol::DeviceType,
+    /// True when the sender is a browser (no-install web peer). The UI renders it
+    /// with a globe glyph instead of a laptop.
+    pub sender_web: bool,
+    /// True when the sender's identity is ephemeral (a fresh key per session, as
+    /// browser peers use), so it must not be persisted to the saved-devices list.
+    pub sender_ephemeral: bool,
     pub sender_endpoint_id: iroh::EndpointId,
     pub items: Vec<ReceiverOfferItem>,
     pub file_count: u64,
@@ -93,6 +99,8 @@ pub enum ReceiverEvent {
         session_id: String,
         sender_device_name: String,
         sender_device_type: crate::protocol::DeviceType,
+        sender_web: bool,
+        sender_ephemeral: bool,
         sender_endpoint_id: iroh::EndpointId,
     },
     OfferReceived {
@@ -288,6 +296,8 @@ async fn run_session(
         resume_from_bytes,
         sender_device_name: peer_hello.identity.device_name.clone(),
         sender_device_type: to_local_device_type(peer_hello.identity.device_type),
+        sender_web: peer_hello.identity.web,
+        sender_ephemeral: peer_hello.identity.ephemeral,
         sender_endpoint_id: peer_hello.identity.endpoint_id,
         items: manifest
             .files
@@ -790,6 +800,8 @@ async fn do_handshake(
                     session_id: hello.session_id.clone(),
                     sender_device_name: hello.identity.device_name.clone(),
                     sender_device_type: to_local_device_type(hello.identity.device_type),
+                    sender_web: hello.identity.web,
+                    sender_ephemeral: hello.identity.ephemeral,
                     sender_endpoint_id: hello.identity.endpoint_id,
                 },
             );

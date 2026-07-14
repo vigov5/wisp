@@ -39,7 +39,7 @@ class ConnectingCard extends ConsumerWidget {
         explainer: null,
         illustration: RecipientAvatar(
           deviceName: senderName,
-          deviceType: deviceTypeLabel(offer.sender.deviceType),
+          deviceType: avatarDeviceType(offer.sender),
           animate: animate,
           mode: SendingStripMode.looping,
         ),

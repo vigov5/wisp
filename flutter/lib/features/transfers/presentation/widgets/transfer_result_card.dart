@@ -40,7 +40,9 @@ class TransferResultCard extends StatelessWidget {
         explainer: _StatsGrid(viewData: viewData),
         illustration: RecipientAvatar(
           deviceName: viewData.deviceName,
-          deviceType: viewData.deviceType != null
+          deviceType: viewData.web
+              ? 'web'
+              : viewData.deviceType != null
               ? deviceTypeLabel(viewData.deviceType!)
               : 'laptop',
           mode: SendingStripMode.transferring,

@@ -12,6 +12,8 @@ void main() {
       phase: rust_receiver.ReceiverTransferPhase.receiving,
       senderName: 'Sender',
       senderDeviceType: 'laptop',
+      senderWeb: false,
+      senderEphemeral: false,
       destinationLabel: 'This Device',
       saveRootLabel: 'Downloads',
       statusMessage: statusMessage,

@@ -11,6 +11,8 @@ void main() {
     String destinationLabel = 'Downloads',
     String saveRootLabel = 'Downloads',
     String statusMessage = 'Transfer complete',
+    bool web = false,
+    bool ephemeral = false,
   }) {
     return TransferIncomingOffer(
       sender: TransferIdentity(
@@ -18,6 +20,8 @@ void main() {
         endpointId: 'endpoint-1',
         deviceName: senderName,
         deviceType: DeviceType.laptop,
+        web: web,
+        ephemeral: ephemeral,
       ),
       manifest: TransferManifest(
         items: [
@@ -59,6 +63,36 @@ void main() {
     expect(viewData.metrics, hasLength(3));
     expect(viewData.metrics!.first.label, 'From');
     expect(viewData.metrics![1].value, '2');
+  });
+
+  test('marks a browser (web) sender so the finish card shows a globe', () {
+    final state = TransferSessionState.completed(
+      offer: makeOffer(senderName: 'Browser', web: true, ephemeral: true),
+      result: TransferTransferResult(
+        bytesTransferred: BigInt.from(3072),
+        totalBytes: BigInt.from(3072),
+        completedFiles: 2,
+        totalFiles: 2,
+      ),
+    );
+
+    final viewData = buildTransferResultViewData(state);
+
+    expect(viewData.web, isTrue);
+  });
+
+  test('a native sender is not marked web', () {
+    final state = TransferSessionState.completed(
+      offer: makeOffer(senderName: 'Maya'),
+      result: TransferTransferResult(
+        bytesTransferred: BigInt.from(3072),
+        totalBytes: BigInt.from(3072),
+        completedFiles: 2,
+        totalFiles: 2,
+      ),
+    );
+
+    expect(buildTransferResultViewData(state).web, isFalse);
   });
 
   test('builds cancelled transfer result data', () {

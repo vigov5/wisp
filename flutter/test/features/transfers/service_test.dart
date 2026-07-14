@@ -1,6 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:app/features/saved_devices/application/saved_devices_controller.dart';
+import 'package:app/features/saved_devices/application/saved_devices_repository.dart';
 import 'package:app/features/transfers/feature.dart';
 import 'package:app/platform/rust/receiver/fake_source.dart';
 
@@ -162,6 +165,72 @@ void main() {
       expect(state.offer?.displaySenderName, 'Maya');
     },
   );
+
+  test('does not remember a browser (web) sender in Recent', () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final repo = SavedDevicesRepository(prefs: prefs);
+    final source = FakeReceiverServiceSource();
+    final container = ProviderContainer(
+      overrides: [
+        transfersServiceSourceProvider.overrideWithValue(source),
+        savedDevicesRepositoryProvider.overrideWithValue(repo),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    // Subscribe so the service processes the incoming events.
+    container.read(transfersServiceProvider);
+    expect(container.read(savedDevicesProvider), isEmpty);
+
+    source.emitIncomingOffer(
+      senderName: 'Browser',
+      senderWeb: true,
+      senderEphemeral: true,
+    );
+    await Future<void>.delayed(Duration.zero);
+    source.emitCompletedTransfer(
+      senderName: 'Browser',
+      senderEndpointId: 'endpoint-web',
+      senderWeb: true,
+      senderEphemeral: true,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    // A browser peer's key is ephemeral, so it must not land in Recent even
+    // though the transfer completed with a valid endpoint id.
+    expect(container.read(savedDevicesProvider), isEmpty);
+  });
+
+  test('remembers a native (persistent) sender in Recent', () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final repo = SavedDevicesRepository(prefs: prefs);
+    final source = FakeReceiverServiceSource();
+    final container = ProviderContainer(
+      overrides: [
+        transfersServiceSourceProvider.overrideWithValue(source),
+        savedDevicesRepositoryProvider.overrideWithValue(repo),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(transfersServiceProvider);
+
+    source.emitIncomingOffer(senderName: 'Maya');
+    await Future<void>.delayed(Duration.zero);
+    source.emitCompletedTransfer(
+      senderName: 'Maya',
+      senderEndpointId: 'endpoint-maya',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    // Control case: a normal peer with a persistent key is still remembered,
+    // so the web/ephemeral guard isn't over-broad.
+    final saved = container.read(savedDevicesProvider);
+    expect(saved, hasLength(1));
+    expect(saved.single.endpointId, 'endpoint-maya');
+  });
 }
 
 class _FailingOfferResponseSource extends FakeReceiverServiceSource {

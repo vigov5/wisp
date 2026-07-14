@@ -25,6 +25,7 @@ class TransferResultViewData {
     this.primaryLabel = 'Done',
     required this.deviceName,
     this.deviceType,
+    this.web = false,
     this.manifestItems,
     this.durationLabel,
     this.averageSpeedLabel,
@@ -39,6 +40,10 @@ class TransferResultViewData {
   final String primaryLabel;
   final String deviceName;
   final DeviceType? deviceType;
+
+  /// True when the sender is a browser (web) peer — the finish card shows a
+  /// globe instead of the [deviceType] laptop/phone glyph.
+  final bool web;
   final List<TransferManifestItem>? manifestItems;
 
   // High-level summary stats
@@ -56,6 +61,7 @@ TransferResultViewData buildTransferResultViewData(TransferSessionState state) {
 
   final deviceName = _displaySender(offer.sender.deviceName);
   final deviceType = offer.sender.deviceType;
+  final web = offer.sender.web;
   final manifestItems = offer.manifest.items;
   final savedText = state.savedText;
 
@@ -73,6 +79,7 @@ TransferResultViewData buildTransferResultViewData(TransferSessionState state) {
             : 'Saved as a .txt file.',
         deviceName: deviceName,
         deviceType: deviceType,
+        web: web,
         metrics: [
           ResultMetric(label: 'From', value: deviceName),
           if (savedText != null)
@@ -91,6 +98,7 @@ TransferResultViewData buildTransferResultViewData(TransferSessionState state) {
       message: 'Transfer complete.',
       deviceName: deviceName,
       deviceType: deviceType,
+      web: web,
       manifestItems: manifestItems,
       durationLabel: _formatDuration(state.result?.duration),
       averageSpeedLabel: state.result?.averageSpeedLabel,
@@ -113,6 +121,7 @@ TransferResultViewData buildTransferResultViewData(TransferSessionState state) {
           'Wisp stopped receiving before all files were saved.',
       deviceName: deviceName,
       deviceType: deviceType,
+      web: web,
       manifestItems: manifestItems,
     ),
     TransferSessionPhase.failed => TransferResultViewData(
@@ -121,6 +130,7 @@ TransferResultViewData buildTransferResultViewData(TransferSessionState state) {
       message: state.errorMessage ?? 'Couldn\'t finish receiving files.',
       deviceName: deviceName,
       deviceType: deviceType,
+      web: web,
       manifestItems: manifestItems,
     ),
     _ => throw StateError(
