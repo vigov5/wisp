@@ -233,6 +233,32 @@ h1 .sub {
   flex: 1;
   margin-bottom: 0;
 }
+/* Copy + New-code icon buttons stack vertically beside the code (icon-only +
+   tooltip so the column stays as short as the code box, not taller). */
+.code-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3);
+}
+.btn-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+/* A section label paired with a right-aligned action (Downloads · Clear). */
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
 
 section {
   margin-top: var(--space-5);
@@ -374,19 +400,6 @@ section:first-of-type {
 }
 
 /* Stacked variant (Copy code): icon above its label. */
-.btn-stack {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: var(--space-3) var(--space-4);
-  line-height: 1.1;
-}
-.btn-stack svg {
-  width: 20px;
-  height: 20px;
-  fill: currentColor;
-}
 
 /* Segmented Receive/Send switch — a pill track with the active tab filled,
    mirroring the native segmented control. */

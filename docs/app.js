@@ -169,7 +169,9 @@ Alpine.store('rx', {
         this.code = event.code;
         this.codeVisible = true;
         this.startCountdown(event.expiresAt);
-        this.status = 'Waiting for a sender…';
+        // The code rotates on claim/expiry (and on the 15s poll), which can fire
+        // mid-transfer; don't clobber an in-flight offer/progress status.
+        if (!this.offerVisible) this.status = 'Waiting for a sender…';
         break;
 
       case 'connecting':
@@ -269,7 +271,7 @@ Alpine.store('rx', {
         // Downloads list and any received text live in separate sections and
         // stay visible.
         this.resetOffer();
-        this.status = 'Transfer complete ✓';
+        this.status = 'Transfer complete ✅';
         break;
 
       case 'declined':
@@ -318,17 +320,42 @@ Alpine.store('rx', {
     if (!this.code || this.code === '------') return;
     try {
       await navigator.clipboard.writeText(this.code);
-      this.copyCodeLabel = 'Copied ✓';
+      this.copyCodeLabel = 'Copied ✅';
       setTimeout(() => { this.copyCodeLabel = 'Copy code'; }, 1500);
     } catch {
       this.status = 'Copy failed — select the code manually.';
     }
   },
 
+  // Mint a fresh pairing code on demand. The old code is single-use (claimed on
+  // connect) and rotates on its own every ~15s, but this lets an impatient user
+  // force a new one — e.g. after reading the wrong code aloud. Fire-and-forget:
+  // the wasm side re-registers and pushes a fresh 'registered' event that
+  // repaints the code and restarts the countdown.
+  refreshCode() {
+    if (!this.receiver) return;
+    this.status = 'Getting a fresh code…';
+    this.receiver.refreshCode();
+  },
+
+  // Drop the downloaded blobs from tab memory. Each entry holds a live object
+  // URL pinning its bytes in RAM; revoking frees them. The files are already
+  // saved to disk, so the links are just re-download shortcuts.
+  clearDownloads() {
+    for (const d of this.downloads) {
+      try {
+        URL.revokeObjectURL(d.url);
+      } catch (e) {
+        /* already revoked / never a blob URL — nothing to free */
+      }
+    }
+    this.downloads = [];
+  },
+
   async copyText() {
     try {
       await navigator.clipboard.writeText(this._lastText);
-      this.status = 'Copied to clipboard ✓';
+      this.status = 'Copied to clipboard ✅';
     } catch {
       this.status = 'Copy failed — select and copy manually.';
     }
@@ -516,7 +543,7 @@ Alpine.store('rx', {
 
       case 'completed':
         this.sendPhase = 'done';
-        this.sendStatus = 'Sent ✓';
+        this.sendStatus = 'Sent ✅';
         this._sender = null;
         break;
 
@@ -552,11 +579,14 @@ Alpine.store('rx', {
     }
   },
 
-  // Return to the form to send again (keeps the code, clears text + files).
+  // Return to the form to send again. Clears the code too: the recipient's
+  // code is single-use (claimed on connect, then rotated), so the one we just
+  // sent to is already dead — make the user paste the fresh one.
   resetSend() {
     this.sendPhase = 'idle';
     this.sendStatus = '';
     this.sendProgressPct = 0;
+    this.sendForm.code = '';
     this.sendForm.text = '';
     this.clearFiles();
     this._sender = null;

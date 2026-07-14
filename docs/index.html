@@ -86,15 +86,26 @@
       <p class="label">Enter this code in the sender:</p>
       <div class="code-row">
         <div class="code" x-text="$store.rx.code">------</div>
-        <button
-          class="btn btn-soft btn-stack"
-          type="button"
-          @click="$store.rx.copyCode()"
-          :title="$store.rx.copyCodeLabel"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-          <span x-text="$store.rx.copyCodeLabel">Copy code</span>
-        </button>
+        <div class="code-actions">
+          <button
+            class="btn btn-soft btn-icon"
+            type="button"
+            @click="$store.rx.copyCode()"
+            :title="$store.rx.copyCodeLabel"
+            aria-label="Copy code"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+          </button>
+          <button
+            class="btn btn-soft btn-icon"
+            type="button"
+            @click="$store.rx.refreshCode()"
+            title="Get a fresh code"
+            aria-label="Get a fresh code"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+          </button>
+        </div>
       </div>
       <p class="hint" x-text="$store.rx.ttl"></p>
       <p class="hint">Receiving over relay — file bytes flow peer-to-peer, never through this page.</p>
@@ -131,7 +142,15 @@
     </section>
 
     <section id="downloads-section" x-show="$store.rx.downloads.length">
-      <p class="label">Downloads</p>
+      <div class="section-head">
+        <p class="label">Downloads</p>
+        <button
+          class="btn-link"
+          type="button"
+          @click="$store.rx.clearDownloads()"
+          title="Remove the downloaded files from this tab's memory"
+        >Clear &amp; free memory</button>
+      </div>
       <ul class="download-list">
         <template x-for="d in $store.rx.downloads" :key="d.url">
           <li><a :href="d.url" :download="d.path" x-text="d.label"></a></li>
@@ -214,7 +233,7 @@
           <code>.zip</code>.
         </p>
         <p class="hint hint-warn">
-          ⚠ Everything is held in this tab's memory (RAM) while sending —
+          ⚠️ Everything is held in this tab's memory (RAM) while sending —
           very large files or folders aren't recommended and may fail.
         </p>
       </section>

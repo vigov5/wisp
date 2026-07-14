@@ -37,8 +37,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wisp_wire::message::{
     Accept, Cancel, CancelPhase, Decline, DeviceType, Hello, Identity, ManifestItem,
-    PROTOCOL_VERSION, ReceiverMessage, SenderMessage, TransferCompleted, TransferProgressPayload,
-    TransferResult, TransferRole, TransferStatus,
+    PROTOCOL_VERSION, ReceiverMessage, SenderMessage, TransferCompleted, TransferProgress,
+    TransferProgressPayload, TransferResult, TransferRole, TransferStatus,
 };
 use wisp_wire::plan::TransferPhase;
 use wisp_wire::rendezvous::RendezvousClient;
@@ -139,6 +139,11 @@ pub struct WebReceiver {
     code: String,
     pending: PendingDecision,
     cancel: Rc<RefCell<bool>>,
+    // Kept so `refreshCode()` can mint a fresh code on demand.
+    endpoint: Endpoint,
+    client: RendezvousClient,
+    current_code: Rc<RefCell<String>>,
+    on_event: Function,
 }
 
 #[wasm_bindgen]
@@ -177,6 +182,27 @@ impl WebReceiver {
     pub fn cancel(&self) {
         *self.cancel.borrow_mut() = true;
         self.resolve(Decision::Decline);
+    }
+
+    /// Mint a fresh pairing code now, without waiting for the 15s poll. Fire-and-
+    /// forget: re-registers in the background and pushes a `Registered` event
+    /// that repaints the code.
+    #[wasm_bindgen(js_name = refreshCode)]
+    pub fn refresh_code(&self) {
+        let endpoint = self.endpoint.clone();
+        let client = self.client.clone();
+        let current_code = self.current_code.clone();
+        let on_event = self.on_event.clone();
+        spawn_local(async move {
+            if let Err(err) = reregister(&endpoint, &client, &current_code, &on_event).await {
+                emit(
+                    &on_event,
+                    &Event::Error {
+                        message: format!("refreshing code: {err:#}"),
+                    },
+                );
+            }
+        });
     }
 
     fn resolve(&self, decision: Decision) {
@@ -219,6 +245,13 @@ async fn run_start(rendezvous_url: String, on_event: Function) -> Result<WebRece
     let busy: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
     let current_code: Rc<RefCell<String>> = Rc::new(RefCell::new(code.clone()));
 
+    // Handles kept on the returned struct so `refreshCode()` can re-register on
+    // demand (cloned before `endpoint`/`on_event` are moved into the accept loop).
+    let recv_endpoint = endpoint.clone();
+    let recv_client = client.clone();
+    let recv_code = current_code.clone();
+    let recv_on_event = on_event.clone();
+
     // Idle poller: keep a live code available. When the current code is claimed
     // or expires and we're not mid-transfer, mint a fresh one. (The already-
     // claimed ticket still reaches us endpoint-to-endpoint, so rotating is safe.)
@@ -239,19 +272,8 @@ async fn run_start(rendezvous_url: String, on_event: Function) -> Result<WebRece
                     if *poll_busy.borrow() {
                         continue;
                     }
-                    let Ok(ticket) = wisp_wire::ticket::encode_ticket(poll_endpoint.addr()) else {
-                        continue;
-                    };
-                    if let Ok(reg) = poll_client.register_peer(ticket).await {
-                        *poll_code.borrow_mut() = reg.code.clone();
-                        emit(
-                            &poll_on_event,
-                            &Event::Registered {
-                                code: reg.code,
-                                expires_at: reg.expires_at,
-                            },
-                        );
-                    }
+                    let _ =
+                        reregister(&poll_endpoint, &poll_client, &poll_code, &poll_on_event).await;
                 }
             }
         });
@@ -260,6 +282,8 @@ async fn run_start(rendezvous_url: String, on_event: Function) -> Result<WebRece
     let task_pending = pending.clone();
     let task_cancel = cancel.clone();
     let task_busy = busy.clone();
+    let loop_client = client.clone();
+    let loop_code = current_code.clone();
 
     spawn_local(async move {
         loop {
@@ -280,6 +304,12 @@ async fn run_start(rendezvous_url: String, on_event: Function) -> Result<WebRece
             };
             *task_cancel.borrow_mut() = false;
             *task_busy.borrow_mut() = true;
+            // The sender just claimed the displayed code, so it's dead now. Mint a
+            // fresh one immediately (matching native) so the next sender always has
+            // a live code, without waiting out the 15s poll. Safe mid-transfer: the
+            // claimed ticket still reaches us endpoint-to-endpoint, and the JS side
+            // won't overwrite an in-flight offer's status on the 'registered' event.
+            let _ = reregister(&endpoint, &loop_client, &loop_code, &on_event).await;
             if let Err(err) = handle_connection(
                 &endpoint,
                 &store,
@@ -307,7 +337,36 @@ async fn run_start(rendezvous_url: String, on_event: Function) -> Result<WebRece
         code,
         pending,
         cancel,
+        endpoint: recv_endpoint,
+        client: recv_client,
+        current_code: recv_code,
+        on_event: recv_on_event,
     })
+}
+
+/// Re-register the endpoint with the rendezvous server, mint a fresh code, and
+/// push a `Registered` event so the UI repaints. Shared by the idle poller, the
+/// claim-on-connect rotation, and the manual `refreshCode()`.
+async fn reregister(
+    endpoint: &Endpoint,
+    client: &RendezvousClient,
+    current_code: &Rc<RefCell<String>>,
+    on_event: &Function,
+) -> Result<()> {
+    let ticket = wisp_wire::ticket::encode_ticket(endpoint.addr())?;
+    let reg = client
+        .register_peer(ticket)
+        .await
+        .context("re-registering with rendezvous")?;
+    *current_code.borrow_mut() = reg.code.clone();
+    emit(
+        on_event,
+        &Event::Registered {
+            code: reg.code,
+            expires_at: reg.expires_at,
+        },
+    );
+    Ok(())
 }
 
 fn device_type_label(device_type: DeviceType) -> &'static str {
@@ -526,6 +585,16 @@ async fn handle_connection(
     {
         let mut control_read = Some(Box::pin(wire::read_sender_message(&mut control_recv)));
         let mut since_yield: u32 = 0;
+        // Report progress back to the sender on its uni stream. Two reasons this
+        // matters: (1) a QUIC uni stream isn't observable to the peer until bytes
+        // are written to it, so the *first* frame is what unblocks the sender's
+        // `accept_uni().await` — without it a native sender parks at "Accepted"
+        // for the whole transfer and its Cancel (checked only after accept_uni)
+        // does nothing; (2) subsequent frames drive the sender's progress bar.
+        // Throttled to ~512 KiB so a big transfer doesn't flood the stream.
+        const PROGRESS_FRAME_BYTES: u64 = 512 * 1024;
+        let mut reported_at: u64 = 0;
+        let mut reported_any = false;
         loop {
             // Cancel is checked every iteration, not just on the idle tick: a fast,
             // steady stream keeps `next` immediately ready, so the tick branch would
@@ -580,13 +649,38 @@ async fn handle_connection(
                 None => futures_lite::future::or(next, futures_lite::future::or(gone, tick)).await,
             };
             match step {
-                Step::Item(Some(GetProgressItem::Progress(offset))) => emit(
-                    on_event,
-                    &Event::Progress {
-                        bytes_received: offset,
-                        total_bytes,
-                    },
-                ),
+                Step::Item(Some(GetProgressItem::Progress(offset))) => {
+                    emit(
+                        on_event,
+                        &Event::Progress {
+                            bytes_received: offset,
+                            total_bytes,
+                        },
+                    );
+                    // Forward to the sender (throttled; always the first tick so
+                    // its accept_uni() unblocks promptly).
+                    if !reported_any || offset >= reported_at + PROGRESS_FRAME_BYTES {
+                        reported_any = true;
+                        reported_at = offset;
+                        let snapshot = TransferProgressPayload {
+                            phase: TransferPhase::Transferring,
+                            completed_files: 0,
+                            total_files: offer.manifest.count() as u32,
+                            bytes_transferred: offset.min(total_bytes),
+                            total_bytes,
+                            active_file_id: None,
+                            active_file_bytes: None,
+                        };
+                        let _ = wire::write_receiver_message(
+                            &mut progress_send,
+                            &ReceiverMessage::TransferProgress(TransferProgress {
+                                session_id: session_id.clone(),
+                                snapshot,
+                            }),
+                        )
+                        .await;
+                    }
+                }
                 Step::Item(Some(GetProgressItem::Done(_))) | Step::Item(None) => break,
                 Step::Item(Some(GetProgressItem::Error(err))) => bail!("blob fetch failed: {err}"),
                 // Sender asked to cancel mid-transfer — stop and show it cleanly.
