@@ -161,7 +161,10 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
 
   void emitCompletedTransfer({
     required String senderName,
-    String senderEndpointId = 'endpoint-1',
+    // Null by default so a plain completed event carries no endpoint id (as
+    // before) and doesn't trip recordTransfer in tests that don't wire up the
+    // saved-devices repository. Tests that assert on Recent pass one explicitly.
+    String? senderEndpointId,
     String senderDeviceType = 'laptop',
     bool senderWeb = false,
     bool senderEphemeral = false,
