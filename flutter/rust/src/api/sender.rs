@@ -472,7 +472,10 @@ mod tests {
         );
 
         assert_eq!(event.phase, SendTransferPhase::Failed);
-        assert_eq!(event.status_message, "Transfer failed.");
+        assert_eq!(
+            event.status_message,
+            "Send runtime crashed before reporting an outcome."
+        );
         assert!(event.error.is_some());
     }
 
@@ -490,6 +493,7 @@ mod tests {
             remote_endpoint_id: None,
             remote_ephemeral: None,
             remote_ticket: None,
+            connection_candidates: Vec::new(),
             connection_path,
             error: None,
         }
