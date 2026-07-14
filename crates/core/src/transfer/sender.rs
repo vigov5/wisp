@@ -422,10 +422,42 @@ impl SenderSession {
         )
         .await?;
 
-        let mut progress_recv = connection
-            .accept_uni()
-            .await
-            .map_err(|source| TransferError::other("accepting progress stream", source))?;
+        // Wait for the receiver to open its progress stream — but stay responsive
+        // to a user cancel and a peer disconnect. A conforming receiver opens (and
+        // writes to) this stream promptly, but a QUIC uni stream isn't observable
+        // until the peer writes to it, so a receiver that defers its first
+        // progress frame would otherwise park us here with Cancel unable to fire
+        // and the blob provider still serving (the receiver keeps pulling bytes).
+        let mut progress_recv = tokio::select! {
+            res = connection.accept_uni() => {
+                res.map_err(|source| TransferError::other("accepting progress stream", source))?
+            }
+            _ = wait_for_cancel(&mut cancel_rx) => {
+                let _ = protocol_wire::write_sender_message(
+                    &mut control_send,
+                    &protocol_message::SenderMessage::Cancel(protocol_message::Cancel {
+                        session_id: self.session_id.clone(),
+                        by: protocol_message::TransferRole::Sender,
+                        phase: protocol_message::CancelPhase::Transferring,
+                        reason: "cancelled by user".to_owned(),
+                    }),
+                ).await;
+                // Tear the provider down so a pull-model receiver can't keep
+                // fetching, then close the connection in ~1 RTT.
+                let _ = registration.shutdown().await;
+                close_connection_gracefully(&self.endpoint, &connection, &self.blob_strategy).await;
+                return Ok(TransferOutcome::local_cancel(
+                    protocol_message::TransferRole::Sender,
+                    protocol_message::CancelPhase::Transferring,
+                ));
+            }
+            _ = connection.closed() => {
+                return Err(TransferError::other(
+                    "accepting progress stream",
+                    std::io::Error::other("receiver disconnected before the transfer started"),
+                ));
+            }
+        };
 
         let outcome = tokio::select! {
             res = do_transfer(&self.session_id, &prepared_plan, &mut progress_recv, &mut control_recv, &self.events) => res?,
