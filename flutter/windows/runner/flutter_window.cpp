@@ -99,10 +99,16 @@ void FlutterWindow::HandleForwardedPath(const COPYDATASTRUCT* copy_data) {
   if (path.empty() || !windows_integration_channel_) {
     return;
   }
-  // Bring the window forward so the user sees the draft (the forwarding process
-  // also attempts this, but doing it on the host side is more reliable).
+  // Bring the window forward so the user sees the draft. The forwarding process
+  // grants us foreground rights (AllowSetForegroundWindow) so SetForegroundWindow
+  // below actually takes; the Dart side also restores via window_manager to keep
+  // its tracked state in sync. Handle both minimize paths: iconic (minimized to
+  // the taskbar) and fully hidden (minimized to the tray).
   HWND hwnd = GetHandle();
   if (hwnd != nullptr) {
+    if (!IsWindowVisible(hwnd)) {
+      ShowWindow(hwnd, SW_SHOW);
+    }
     if (IsIconic(hwnd)) {
       ShowWindow(hwnd, SW_RESTORE);
     }

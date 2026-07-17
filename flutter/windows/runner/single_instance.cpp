@@ -97,6 +97,18 @@ bool AcquireOrForward(const std::vector<std::string>& args) {
     return false;
   }
 
+  // Grant the already-running host process permission to steal the foreground.
+  // This helper was launched by the foreground process (Explorer), so it holds
+  // the foreground privilege; the host does not. Without this hand-off Windows'
+  // foreground lock silently denies the host's SetForegroundWindow, leaving the
+  // window un-minimized behind Explorer (or merely flashing its taskbar button)
+  // instead of popping the send draft to the front.
+  DWORD host_pid = 0;
+  GetWindowThreadProcessId(host, &host_pid);
+  if (host_pid != 0) {
+    AllowSetForegroundWindow(host_pid);
+  }
+
   BringToForeground(host);
   for (const std::string& path : paths) {
     ForwardPath(host, path);

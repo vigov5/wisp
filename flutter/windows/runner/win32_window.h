@@ -90,6 +90,12 @@ class Win32Window {
   // Update the window frame's theme to match the system theme.
   static void UpdateTheme(HWND const window);
 
+  // Assign the app icon (IDI_APP_ICON) to the window via WM_SETICON. Sets an
+  // explicit per-window icon (big + small) rather than relying on the window
+  // class icon alone, which the taskbar can drop after the frameless window is
+  // minimized and restored — leaving a blank taskbar button.
+  static void UpdateWindowIcon(HWND const window);
+
   bool quit_on_close_ = false;
 
   // window handle for top level window.

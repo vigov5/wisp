@@ -140,6 +140,9 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
   void _handleWindowsSendPaths(List<String> paths) {
     final files = _sendPickedFilesFromPaths(paths);
     if (files.isEmpty) return;
+    // Surface the window: on a warm-start forward it may be minimized to the
+    // taskbar or hidden in the tray, and opening the draft alone won't show it.
+    unawaited(DesktopIntegration.instance.bringToFront());
     // Drive the controller state ourselves rather than relying on the draft
     // route's builder to seed via `beginDraft`: when the draft route already
     // sits in the stack, navigating back to it reuses the existing page and its

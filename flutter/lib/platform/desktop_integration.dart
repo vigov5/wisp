@@ -222,6 +222,16 @@ class DesktopIntegration with WindowListener, TrayListener {
 
   // --- Window show / hide / quit -------------------------------------------
 
+  /// Brings the window back to the front. Used when the Windows "Send via Wisp"
+  /// menu forwards a path to the already-running instance: the draft is opened
+  /// in Dart, but the window may be minimized to the taskbar or hidden in the
+  /// tray, so surface it here through window_manager (keeping its tracked state
+  /// in sync). Safe no-op off desktop.
+  Future<void> bringToFront() async {
+    if (!isSupported) return;
+    await _restoreWindow();
+  }
+
   Future<void> _hideToTray() async {
     await _showTray();
     try {

@@ -145,6 +145,7 @@ bool Win32Window::Create(const std::wstring& title,
   }
 
   UpdateTheme(window);
+  UpdateWindowIcon(window);
 
   return OnCreate();
 }
@@ -284,5 +285,25 @@ void Win32Window::UpdateTheme(HWND const window) {
     BOOL enable_dark_mode = light_mode == 0;
     DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
                           &enable_dark_mode, sizeof(enable_dark_mode));
+  }
+}
+
+void Win32Window::UpdateWindowIcon(HWND const window) {
+  HMODULE module = GetModuleHandle(nullptr);
+  // LR_SHARED lets the system own the handle lifetime (and hand back the same
+  // cached handle on repeat loads), so there is nothing to DestroyIcon.
+  auto big = static_cast<HICON>(
+      LoadImage(module, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON,
+                GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON),
+                LR_DEFAULTCOLOR | LR_SHARED));
+  auto small = static_cast<HICON>(
+      LoadImage(module, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON,
+                GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+                LR_DEFAULTCOLOR | LR_SHARED));
+  if (big != nullptr) {
+    SendMessage(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(big));
+  }
+  if (small != nullptr) {
+    SendMessage(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(small));
   }
 }
