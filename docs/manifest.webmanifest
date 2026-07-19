@@ -1,0 +1,50 @@
+{
+  "id": "/",
+  "name": "Wisp — send & receive files",
+  "short_name": "Wisp",
+  "description": "Send & receive files in your browser — peer-to-peer, no install.",
+  "start_url": "./?source=pwa",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "theme_color": "#0f1213",
+  "background_color": "#0f1213",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["utilities", "productivity"],
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Send a file",
+      "short_name": "Send",
+      "url": "./?mode=send&source=pwa",
+      "description": "Open Wisp ready to send a file or text."
+    },
+    {
+      "name": "Receive a file",
+      "short_name": "Receive",
+      "url": "./?mode=receive&source=pwa",
+      "description": "Open Wisp ready to receive with a fresh code."
+    }
+  ]
+}

@@ -83,6 +83,13 @@ Alpine.store('rx', {
   // before paint; this mirrors it for the toggle glyph, defaulting to dark.
   theme: 'dark',
 
+  // ── PWA install ────────────────────────────────────────────────────────────
+  // `beforeinstallprompt` is stashed here (deferredPrompt) so the CTA can replay
+  // it inside a click. installVisible drives the install bar: true only while
+  // the browser says the app is installable AND the user hasn't dismissed it.
+  installVisible: false,
+  _deferredPrompt: null,
+
   code: '------',
   ttl: '',
   status: 'Loading…',
@@ -386,6 +393,31 @@ Alpine.store('rx', {
     if (this.sendReceiver.pubkey) this.sendBadgeStyle = badgeStyleFor(this.sendReceiver.pubkey);
   },
 
+  // ── PWA install ────────────────────────────────────────────────────────────
+  // Fire the native install dialog by replaying the captured event. Must run
+  // inside a user gesture (this click) — the browser rejects a bare prompt().
+  async installApp() {
+    const evt = this._deferredPrompt;
+    if (!evt) return;
+    // A prompt is single-use; hide the bar and drop the event regardless of
+    // outcome so a second click can't reuse a spent prompt.
+    this.installVisible = false;
+    this._deferredPrompt = null;
+    try {
+      evt.prompt();
+      await evt.userChoice;
+    } catch (e) {
+      /* dialog dismissed or unsupported — nothing to recover */
+    }
+  },
+
+  // "Not now": hide the bar for this visit. beforeinstallprompt fires again on
+  // later visits while the app stays uninstalled, so the offer isn't lost.
+  dismissInstall() {
+    this.installVisible = false;
+    this._deferredPrompt = null;
+  },
+
   // ── Mode + lazy receiver ────────────────────────────────────────────────
   setMode(mode) {
     this.mode = mode;
@@ -618,3 +650,38 @@ Alpine.store('rx').theme =
 
 const initialMode = params.get('mode') === 'send' ? 'send' : 'receive';
 Alpine.store('rx').setMode(initialMode);
+
+// ── PWA: register the service worker + wire the install prompt ───────────────
+// The SW (app-shell cache + offline fallback) is one of the two install
+// prerequisites, alongside the manifest. Registration is best-effort: it needs
+// a secure context (https or localhost), so it silently no-ops elsewhere and
+// never blocks the transfer UI.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch((err) => {
+      console.warn('SW registration failed', err);
+    });
+  });
+}
+
+// Browsers won't auto-open the install dialog — they hand us a deferred
+// `beforeinstallprompt` event, which we stash and surface as the in-card
+// "Install app" button. Calling prompt() must wait for the user's click.
+window.addEventListener('beforeinstallprompt', (e) => {
+  // Suppress Chrome's default mini-infobar; we present our own CTA instead.
+  e.preventDefault();
+  const store = Alpine.store('rx');
+  store._deferredPrompt = e;
+  store.installVisible = true;
+});
+
+// Installed (via our button, the browser's own UI, or already running
+// standalone): retract the CTA — there's nothing left to install.
+window.addEventListener('appinstalled', () => {
+  const store = Alpine.store('rx');
+  store.installVisible = false;
+  store._deferredPrompt = null;
+});
+if (window.matchMedia('(display-mode: standalone)').matches) {
+  Alpine.store('rx').installVisible = false;
+}

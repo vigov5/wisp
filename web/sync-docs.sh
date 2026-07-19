@@ -25,7 +25,16 @@ fi
 sed -i "s|<span id=\"app-version\">[^<]*</span>|<span id=\"app-version\">v${VERSION}</span>|" web/index.html
 echo "Stamped version v${VERSION} into web/index.html"
 
+# Keep the service worker's cache version in step with the app version so a
+# deploy invalidates the old app-shell cache (see web/sw.js activate handler).
+sed -i "s|^const CACHE_VERSION = '[^']*';|const CACHE_VERSION = 'v${VERSION}';|" web/sw.js
+echo "Stamped CACHE_VERSION v${VERSION} into web/sw.js"
+
 cp web/index.html web/app.js web/style.css docs/
+# PWA assets: manifest, service worker, and installable icons.
+cp web/manifest.webmanifest web/sw.js docs/
+mkdir -p docs/icons
+cp web/icons/icon-192.png web/icons/icon-512.png web/icons/icon-maskable-512.png docs/icons/
 mkdir -p docs/vendor
 cp web/vendor/alpine.esm.js docs/vendor/
 mkdir -p docs/pkg

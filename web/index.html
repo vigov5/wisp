@@ -4,6 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Wisp — send &amp; receive files in your browser</title>
+  <!-- PWA: makes the page installable to the desktop / home screen. The SW is
+       registered from app.js; the install prompt surfaces as an in-card button
+       (browsers forbid auto-triggering it without a user gesture). -->
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="theme-color" content="#0f1213" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Wisp" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
   <!-- Set the theme before first paint (no flash). Default dark; remembers the
        user's choice. Explicit data-theme wins over prefers-color-scheme. -->
   <script>
@@ -58,6 +67,20 @@
         <span>by Nguyen Anh Tien</span>
       </p>
     </header>
+
+    <!-- Install-to-desktop CTA. Only appears once the browser fires
+         `beforeinstallprompt` (installable, not yet installed); clicking it
+         replays the saved event to trigger the native install dialog. -->
+    <div class="install-bar" x-show="$store.rx.installVisible" x-cloak>
+      <span class="install-text">Install Wisp as an app on your desktop.</span>
+      <div class="install-actions">
+        <button class="btn-link" type="button" @click="$store.rx.dismissInstall()">Not now</button>
+        <button class="btn btn-primary btn-icon-text" type="button" @click="$store.rx.installApp()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+          <span>Install app</span>
+        </button>
+      </div>
+    </div>
 
     <!-- Mode switch: Receive (default) ↔ Send. Picking Receive lazily binds the
          receiver + registers a code; Send never does. -->
