@@ -350,6 +350,22 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
     ref.listen<transfer_state.TransferSessionState>(
       transfersViewStateProvider,
       (prev, next) {
+        // Desktop: once the offer is no longer awaiting the user's decision
+        // (accepted in-app, declined, or the session ended), pull down any
+        // incoming-transfer toast. A delayed OS notification could otherwise
+        // fire a stale Accept/Decline against a finished transfer.
+        if (DesktopIntegration.isSupported) {
+          const awaitingDecision = {
+            transfer_state.TransferSessionPhase.connecting,
+            transfer_state.TransferSessionPhase.offerPending,
+          };
+          final wasAwaiting =
+              prev != null && awaitingDecision.contains(prev.phase);
+          if (wasAwaiting && !awaitingDecision.contains(next.phase)) {
+            unawaited(DesktopIntegration.instance.dismissIncomingTransfer());
+          }
+        }
+
         final wasIdle =
             prev == null ||
             prev.phase == transfer_state.TransferSessionPhase.idle;
