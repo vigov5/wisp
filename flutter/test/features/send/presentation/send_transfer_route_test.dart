@@ -367,10 +367,143 @@ void main() {
         find.text('Files finished transferring successfully.'),
         findsOneWidget,
       );
-      expect(find.text('Done'), findsWidgets);
+      // Sender success arms the auto-return, so the button reads "Done (n)".
+      expect(find.textContaining('Done'), findsWidgets);
       expect(find.byType(RecipientAvatar).last, findsOneWidget);
+
+      // Cancel the running countdown (a tap anywhere on the card stops it) so
+      // its periodic Timer doesn't outlive the test.
+      await tester.tap(find.byType(RecipientAvatar).last);
+      await tester.pump();
     },
   );
+
+  testWidgets(
+    'successful send auto-returns home when the card is left untouched',
+    (WidgetTester tester) async {
+      final fakeSource = FakeSendTransferSource();
+      final container = _buildContainer(fakeSource);
+      addTearDown(container.dispose);
+      addTearDown(fakeSource.close);
+
+      final controller = container.read(sendControllerProvider.notifier);
+      controller.beginDraft([
+        SendPickedFile(
+          path: '/tmp/report.pdf',
+          name: 'report.pdf',
+          sizeBytes: BigInt.from(1024),
+        ),
+      ]);
+      controller.updateDestinationCode('ABC123');
+      final request = controller.buildSendRequest()!;
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: _buildRouter(request)),
+        ),
+      );
+      await _pumpRoute(tester);
+
+      fakeSource.emit(
+        SendTransferUpdate.completed(
+          destinationLabel: 'Laptop',
+          statusMessage: 'Sent successfully',
+          itemCount: BigInt.one,
+          totalSize: BigInt.from(1024),
+          bytesSent: BigInt.from(1024),
+          plan: _buildPlan(),
+          snapshot: _buildSnapshot(
+            phase: rust_transfer.TransferPhaseData.completed,
+            bytesTransferred: BigInt.from(1024),
+            bytesPerSec: BigInt.from(256),
+            etaSeconds: BigInt.zero,
+          ),
+        ),
+      );
+      // The success result is delayed ~1s by _completeTransfer (the peer-remember
+      // pause); elapse it, then settle the result card.
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump();
+      expect(find.text('SUCCESS'), findsWidgets);
+      // The auto-return countdown is visible in the Done label.
+      expect(find.textContaining('Done ('), findsOneWidget);
+
+      // Advance the full 10s untouched, one tick at a time, then let the
+      // resulting navigation settle.
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+      await tester.pumpAndSettle();
+
+      // Auto-returned home and the draft was cleared, exactly like tapping Done.
+      expect(find.text('home stub'), findsOneWidget);
+      expect(container.read(sendControllerProvider), isA<SendStateIdle>());
+    },
+  );
+
+  testWidgets('a tap on the success card cancels the auto-return countdown', (
+    WidgetTester tester,
+  ) async {
+    final fakeSource = FakeSendTransferSource();
+    final container = _buildContainer(fakeSource);
+    addTearDown(container.dispose);
+    addTearDown(fakeSource.close);
+
+    final controller = container.read(sendControllerProvider.notifier);
+    controller.beginDraft([
+      SendPickedFile(
+        path: '/tmp/report.pdf',
+        name: 'report.pdf',
+        sizeBytes: BigInt.from(1024),
+      ),
+    ]);
+    controller.updateDestinationCode('ABC123');
+    final request = controller.buildSendRequest()!;
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp.router(routerConfig: _buildRouter(request)),
+      ),
+    );
+    await _pumpRoute(tester);
+
+    fakeSource.emit(
+      SendTransferUpdate.completed(
+        destinationLabel: 'Laptop',
+        statusMessage: 'Sent successfully',
+        itemCount: BigInt.one,
+        totalSize: BigInt.from(1024),
+        bytesSent: BigInt.from(1024),
+        plan: _buildPlan(),
+        snapshot: _buildSnapshot(
+          phase: rust_transfer.TransferPhaseData.completed,
+          bytesTransferred: BigInt.from(1024),
+          bytesPerSec: BigInt.from(256),
+          etaSeconds: BigInt.zero,
+        ),
+      ),
+    );
+    // Elapse the ~1s success delay, then settle the result card.
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump();
+    expect(find.textContaining('Done ('), findsOneWidget);
+
+    // Tap the card → countdown stops and the label reverts to a plain "Done".
+    await tester.tap(find.byType(RecipientAvatar).last);
+    await tester.pump();
+    expect(find.text('Done'), findsOneWidget);
+    expect(find.textContaining('Done ('), findsNothing);
+
+    // Well past the 10s window, still parked on the result card — no auto-return.
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pump();
+    expect(find.text('home stub'), findsNothing);
+    expect(find.text('SUCCESS'), findsWidgets);
+  });
 
   testWidgets(
     'send transfer route shows declined cancelled and failed results',

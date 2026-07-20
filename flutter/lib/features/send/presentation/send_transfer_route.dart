@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -30,6 +32,18 @@ class SendTransferRoutePage extends ConsumerStatefulWidget {
 class _SendTransferRoutePageState extends ConsumerState<SendTransferRoutePage> {
   final bool _allowPop = false;
 
+  /// Auto-return countdown for a *successful* send. The result card has no
+  /// follow-up action on the sender side (nothing to open locally), so it
+  /// returns home on its own after [_autoCloseSeconds] rather than stranding
+  /// the user on a terminal screen. Sender success only — failures keep a
+  /// manual Done so the reason stays put, and the receiver side never
+  /// auto-closes (its files are still waiting to be opened). Any pointer-down
+  /// on the card cancels it (see the Listener in build), so it only fires when
+  /// the user has actually walked away. `null` timer ⇒ not counting.
+  static const int _autoCloseSeconds = 10;
+  Timer? _autoCloseTimer;
+  int _autoCloseRemaining = 0;
+
   @override
   void initState() {
     super.initState();
@@ -41,6 +55,107 @@ class _SendTransferRoutePageState extends ConsumerState<SendTransferRoutePage> {
   }
 
   @override
+  void dispose() {
+    _autoCloseTimer?.cancel();
+    super.dispose();
+  }
+
+  // "Done" path — clear the draft for terminal results, then home.  Used for
+  // both success (only button shown) and failure (left button next to "Retry")
+  // so the user always has an explicit way back to home from the result card.
+  // Also the target the success auto-close timer fires into.
+  void _exitRoute() {
+    if (!mounted) {
+      return;
+    }
+    _autoCloseTimer?.cancel();
+    _autoCloseTimer = null;
+
+    final currentState = ref.read(sendControllerProvider);
+    if (currentState is SendStateResult) {
+      ref.read(sendControllerProvider.notifier).clearDraft();
+    }
+
+    context.goHome();
+  }
+
+  // "Retry" path — only offered for failed/cancelled/declined results.
+  // Restores the SendStateResult back to SendStateDrafting (same files,
+  // same destination, same resolved sizes) and navigates to the draft
+  // preview so the user can adjust destination + re-tap Send without
+  // re-picking files.  No-op on a state that isn't a failure result.
+  void _retryFromResult() {
+    if (!mounted) {
+      return;
+    }
+    _cancelAutoClose();
+    final currentState = ref.read(sendControllerProvider);
+    if (currentState is! SendStateResult) {
+      return;
+    }
+    if (currentState.result.outcome == SendTransferOutcome.success) {
+      // Defensive: Retry shouldn't be reachable for success, but if a
+      // race surfaces it, fall back to the success exit so we don't
+      // strand the user on the result screen.
+      _exitRoute();
+      return;
+    }
+    ref.read(sendControllerProvider.notifier).restoreDraftFromResult();
+    // Pass empty `files` so the draft route builder uses the
+    // controller state we just restored instead of seeding from
+    // `extra` (which would replace the items via `beginDraft`).
+    context.goSendDraft(files: const []);
+  }
+
+  // "Back" path — shown alongside Cancel only while still connecting (no data
+  // sent yet). Aborts the in-flight connect and rolls the transfer back into
+  // the draft (cancelTransfer already does that state transition), then
+  // returns to the draft screen so the user can pick a different connect
+  // method or change the files. Empty `files` => reuse the restored draft.
+  void _backToDraft() {
+    if (!mounted) {
+      return;
+    }
+    _cancelAutoClose();
+    ref.read(sendControllerProvider.notifier).cancelTransfer();
+    context.goSendDraft(files: const []);
+  }
+
+  // Start the success auto-return. Idempotent: a repeat success signal while
+  // already counting is ignored so the clock never restarts mid-countdown.
+  void _startAutoClose() {
+    if (_autoCloseTimer != null) {
+      return;
+    }
+    setState(() => _autoCloseRemaining = _autoCloseSeconds);
+    _autoCloseTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_autoCloseRemaining <= 1) {
+        timer.cancel();
+        _autoCloseTimer = null;
+        _exitRoute();
+      } else {
+        setState(() => _autoCloseRemaining -= 1);
+      }
+    });
+  }
+
+  // Stop the countdown and revert the button to a plain "Done". Called on any
+  // pointer interaction with the card so the screen never vanishes out from
+  // under someone who's still reading it.
+  void _cancelAutoClose() {
+    if (_autoCloseTimer == null) {
+      return;
+    }
+    _autoCloseTimer!.cancel();
+    _autoCloseTimer = null;
+    setState(() => _autoCloseRemaining = 0);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final state = ref.watch(sendControllerProvider);
     final controller = ref.read(sendControllerProvider.notifier);
@@ -49,62 +164,19 @@ class _SendTransferRoutePageState extends ConsumerState<SendTransferRoutePage> {
       request: widget.request,
     );
 
-    // "Done" path — clear the draft for terminal results, then home.  Used
-    // for both success (only button shown) and failure (left button next to
-    // "Retry") so the user always has an explicit way back to home from the
-    // result card.
-    void exitRoute() {
-      if (!mounted) {
-        return;
+    // Arm the auto-return when the send reaches a *successful* terminal state;
+    // any other outcome cancels it. Registered every build so the
+    // transferring→result transition (which triggers this rebuild) fires it.
+    ref.listen<SendState>(sendControllerProvider, (prev, next) {
+      final reachedSuccess =
+          next is SendStateResult &&
+          next.result.outcome == SendTransferOutcome.success;
+      if (reachedSuccess) {
+        _startAutoClose();
+      } else {
+        _cancelAutoClose();
       }
-
-      final currentState = ref.read(sendControllerProvider);
-      if (currentState is SendStateResult) {
-        ref.read(sendControllerProvider.notifier).clearDraft();
-      }
-
-      context.goHome();
-    }
-
-    // "Retry" path — only offered for failed/cancelled/declined results.
-    // Restores the SendStateResult back to SendStateDrafting (same files,
-    // same destination, same resolved sizes) and navigates to the draft
-    // preview so the user can adjust destination + re-tap Send without
-    // re-picking files.  No-op on a state that isn't a failure result.
-    void retryFromResult() {
-      if (!mounted) {
-        return;
-      }
-      final currentState = ref.read(sendControllerProvider);
-      if (currentState is! SendStateResult) {
-        return;
-      }
-      if (currentState.result.outcome == SendTransferOutcome.success) {
-        // Defensive: Retry shouldn't be reachable for success, but if a
-        // race surfaces it, fall back to the success exit so we don't
-        // strand the user on the result screen.
-        exitRoute();
-        return;
-      }
-      ref.read(sendControllerProvider.notifier).restoreDraftFromResult();
-      // Pass empty `files` so the draft route builder uses the
-      // controller state we just restored instead of seeding from
-      // `extra` (which would replace the items via `beginDraft`).
-      context.goSendDraft(files: const []);
-    }
-
-    // "Back" path — shown alongside Cancel only while still connecting (no data
-    // sent yet). Aborts the in-flight connect and rolls the transfer back into
-    // the draft (cancelTransfer already does that state transition), then
-    // returns to the draft screen so the user can pick a different connect
-    // method or change the files. Empty `files` => reuse the restored draft.
-    void backToDraft() {
-      if (!mounted) {
-        return;
-      }
-      ref.read(sendControllerProvider.notifier).cancelTransfer();
-      context.goSendDraft(files: const []);
-    }
+    });
 
     return PopScope(
       canPop: _allowPop,
@@ -126,18 +198,28 @@ class _SendTransferRoutePageState extends ConsumerState<SendTransferRoutePage> {
       child: Scaffold(
         backgroundColor: context.wc.bg,
         body: SafeArea(
-          child: SizedBox.expand(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 400),
-              switchInCurve: Curves.easeOut,
-              switchOutCurve: Curves.easeIn,
-              child: _TransferStateCard(
-                key: ValueKey(state.runtimeType),
-                state: state,
-                viewData: viewData,
-                onExit: exitRoute,
-                onRetry: retryFromResult,
-                onBack: backToDraft,
+          // A pointer-down anywhere on the card cancels the success auto-close
+          // (translucent so blank areas count too). Listener never consumes the
+          // event, so buttons and scrolling keep working.
+          child: Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (_) => _cancelAutoClose(),
+            child: SizedBox.expand(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 400),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                child: _TransferStateCard(
+                  key: ValueKey(state.runtimeType),
+                  state: state,
+                  viewData: viewData,
+                  onExit: _exitRoute,
+                  onRetry: _retryFromResult,
+                  onBack: _backToDraft,
+                  autoCloseRemaining: _autoCloseTimer != null
+                      ? _autoCloseRemaining
+                      : null,
+                ),
               ),
             ),
           ),
@@ -155,6 +237,7 @@ class _TransferStateCard extends StatelessWidget {
     required this.onExit,
     required this.onRetry,
     required this.onBack,
+    required this.autoCloseRemaining,
   });
 
   final SendState state;
@@ -162,6 +245,10 @@ class _TransferStateCard extends StatelessWidget {
   final VoidCallback onExit;
   final VoidCallback onRetry;
   final VoidCallback onBack;
+
+  /// Seconds left on the success auto-return, or `null` when not counting.
+  /// Drives the "Done (n)" label; `null` renders a plain "Done".
+  final int? autoCloseRemaining;
 
   @override
   Widget build(BuildContext context) {
@@ -251,6 +338,7 @@ class _TransferStateCard extends StatelessWidget {
         onExit: onExit,
         onRetry: onRetry,
         onBack: onBack,
+        autoCloseRemaining: autoCloseRemaining,
       ),
     );
   }
@@ -277,6 +365,7 @@ Widget _buildFooter({
   required VoidCallback onExit,
   required VoidCallback onRetry,
   required VoidCallback onBack,
+  required int? autoCloseRemaining,
 }) {
   if (!showFooterButton) {
     return const SizedBox.shrink();
@@ -333,6 +422,11 @@ Widget _buildFooter({
   }
 
   if (isSuccessResult) {
+    // Counting down → "Done (n)" so the auto-return is visible and tappable to
+    // leave immediately; cancelled → plain "Done".
+    final doneLabel = autoCloseRemaining != null
+        ? 'Done ($autoCloseRemaining)'
+        : 'Done';
     return Row(
       children: [
         Expanded(
@@ -346,7 +440,7 @@ Widget _buildFooter({
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-            child: const Text('Done'),
+            child: Text(doneLabel),
           ),
         ),
       ],
