@@ -292,18 +292,22 @@ void Win32Window::UpdateWindowIcon(HWND const window) {
   HMODULE module = GetModuleHandle(nullptr);
   // LR_SHARED lets the system own the handle lifetime (and hand back the same
   // cached handle on repeat loads), so there is nothing to DestroyIcon.
-  auto big = static_cast<HICON>(
+  // NB: `small` is a Windows macro (rpcndr.h: `#define small char`), so it can't
+  // be used as a variable name — hence the `_icon` suffixes.
+  auto big_icon = static_cast<HICON>(
       LoadImage(module, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON,
                 GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON),
                 LR_DEFAULTCOLOR | LR_SHARED));
-  auto small = static_cast<HICON>(
+  auto small_icon = static_cast<HICON>(
       LoadImage(module, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON,
                 GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
                 LR_DEFAULTCOLOR | LR_SHARED));
-  if (big != nullptr) {
-    SendMessage(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(big));
+  if (big_icon != nullptr) {
+    SendMessage(window, WM_SETICON, ICON_BIG,
+                reinterpret_cast<LPARAM>(big_icon));
   }
-  if (small != nullptr) {
-    SendMessage(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(small));
+  if (small_icon != nullptr) {
+    SendMessage(window, WM_SETICON, ICON_SMALL,
+                reinterpret_cast<LPARAM>(small_icon));
   }
 }
