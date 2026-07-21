@@ -6,6 +6,7 @@ import 'package:launch_at_startup/launch_at_startup.dart';
 import 'package:local_notifier/local_notifier.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:tray_manager/tray_manager.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
 /// Desktop-only window/tray/startup integration for Wisp.
@@ -47,6 +48,9 @@ class DesktopIntegration with WindowListener, TrayListener {
   // Kept so the previous toast is torn down before the next one shows (each
   // LocalNotification registers a global listener in its constructor).
   LocalNotification? _activeNotification;
+  // Separate from _activeNotification so a user-fired test toast never
+  // interferes with (or gets torn down by) a real incoming-transfer toast.
+  LocalNotification? _testNotification;
   // Monotonic claim on the current incoming-transfer toast. dismissIncoming-
   // Transfer() bumps it so a notify() still awaiting setup/show (a slow OS
   // toast) can tell it's been superseded and skip — or tear down — a toast the
@@ -207,6 +211,59 @@ class DesktopIntegration with WindowListener, TrayListener {
       await notification.destroy();
     } catch (error) {
       debugPrint('[desktop] notify dismiss failed: $error');
+    }
+  }
+
+  /// Fires a sample OS toast so the user can confirm notifications actually
+  /// reach them. On Windows this doubles as registration: the OS only lists an
+  /// app under Settings → Notifications once it has shown a toast, and the
+  /// first toast after a fresh install can be dropped while the app's
+  /// AppUserModelID shortcut is still being registered — so firing one here
+  /// both verifies and "primes" delivery for the real incoming-transfer toast.
+  ///
+  /// Returns true if the toast was handed to the OS without error (which is not
+  /// a guarantee it was displayed — the user may have muted the app or Focus
+  /// Assist / Do Not Disturb may be swallowing it). Safe no-op off desktop.
+  Future<bool> sendTestNotification() async {
+    if (!isSupported) return false;
+    await _ensureNotificationsSetup();
+    if (!_notificationsReady) return false;
+    try {
+      await _testNotification?.destroy();
+      final notification = LocalNotification(
+        title: 'Notifications are working',
+        body:
+            "This is a test. You'll get an alert like this when a transfer "
+            'arrives while Wisp is in the background.',
+      );
+      notification.onClick = () => unawaited(_restoreWindow());
+      _testNotification = notification;
+      await notification.show();
+      return true;
+    } catch (error) {
+      debugPrint('[desktop] test notification failed: $error');
+      return false;
+    }
+  }
+
+  /// Opens the OS's notification settings so the user can (re-)enable Wisp's
+  /// alerts. Windows deep-links straight to the notifications page; macOS opens
+  /// the Notifications preference pane. Returns false where there's no usable
+  /// deep link (e.g. most Linux desktops) or the launch fails. Safe no-op off
+  /// desktop.
+  Future<bool> openNotificationSettings() async {
+    if (!isSupported) return false;
+    final String? target = Platform.isWindows
+        ? 'ms-settings:notifications'
+        : Platform.isMacOS
+        ? 'x-apple.systempreferences:com.apple.preference.notifications'
+        : null;
+    if (target == null) return false;
+    try {
+      return await launchUrl(Uri.parse(target));
+    } catch (error) {
+      debugPrint('[desktop] open notification settings failed: $error');
+      return false;
     }
   }
 

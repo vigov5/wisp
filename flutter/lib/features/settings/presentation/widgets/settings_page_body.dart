@@ -127,6 +127,31 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
     ref.read(updateControllerProvider.notifier).checkForUpdates(manual: true);
   }
 
+  Future<void> _sendTestNotification() async {
+    final ok = await DesktopIntegration.instance.sendTestNotification();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? "Test notification sent. If it doesn't appear, use \"Open "
+                    'notification settings" to enable Wisp.'
+              : 'Could not send a test notification.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openNotificationSettings() async {
+    final ok = await DesktopIntegration.instance.openNotificationSettings();
+    if (!mounted || ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Couldn't open notification settings on this system."),
+      ),
+    );
+  }
+
   // Surfaces inline feedback for a user-initiated check. The "available"
   // outcome is handled by the global dialog in WispApp, so here we only report
   // the up-to-date / error results.
@@ -620,6 +645,25 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                               setState(() => _launchAtStartup = value);
                             },
                           ),
+                          const _SettingsGroupHeader(title: 'Notifications'),
+                          _ActionTile(
+                            icon: Icons.notifications_active_outlined,
+                            label: 'Send test notification',
+                            subtitle:
+                                'Check that alerts reach you. On first run this '
+                                'also registers Wisp with the system.',
+                            onTap: _sendTestNotification,
+                          ),
+                          if (Platform.isWindows || Platform.isMacOS) ...[
+                            const SizedBox(height: 8),
+                            _ActionTile(
+                              icon: Icons.tune_rounded,
+                              label: 'Open notification settings',
+                              subtitle:
+                                  "Turn Wisp's notifications on if they're off.",
+                              onTap: _openNotificationSettings,
+                            ),
+                          ],
                         ],
                         const _SettingsGroupHeader(
                           title: 'Advanced',
@@ -898,6 +942,68 @@ class _IdentityBackupRow extends StatelessWidget {
               child: Text(
                 label,
                 style: wispSans(fontSize: 13, color: context.wc.ink),
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, color: context.wc.muted),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A tappable action row (icon + label + optional subtitle + chevron), matching
+/// the surface/border styling of the other settings tiles. Used for immediate
+/// actions that aren't gated by Save, e.g. the Notifications helpers.
+class _ActionTile extends StatelessWidget {
+  const _ActionTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.subtitle,
+  });
+
+  final IconData icon;
+  final String label;
+  final String? subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: context.wc.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: context.wc.border),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: context.wc.muted),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: wispSans(fontSize: 13, color: context.wc.ink),
+                  ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle!,
+                      style: wispSans(
+                        fontSize: 11.5,
+                        color: context.wc.muted,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
             Icon(Icons.chevron_right_rounded, color: context.wc.muted),
