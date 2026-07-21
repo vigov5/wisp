@@ -51,11 +51,6 @@ class DesktopIntegration with WindowListener, TrayListener {
   // Separate from _activeNotification so a user-fired test toast never
   // interferes with (or gets torn down by) a real incoming-transfer toast.
   LocalNotification? _testNotification;
-  // Monotonic claim on the current incoming-transfer toast. dismissIncoming-
-  // Transfer() bumps it so a notify() still awaiting setup/show (a slow OS
-  // toast) can tell it's been superseded and skip — or tear down — a toast the
-  // offer no longer needs.
-  int _incomingToken = 0;
 
   /// Wires the window + tray listeners once and applies the persisted
   /// minimize-to-tray preference. Call once at startup after
@@ -135,10 +130,6 @@ class DesktopIntegration with WindowListener, TrayListener {
     VoidCallback? onDecline,
   }) async {
     if (!isSupported) return;
-    // Claim this toast. A later dismissIncomingTransfer() (offer settled, or the
-    // window came forward) bumps the token, so if one lands while we're still
-    // awaiting setup/show below we bail instead of popping a stale toast.
-    final token = ++_incomingToken;
     try {
       // A focused, visible window already shows the confirm prompt.
       if (await windowManager.isFocused()) return;
@@ -147,8 +138,6 @@ class DesktopIntegration with WindowListener, TrayListener {
     }
     await _ensureNotificationsSetup();
     if (!_notificationsReady) return;
-    // Dismissed (offer already handled) while notifications were being set up.
-    if (token != _incomingToken) return;
     try {
       // Tear down the prior toast so its listener doesn't leak.
       await _activeNotification?.destroy();
@@ -179,31 +168,19 @@ class DesktopIntegration with WindowListener, TrayListener {
       }
       _activeNotification = notification;
       await notification.show();
-      // A dismiss can land while show() is in flight (a slow OS toast); if the
-      // offer's been handled by now, pull the toast straight back down so its
-      // stale Accept/Decline can't fire against a finished transfer.
-      if (token != _incomingToken) {
-        await notification.destroy();
-        if (identical(_activeNotification, notification)) {
-          _activeNotification = null;
-        }
-      }
     } catch (error) {
       debugPrint('[desktop] notify failed: $error');
     }
   }
 
-  /// Removes the incoming-transfer toast — whether on screen or still being
-  /// shown — once the offer no longer needs its one-tap Accept/Decline: the
-  /// user accepted/declined in-app, the window came forward to the confirm
-  /// prompt, or the session ended. Without this, a delayed OS toast (Windows
-  /// can surface toasts seconds late, or park them in the Action Center) could
-  /// fire Accept against an already-finished transfer, leaving the app stuck.
-  /// Safe no-op off desktop.
+  /// Tidies away the on-screen incoming-transfer toast once the offer has been
+  /// settled in-app, so a stale banner doesn't linger. This is best-effort: a
+  /// toast the OS surfaces late (or parks in the Action Center) may outlive it,
+  /// which is harmless because the toast's Accept/Decline are guarded against a
+  /// no-longer-pending offer at the callback (see app.dart). Safe no-op off
+  /// desktop.
   Future<void> dismissIncomingTransfer() async {
     if (!isSupported) return;
-    // Invalidate any notify() still awaiting setup/show so it won't pop.
-    _incomingToken++;
     final notification = _activeNotification;
     _activeNotification = null;
     if (notification == null) return;
@@ -392,15 +369,6 @@ class DesktopIntegration with WindowListener, TrayListener {
     if (_minimizeToTray) {
       unawaited(_hideToTray());
     }
-  }
-
-  @override
-  void onWindowFocus() {
-    // The window's now up (the user clicked the toast, restored from the tray,
-    // or alt-tabbed back), so the in-app confirm prompt is what they'll act on
-    // — drop any lingering incoming-transfer toast so a delayed one can't be
-    // tapped against a transfer that's already been handled.
-    unawaited(dismissIncomingTransfer());
   }
 
   // --- TrayListener ---------------------------------------------------------

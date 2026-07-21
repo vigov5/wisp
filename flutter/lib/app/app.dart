@@ -386,16 +386,31 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
           // that only makes sense in the in-app prompt, so the toast just
           // opens the window.
           final notifier = ref.read(transfersServiceProvider.notifier);
+          // The OS can surface a toast late (or keep it in the Action Center),
+          // so guard the one-tap actions: only respond if the offer is still
+          // pending when the button is actually tapped, otherwise a stale tap
+          // would fire Accept/Decline against a finished transfer.
+          bool offerStillPending() =>
+              ref.read(transfersViewStateProvider).phase ==
+              transfer_state.TransferSessionPhase.offerPending;
           unawaited(
             DesktopIntegration.instance.notifyIncomingTransfer(
               title: isText
                   ? '$sender is sending you text'
                   : '$sender is sending you files',
               body: 'Click to review and accept in Wisp.',
-              onAccept: isText ? null : () => unawaited(notifier.acceptOffer()),
+              onAccept: isText
+                  ? null
+                  : () {
+                      if (offerStillPending()) unawaited(notifier.acceptOffer());
+                    },
               onDecline: isText
                   ? null
-                  : () => unawaited(notifier.declineOffer()),
+                  : () {
+                      if (offerStillPending()) {
+                        unawaited(notifier.declineOffer());
+                      }
+                    },
             ),
           );
         }
