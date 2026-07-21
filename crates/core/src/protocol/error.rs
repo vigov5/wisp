@@ -55,6 +55,15 @@ pub enum ProtocolError {
         #[source]
         source: Box<dyn StdError + Send + Sync>,
     },
+    /// The peer aborted the handshake before the Hello exchange finished.
+    /// Under a strict-version protocol this is almost always an incompatible
+    /// peer (e.g. an older/newer Wisp that rejected our Hello and hung up),
+    /// so it is classified apart from a bare frame-read failure.
+    #[error("peer aborted the handshake (likely incompatible version): {source}")]
+    HandshakeRejected {
+        #[source]
+        source: Box<dyn StdError + Send + Sync>,
+    },
 }
 
 pub(crate) type Result<T> = std::result::Result<T, ProtocolError>;
@@ -154,6 +163,12 @@ impl ProtocolError {
         }
     }
 
+    pub(crate) fn handshake_rejected(source: impl StdError + Send + Sync + 'static) -> Self {
+        Self::HandshakeRejected {
+            source: Box::new(source),
+        }
+    }
+
     pub(crate) fn code(&self) -> TransferErrorCode {
         match self {
             Self::UnsupportedVersion { .. }
@@ -167,7 +182,8 @@ impl ProtocolError {
             | Self::FrameRead { .. }
             | Self::FrameWrite { .. }
             | Self::MessageSerialize { .. }
-            | Self::MessageDeserialize { .. } => TransferErrorCode::ProtocolViolation,
+            | Self::MessageDeserialize { .. }
+            | Self::HandshakeRejected { .. } => TransferErrorCode::ProtocolViolation,
         }
     }
 

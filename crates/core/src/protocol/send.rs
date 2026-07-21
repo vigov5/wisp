@@ -148,7 +148,15 @@ impl Sender {
     where
         R: AsyncRead + Unpin,
     {
-        let hello = match read_receiver_message(recv).await? {
+        // A read failure here means the receiver hung up before sending its
+        // Hello. With a strict-version protocol the dominant cause is an
+        // incompatible peer that rejected our Hello and closed, so surface that
+        // instead of a bare frame-read error (which reads as a vague "couldn't
+        // agree" to the user).
+        let message = read_receiver_message(recv)
+            .await
+            .map_err(|source| ProtocolError::handshake_rejected(source))?;
+        let hello = match message {
             ReceiverMessage::Hello(message) => message,
             other => {
                 self.machine.transition(SenderState::Failed)?;

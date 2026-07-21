@@ -452,9 +452,17 @@ impl From<ProtocolError> for UserFacingError {
         match error {
             ProtocolError::UnsupportedVersion { .. } => UserFacingError::with_recovery(
                 UserFacingErrorKind::ProtocolIncompatible,
-                "Protocol mismatch",
-                "This version of Wisp cannot complete the transfer.",
-                "Update Wisp on both devices and try again.",
+                "Incompatible version",
+                "The other device is running a version of Wisp that can't complete this transfer.",
+                "Update Wisp to the latest version on both devices, then try again.",
+                false,
+            ),
+            ProtocolError::HandshakeRejected { .. } => UserFacingError::with_recovery(
+                UserFacingErrorKind::ProtocolIncompatible,
+                "Incompatible version",
+                "The other device closed the connection during setup. This usually means \
+                 it's running a different version of Wisp that can't complete this transfer.",
+                "Update Wisp to the latest version on both devices, then try again.",
                 false,
             ),
             ProtocolError::UnexpectedRole { .. }
@@ -672,6 +680,15 @@ mod tests {
             .kind(),
             UserFacingErrorKind::ProtocolIncompatible
         );
+
+        let handshake_rejected = UserFacingError::from(ProtocolError::HandshakeRejected {
+            source: Box::new(io::Error::from(io::ErrorKind::ConnectionReset)),
+        });
+        assert_eq!(
+            handshake_rejected.kind(),
+            UserFacingErrorKind::ProtocolIncompatible
+        );
+        assert_eq!(handshake_rejected.title(), "Incompatible version");
 
         assert_eq!(
             UserFacingError::from(TransferError::ConnectionClosed { context: "waiting" }).kind(),
