@@ -231,6 +231,10 @@ async fn run_session(
                     "cancelled during handshake",
                     std::io::Error::other("cancelled during handshake"),
                 )));
+                // Close now so a sender still blocked awaiting our decision (or
+                // mid-offer) sees the disconnect in ~1 RTT rather than waiting
+                // out its 130s decision / QUIC idle timeout.
+                connection.close(0u32.into(), b"cancelled during handshake");
                 return Ok(outcome);
             }
         };

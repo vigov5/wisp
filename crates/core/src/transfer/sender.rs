@@ -362,7 +362,15 @@ impl SenderSession {
         .await?;
         let (mut control_send, mut control_recv, outcome) = match handshake_res {
             HandshakeResult::Ok(s, r, o) => (s, r, o),
-            HandshakeResult::Cancelled(outcome) => return Ok(outcome),
+            HandshakeResult::Cancelled(outcome) => {
+                // Notify the peer immediately: a receiver still blocked reading
+                // our Hello/Offer sees the disconnect in ~1 RTT instead of
+                // waiting out its 30s handshake / QUIC idle timeout. When the
+                // control stream was healthy do_handshake already wrote a Cancel
+                // frame; this close also covers a wedged offer stream.
+                close_connection_gracefully(&self.endpoint, &connection, &self.blob_strategy).await;
+                return Ok(outcome);
+            }
         };
 
         match outcome {
@@ -693,7 +701,7 @@ async fn do_handshake(
     // Phase 1 — the machine handshake.  Open the stream, exchange hellos, and
     // put the offer on the wire under a tight timeout; the receiver isn't
     // waiting on a human yet.
-    let (send, mut recv, mut handler) = tokio::select! {
+    let (mut send, mut recv, mut handler) = tokio::select! {
         res = async {
             let (mut send, mut recv) = connection
                 .open_bi()
@@ -735,12 +743,29 @@ async fn do_handshake(
             let outcome = res?;
             Ok(HandshakeResult::Ok(send, recv, outcome))
         }
-        _ = wait_for_cancel(cancel_rx) => Ok(HandshakeResult::Cancelled(
-            TransferOutcome::local_cancel(
-                protocol_message::TransferRole::Sender,
-                protocol_message::CancelPhase::WaitingForDecision,
-            ),
-        )),
+        _ = wait_for_cancel(cancel_rx) => {
+            // Best-effort tell the receiver on the control stream it's already
+            // reading, so it settles on a clean "sender cancelled" rather than a
+            // bare disconnect. (The call site also closes the connection, which
+            // covers the case where the offer stream itself is wedged.)
+            let _ = protocol_wire::write_sender_message(
+                &mut send,
+                &protocol_message::SenderMessage::Cancel(protocol_message::Cancel {
+                    session_id: session_id.to_owned(),
+                    by: protocol_message::TransferRole::Sender,
+                    phase: protocol_message::CancelPhase::WaitingForDecision,
+                    reason: "cancelled by sender".to_owned(),
+                }),
+            )
+            .await;
+            finish_control_stream(&mut send).await;
+            Ok(HandshakeResult::Cancelled(
+                TransferOutcome::local_cancel(
+                    protocol_message::TransferRole::Sender,
+                    protocol_message::CancelPhase::WaitingForDecision,
+                ),
+            ))
+        }
         _ = connection.closed() => Err(TransferError::connection_closed("before receiver decision")),
         _ = tokio::time::sleep(DECISION_WAIT) => {
             Err(TransferError::timeout("waiting for receiver decision"))
