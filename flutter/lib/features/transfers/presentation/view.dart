@@ -38,6 +38,8 @@ class TransfersFeature extends ConsumerWidget {
             key: const ValueKey('connecting'),
             offer: state.incomingOffer!,
             animate: animateReview,
+            onCancel: () =>
+                ref.read(transfersServiceProvider.notifier).cancelTransfer(),
           ),
           TransferSessionPhase.offerPending => OfferCard(
             key: const ValueKey('offer'),

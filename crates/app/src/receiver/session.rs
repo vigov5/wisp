@@ -166,6 +166,8 @@ impl ReceiverSession {
                                         sender_ephemeral,
                                         endpoint_id_str,
                                     ),
+                                    offer_id,
+                                    cancel_tx: control.cancel_tx.clone(),
                                 })
                                 .await;
                         }

@@ -37,7 +37,11 @@ pub(super) enum ReceiverCommand {
     /// the receiver shows "connecting from <X>" without yet tracking an offer
     /// in the runtime — there's nothing to accept/decline until the Offer
     /// lands (which arrives as a later [`OfferPrepared`]) or the wait fails.
-    OfferConnecting { event: ReceiverOfferEvent },
+    OfferConnecting {
+        event: ReceiverOfferEvent,
+        offer_id: u64,
+        cancel_tx: tokio::sync::watch::Sender<bool>,
+    },
     OfferPrepared {
         run: super::session::ReceiverRun,
         event: ReceiverOfferEvent,
@@ -129,11 +133,16 @@ pub(super) async fn run_receiver_actor(
                         let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
                         let _ = reply.send(result);
                     }
-                    ReceiverCommand::OfferConnecting { event } => {
-                        // Relay-only: surface the "connecting from <X>" state to
-                        // the UI without touching the runtime's offer state.
-                        // The offer isn't tracked yet, so no accept/decline is
-                        // possible — that arrives with `OfferPrepared`.
+                    ReceiverCommand::OfferConnecting {
+                        event,
+                        offer_id,
+                        cancel_tx,
+                    } => {
+                        // Surface the "connecting from <X>" state to the UI and
+                        // track the session's cancel handle so the user can bail
+                        // out of a stalled connect. There's still no offer to
+                        // accept/decline — that arrives with `OfferPrepared`.
+                        runtime.handle_offer_connecting(offer_id, cancel_tx);
                         let _ = event_tx.send(ReceiverEvent::OfferUpdated(event));
                     }
                     ReceiverCommand::OfferPrepared { run, event } => {

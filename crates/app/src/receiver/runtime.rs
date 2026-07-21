@@ -47,6 +47,14 @@ pub(super) enum OfferResolution {
 
 pub(super) enum OfferState {
     Idle,
+    /// A sender has connected (its Hello landed) but the offer hasn't arrived
+    /// yet — the UI is on the "connecting from <X>" screen. We hold the
+    /// session's cancel handle so the user can bail out of a stalled connect
+    /// without waiting for the sender, or for the offer-wait timeout.
+    Connecting {
+        offer_id: u64,
+        cancel_tx: watch::Sender<bool>,
+    },
     Pending(PendingOfferState),
     Receiving {
         offer_id: u64,
@@ -394,9 +402,17 @@ impl ReceiverRuntime {
     }
 
     pub(super) fn handle_offer_prepared(&mut self, run: ReceiverRun) -> bool {
-        if !matches!(self.offer_state, OfferState::Idle) {
+        // `Connecting` is this same session graduating to a real offer, so it's
+        // not "busy" — only a Pending/Receiving offer (a different, already
+        // tracked transfer) blocks a new one.
+        let occupied = matches!(
+            self.offer_state,
+            OfferState::Pending(_) | OfferState::Receiving { .. }
+        );
+        if occupied {
             let state_label = match &self.offer_state {
                 OfferState::Idle => "idle",
+                OfferState::Connecting { .. } => "connecting",
                 OfferState::Pending(_) => "pending",
                 OfferState::Receiving { .. } => "receiving",
             };
@@ -460,11 +476,28 @@ impl ReceiverRuntime {
 
     pub(super) fn cancel_active_transfer(&mut self) -> AppResult<()> {
         match &self.offer_state {
-            OfferState::Receiving { cancel_tx, .. } => {
+            OfferState::Connecting { cancel_tx, .. } | OfferState::Receiving { cancel_tx, .. } => {
                 let _ = cancel_tx.send(true);
                 Ok(())
             }
             _ => Err(AppError::NoActiveTransfer),
+        }
+    }
+
+    /// Track the in-flight session's cancel handle the moment a sender connects
+    /// (before its offer arrives), so the "connecting from <X>" screen can be
+    /// cancelled. No-op once a real offer is being tracked, so a late/duplicate
+    /// connecting signal can't clobber a `Pending`/`Receiving` state.
+    pub(super) fn handle_offer_connecting(
+        &mut self,
+        offer_id: u64,
+        cancel_tx: watch::Sender<bool>,
+    ) {
+        if matches!(self.offer_state, OfferState::Idle) {
+            self.offer_state = OfferState::Connecting {
+                offer_id,
+                cancel_tx,
+            };
         }
     }
 
