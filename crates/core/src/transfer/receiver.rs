@@ -826,6 +826,17 @@ async fn do_handshake(
                     .into())
                 }
             };
+            // Acknowledge the offer immediately so the sender knows it landed
+            // and can move from "connecting/sending" to "waiting for decision".
+            // Without this a wedged offer stream leaves the sender falsely
+            // waiting while we're still stuck reading.
+            protocol_wire::write_receiver_message(
+                &mut send,
+                &protocol_message::ReceiverMessage::OfferAck(protocol_message::OfferAck {
+                    session_id: hello.session_id.clone(),
+                }),
+            )
+            .await?;
             Ok(HandshakeResult::Ok(send, recv, hello, offer))
         } => res,
         _ = wait_for_cancel(cancel_rx) => Ok(HandshakeResult::Cancelled(TransferOutcome::local_cancel(protocol_message::TransferRole::Receiver, protocol_message::CancelPhase::WaitingForDecision))),

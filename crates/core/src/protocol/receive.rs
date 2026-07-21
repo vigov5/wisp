@@ -136,6 +136,7 @@ impl Receiver {
         let peer_hello = self.read_peer_hello(recv).await?;
         self.send_hello(send, &peer_hello.session_id).await?;
         let offer = self.read_offer(recv, &peer_hello.session_id).await?;
+        self.send_offer_ack(send, &peer_hello.session_id).await?;
         Ok(ReceiverPendingDecision {
             sender: ReceiverPeer {
                 session_id: peer_hello.session_id,
@@ -214,8 +215,25 @@ impl Receiver {
         );
 
         self.machine.transition(ReceiverState::OfferReceived)?;
-        self.machine.transition(ReceiverState::AwaitingDecision)?;
         Ok(offer)
+    }
+
+    /// Acknowledge the offer the instant it's read, before surfacing it for a
+    /// decision — this is what lets the sender confirm the offer landed rather
+    /// than stalling on "waiting for decision" while a wedged offer stream
+    /// leaves us stuck on "connecting".
+    pub(crate) async fn send_offer_ack<W>(&mut self, send: &mut W, session_id: &str) -> Result<()>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        self.machine.transition(ReceiverState::AwaitingDecision)?;
+        write_receiver_message(
+            send,
+            &super::message::ReceiverMessage::OfferAck(super::message::OfferAck {
+                session_id: session_id.to_owned(),
+            }),
+        )
+        .await
     }
 
     pub(crate) async fn accept<W>(
@@ -375,6 +393,9 @@ mod tests {
             )
             .await
             .unwrap();
+
+            let ack = read_receiver_message(&mut remote_read).await.unwrap();
+            assert!(matches!(ack, ReceiverMessage::OfferAck(_)));
 
             let accept = read_receiver_message(&mut remote_read).await.unwrap();
             assert!(matches!(accept, ReceiverMessage::Accept(_)));

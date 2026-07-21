@@ -798,6 +798,11 @@ where
     handler
         .send_offer(send, manifest, collection_hash, inline_text)
         .await?;
+    // Wait for the receiver to confirm it actually read the offer before we
+    // declare "waiting for decision". A large offer that stalls in flight keeps
+    // us in the handshake (under the caller's timeout / cancel) instead of
+    // falsely reporting the receiver is deciding while it's stuck on connecting.
+    handler.read_offer_ack(recv).await?;
     events.emit(SenderEvent::WaitingForDecision {
         session_id: session_id.to_owned(),
         receiver_device_name: peer_hello.identity.device_name,
@@ -1020,8 +1025,8 @@ fn from_wire_snapshot(
 mod tests {
     use super::*;
     use crate::protocol::message::{
-        Accept, DeviceType, Hello, Identity, ManifestItem, PROTOCOL_VERSION, ReceiverMessage,
-        SenderMessage, TransferCompleted, TransferManifest, TransferProgress,
+        Accept, DeviceType, Hello, Identity, ManifestItem, OfferAck, PROTOCOL_VERSION,
+        ReceiverMessage, SenderMessage, TransferCompleted, TransferManifest, TransferProgress,
         TransferProgressPayload, TransferResult as TransferResultMessage, TransferRole,
         TransferStatus,
     };
@@ -1067,6 +1072,13 @@ mod tests {
                 SenderMessage::Offer(_) => {}
                 other => panic!("expected sender offer, got {:?}", other.kind()),
             }
+            write_receiver_message(
+                &mut receiver_write,
+                &ReceiverMessage::OfferAck(OfferAck {
+                    session_id: hello.session_id.clone(),
+                }),
+            )
+            .await?;
             write_receiver_message(
                 &mut receiver_write,
                 &ReceiverMessage::Accept(Accept {

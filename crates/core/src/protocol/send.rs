@@ -124,6 +124,7 @@ impl Sender {
         self.read_peer_hello(recv).await?;
         self.send_offer(send, manifest, collection_hash, inline_text)
             .await?;
+        self.read_offer_ack(recv).await?;
         self.await_decision(recv).await
     }
 
@@ -185,9 +186,32 @@ impl Sender {
                 inline_text,
             }),
         )
-        .await?;
-        self.machine.transition(SenderState::WaitingForDecision)?;
-        Ok(())
+        .await
+    }
+
+    /// Read the receiver's [`OfferAck`], confirming the offer actually landed.
+    /// Only then do we advance to `WaitingForDecision` — a large offer that
+    /// stalls in flight parks us here (under the caller's handshake timeout)
+    /// instead of falsely declaring the receiver is deciding.
+    pub(crate) async fn read_offer_ack<R>(&mut self, recv: &mut R) -> Result<()>
+    where
+        R: AsyncRead + Unpin,
+    {
+        match read_receiver_message(recv).await? {
+            ReceiverMessage::OfferAck(message) => {
+                ensure_session_id(&message.session_id, &self.session_id)?;
+                self.machine.transition(SenderState::WaitingForDecision)?;
+                Ok(())
+            }
+            other => {
+                self.machine.transition(SenderState::Failed)?;
+                Err(ProtocolError::unexpected_message_kind(
+                    "offer acknowledgement",
+                    MessageKind::OfferAck,
+                    other.kind(),
+                ))
+            }
+        }
     }
 
     pub(crate) async fn await_decision<R>(&mut self, recv: &mut R) -> Result<SenderControlOutcome>
@@ -270,8 +294,8 @@ fn ensure_session_id(actual: &str, expected: &str) -> Result<()> {
 mod tests {
     use super::{Sender, SenderControlOutcome, SenderMachine, SenderState};
     use crate::protocol::message::{
-        Accept, Decline, DeviceType, Identity, PROTOCOL_VERSION, ReceiverMessage, SenderMessage,
-        TransferManifest, TransferRole,
+        Accept, Decline, DeviceType, Identity, OfferAck, PROTOCOL_VERSION, ReceiverMessage,
+        SenderMessage, TransferManifest, TransferRole,
     };
     use crate::protocol::wire::{read_sender_message, write_receiver_message};
     use iroh::SecretKey;
@@ -330,6 +354,15 @@ mod tests {
 
             let offer = read_sender_message(&mut remote_read).await.unwrap();
             assert!(matches!(offer, SenderMessage::Offer(_)));
+
+            write_receiver_message(
+                &mut remote_write,
+                &ReceiverMessage::OfferAck(OfferAck {
+                    session_id: "session-1".to_owned(),
+                }),
+            )
+            .await
+            .unwrap();
 
             write_receiver_message(
                 &mut remote_write,
@@ -399,6 +432,15 @@ mod tests {
 
             let offer = read_sender_message(&mut remote_read).await.unwrap();
             assert!(matches!(offer, SenderMessage::Offer(_)));
+
+            write_receiver_message(
+                &mut remote_write,
+                &ReceiverMessage::OfferAck(OfferAck {
+                    session_id: "session-1".to_owned(),
+                }),
+            )
+            .await
+            .unwrap();
 
             write_receiver_message(
                 &mut remote_write,
@@ -475,6 +517,14 @@ mod tests {
                 other => panic!("expected offer, got {:?}", other.kind()),
             }
 
+            write_receiver_message(
+                &mut remote_write,
+                &ReceiverMessage::OfferAck(OfferAck {
+                    session_id: "session-1".to_owned(),
+                }),
+            )
+            .await
+            .unwrap();
             write_receiver_message(
                 &mut remote_write,
                 &ReceiverMessage::Accept(Accept {

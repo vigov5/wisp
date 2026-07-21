@@ -247,7 +247,7 @@ mod tests {
 
         let json = serde_json::to_string(&envelope).unwrap();
 
-        assert!(json.contains("\"version\":4"));
+        assert!(json.contains("\"version\":5"));
         assert!(json.contains("\"role\":\"sender\""));
         assert!(json.contains("\"kind\":\"hello\""));
     }

@@ -447,6 +447,15 @@ async fn handle_connection(
         SenderMessage::Offer(offer) => offer,
         other => bail!("expected Offer, got {:?}", other.kind()),
     };
+    // Acknowledge the offer at once so the sender can leave its send/connecting
+    // phase for "waiting for decision" instead of stalling on a wedged stream.
+    wire::write_receiver_message(
+        &mut control_send,
+        &ReceiverMessage::OfferAck(wisp_wire::message::OfferAck {
+            session_id: session_id.clone(),
+        }),
+    )
+    .await?;
     let files: Vec<OfferItem> = offer
         .manifest
         .items

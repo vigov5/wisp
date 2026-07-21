@@ -11,7 +11,7 @@ use crate::plan::{TransferFileId, TransferPhase, TransferPlan};
 /// this on its iroh endpoint; the sender dials it to run the handshake.
 pub const ALPN: &[u8] = b"wisp/transfer/v1";
 
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Maximum UTF-8 byte length of text carried inline on the control stream via
 /// [`Offer::inline_text`].  Text at or below this rides the offer frame itself
@@ -44,6 +44,7 @@ pub enum TransferRole {
 pub enum MessageKind {
     Hello,
     Offer,
+    OfferAck,
     Accept,
     Decline,
     Cancel,
@@ -151,6 +152,17 @@ pub struct Offer {
     pub inline_text: Option<String>,
 }
 
+/// Sent by the receiver the instant it has read the sender's [`Offer`] off the
+/// wire, before any human decision. It lets the sender confirm the offer
+/// actually landed — otherwise a large offer that stalls in flight leaves the
+/// sender falsely showing "waiting for decision" while the receiver is still
+/// stuck on "connecting". The sender waits for this ack (bounded) before
+/// declaring `WaitingForDecision`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OfferAck {
+    pub session_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Accept {
     pub session_id: String,
@@ -256,6 +268,7 @@ impl SenderMessage {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ReceiverMessage {
     Hello(Hello),
+    OfferAck(OfferAck),
     Accept(Accept),
     Decline(Decline),
     TransferStarted(TransferStarted),
@@ -269,6 +282,7 @@ impl ReceiverMessage {
     pub fn kind(&self) -> MessageKind {
         match self {
             Self::Hello(_) => MessageKind::Hello,
+            Self::OfferAck(_) => MessageKind::OfferAck,
             Self::Accept(_) => MessageKind::Accept,
             Self::Decline(_) => MessageKind::Decline,
             Self::TransferStarted(_) => MessageKind::TransferStarted,

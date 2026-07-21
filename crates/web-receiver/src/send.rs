@@ -303,6 +303,14 @@ async fn handshake(
     )
     .await?;
 
+    // Wait for the receiver to confirm it read the offer before declaring
+    // "waiting for decision" — a stalled offer keeps us in the send/connecting
+    // phase instead of falsely reporting the receiver is deciding.
+    match wire::read_receiver_message(&mut control_recv).await? {
+        ReceiverMessage::OfferAck(_) => {}
+        other => bail!("expected offer ack, got {:?}", other.kind()),
+    }
+
     emit(
         on_event,
         &SendEvent::WaitingForDecision {
