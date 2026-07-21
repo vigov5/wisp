@@ -12,6 +12,10 @@ DefaultGroupName=Wisp
 OutputDir=.\
 OutputBaseFilename=wisp-windows-setup
 SetupIconFile=runner\resources\app_icon.ico
+; Without this, Inno leaves the uninstall registry's DisplayIcon empty, so
+; Windows Settings -> Installed apps (and Programs and Features) show a generic
+; icon for Wisp. Point it at the installed exe so that list uses our real icon.
+UninstallDisplayIcon={app}\Wisp.exe
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
