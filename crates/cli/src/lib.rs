@@ -117,6 +117,9 @@ pub async fn send_with_server(
         Ok(SendSessionOutcome::Declined { reason }) => {
             info!(reason = %reason, "send.declined");
         }
+        Ok(SendSessionOutcome::Failed) => {
+            info!("send.failed");
+        }
         Err(_) => {}
     }
     outcome.map(|_| ())
@@ -192,6 +195,9 @@ pub async fn send_nearby(
         }
         Ok(SendSessionOutcome::Declined { reason }) => {
             info!(reason = %reason, "send.declined");
+        }
+        Ok(SendSessionOutcome::Failed) => {
+            info!("send.failed");
         }
         Err(_) => {}
     }

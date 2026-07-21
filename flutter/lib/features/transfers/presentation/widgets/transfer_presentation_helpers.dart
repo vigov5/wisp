@@ -52,6 +52,43 @@ Widget buildSubtitleText(String text) {
   );
 }
 
+/// Failure subtitle: a bold, accent-coloured [title] (e.g. "Incompatible
+/// version"), the descriptive [message], and — when present — an actionable
+/// [recovery] hint ("Update Wisp …") in the accent colour so it reads as the
+/// next step rather than more error prose.
+Widget buildFailureSubtitle({
+  required String title,
+  required String message,
+  String? recovery,
+  required Color accent,
+}) {
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        title,
+        textAlign: TextAlign.center,
+        style: wispSans(fontSize: 15, fontWeight: FontWeight.w700, color: accent),
+      ),
+      const SizedBox(height: 6),
+      buildSubtitleText(message),
+      if (recovery != null) ...[
+        const SizedBox(height: 10),
+        Text(
+          recovery,
+          textAlign: TextAlign.center,
+          style: wispSans(
+            fontSize: 13.5,
+            fontWeight: FontWeight.w600,
+            color: accent,
+            height: 1.4,
+          ),
+        ),
+      ],
+    ],
+  );
+}
+
 /// Subtitle line plus an optional, smaller "broadcasts as …" line shown only
 /// when the user has renamed the device — keeps the peer-reported name visible
 /// for trust without repeating it inside the instruction text. [broadcast] is

@@ -180,6 +180,9 @@ pub fn start_send_transfer(
         match outcome {
             Ok(Ok(SendSessionOutcome::Accepted { .. })) => {}
             Ok(Ok(SendSessionOutcome::Declined { .. })) => {}
+            // The session already emitted a fully-classified Failed event; don't
+            // synthesize a second terminal event that would overwrite it.
+            Ok(Ok(SendSessionOutcome::Failed)) => {}
             Ok(Err(error)) => {
                 let _ = updates.add(terminal_event_for_app_error(fallback_destination, error));
             }

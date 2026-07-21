@@ -508,6 +508,7 @@ class SendController extends _$SendController {
             outcome: SendTransferOutcome.failed,
             title: update.error?.title ?? 'Send failed',
             message: update.error?.message ?? update.statusMessage,
+            recovery: update.error?.recovery,
             duration: duration,
             averageSpeedLabel: avgSpeedLabel,
           ),

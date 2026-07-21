@@ -17,6 +17,7 @@ class SendTransferPhaseVisualData {
     required this.accentColor,
     required this.icon,
     required this.showSpinner,
+    this.recovery,
   });
 
   final String statusLabel;
@@ -25,6 +26,10 @@ class SendTransferPhaseVisualData {
   final Color accentColor;
   final IconData icon;
   final bool showSpinner;
+
+  /// Optional actionable hint shown under the failure message (e.g. "Update
+  /// Wisp to the latest version on both devices"). Only set for failure states.
+  final String? recovery;
 }
 
 enum SendTransferFileState { pending, active, completed }
@@ -219,6 +224,7 @@ SendTransferPhaseVisualData _visualForState(SendState state) {
         statusLabel: 'Failed',
         title: state.result.title,
         subtitle: state.result.message,
+        recovery: state.result.recovery,
         accentColor: const Color(0xFFCC3333),
         icon: Icons.error_rounded,
         showSpinner: false,
@@ -295,8 +301,9 @@ SendTransferPhaseVisualData _visualForState(SendState state) {
       ),
       SendTransferPhase.failed => SendTransferPhaseVisualData(
         statusLabel: 'Failed',
-        title: 'Send failed',
+        title: transfer.error?.title ?? 'Send failed',
         subtitle: transfer.error?.message ?? transfer.statusMessage,
+        recovery: transfer.error?.recovery,
         accentColor: const Color(0xFFCC3333),
         icon: Icons.error_rounded,
         showSpinner: false,

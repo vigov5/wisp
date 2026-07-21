@@ -298,6 +298,15 @@ class _TransferStateCard extends StatelessWidget {
         speedLabel: progress.speedLabel ?? '',
         etaLabel: progress.etaLabel,
       );
+    } else if (viewData.visual.statusLabel == 'Failed') {
+      // Failure: surface the error title, message, and the actionable recovery
+      // hint (e.g. "Update Wisp …") instead of a lone one-line message.
+      subtitle = buildFailureSubtitle(
+        title: viewData.visual.title,
+        message: viewData.visual.subtitle,
+        recovery: viewData.visual.recovery,
+        accent: accent,
+      );
     } else {
       subtitle = buildSubtitleText(viewData.visual.subtitle);
     }

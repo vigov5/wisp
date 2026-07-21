@@ -538,6 +538,18 @@ class _SendResultCard extends StatelessWidget {
               height: 1.4,
             ),
           ),
+          if (result.recovery != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              result.recovery!,
+              style: wispSans(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: accent,
+                height: 1.4,
+              ),
+            ),
+          ],
         ],
       ),
     );

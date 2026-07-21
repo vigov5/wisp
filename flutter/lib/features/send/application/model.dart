@@ -65,6 +65,7 @@ class SendTransferResult {
     required this.outcome,
     required this.title,
     required this.message,
+    this.recovery,
     this.duration,
     this.averageSpeedLabel,
   });
@@ -72,6 +73,10 @@ class SendTransferResult {
   final SendTransferOutcome outcome;
   final String title;
   final String message;
+
+  /// Optional actionable hint shown under [message] on the finish screen
+  /// (e.g. "Update Wisp to the latest version on both devices").
+  final String? recovery;
   final Duration? duration;
   final String? averageSpeedLabel;
 }

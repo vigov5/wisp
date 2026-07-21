@@ -41,6 +41,12 @@ pub enum SendSessionOutcome {
     Declined {
         reason: String,
     },
+    /// The transfer failed, but the session has *already* emitted a
+    /// fully-classified `Failed` event describing why. Returning this (instead
+    /// of `Err`) tells the bridge not to synthesize a second, generic terminal
+    /// event that would clobber the good one (drift: "internal error: transfer
+    /// failed" overwriting the real "Incompatible version" message).
+    Failed,
 }
 
 #[derive(Debug)]
@@ -158,15 +164,9 @@ impl SendSession {
             Err(error) => {
                 emit_send_event(
                     &event_tx,
-                    failed_event_from_error(
-                        &destination_label,
-                        error.clone().into(),
-                        &preview,
-                        None,
-                        None,
-                    ),
+                    failed_event_from_error(&destination_label, error.into(), &preview, None, None),
                 );
-                return Err(error);
+                return Ok(SendSessionOutcome::Failed);
             }
         };
         destination_label = resolved.destination_label;
@@ -337,9 +337,10 @@ impl SendSession {
                         current_snapshot.clone(),
                     ),
                 );
-                Err(AppError::Internal {
-                    message: "transfer failed".to_owned(),
-                })
+                // The Failed event above already carries the classified reason
+                // (e.g. "Incompatible version"). Return Ok(Failed) so the bridge
+                // doesn't add a second, generic terminal event on top of it.
+                Ok(SendSessionOutcome::Failed)
             }
         }
     }
@@ -429,6 +430,19 @@ fn maybe_demote_pre_handshake_failure(
     let prior_phase = prior.as_ref().map(|e| e.phase);
     let pre_handshake = matches!(prior_phase, None | Some(SendPhase::Connecting));
     if !pre_handshake {
+        return event;
+    }
+
+    // A version/protocol incompatibility is already the most specific and
+    // actionable classification available — don't let the "peer offline / not
+    // receiving" heuristic below overwrite it. A newer build dialing an older
+    // peer connects fine, then gets rejected at the Hello, which *looks* like a
+    // pre-handshake failure but is really an incompatible peer that should be
+    // told to update.
+    if matches!(
+        event.error.as_ref().map(|e| e.kind()),
+        Some(UserFacingErrorKind::ProtocolIncompatible)
+    ) {
         return event;
     }
 
@@ -897,6 +911,29 @@ mod tests {
         let event = maybe_demote_pre_handshake_failure(&last, synthetic_event(SendPhase::Failed));
         let kind = event.error.expect("error").kind();
         assert_eq!(kind, UserFacingErrorKind::PeerNotReceiving);
+    }
+
+    #[test]
+    fn keep_protocol_incompatible_even_when_pre_handshake() {
+        // A newer build dialing an older peer connects (direct path observed)
+        // then gets rejected at the Hello — pre-handshake, but the version
+        // mismatch classification must survive the demote heuristic.
+        let prior = synthetic_event_with_path(
+            SendPhase::Connecting,
+            wisp_core::util::ConnectionPath {
+                kind: wisp_core::util::ConnectionPathKind::Direct,
+                relay_url: None,
+                direct_addr: Some("192.168.1.5:5000".to_owned()),
+            },
+        );
+        let last = Arc::new(StdMutex::new(Some(prior)));
+        let mut failed = synthetic_event(SendPhase::Failed);
+        failed.error = Some(crate::error::UserFacingError::from_kind(
+            UserFacingErrorKind::ProtocolIncompatible,
+        ));
+        let event = maybe_demote_pre_handshake_failure(&last, failed);
+        let kind = event.error.expect("error").kind();
+        assert_eq!(kind, UserFacingErrorKind::ProtocolIncompatible);
     }
 
     #[test]
