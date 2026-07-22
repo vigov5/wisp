@@ -19,6 +19,12 @@ enum UpdatePhase {
   /// The installer finished downloading and is about to launch.
   readyToInstall,
 
+  /// The installer downloaded but couldn't be launched automatically (e.g. the
+  /// user cancelled the elevation prompt). It's sitting on disk and the user
+  /// must run it themselves. [UpdateState.installerPath] points at the file and
+  /// its folder has been revealed in the file manager.
+  manualInstall,
+
   /// The check or download failed. [UpdateState.errorMessage] is set.
   error,
 }
@@ -29,6 +35,7 @@ class UpdateState {
     this.release,
     this.downloadProgress,
     this.errorMessage,
+    this.installerPath,
   });
 
   final UpdatePhase phase;
@@ -39,11 +46,17 @@ class UpdateState {
   final double? downloadProgress;
   final String? errorMessage;
 
+  /// Absolute path of the downloaded installer, set once [phase] reaches
+  /// [UpdatePhase.manualInstall] so the UI can name the file and reopen its
+  /// folder.
+  final String? installerPath;
+
   UpdateState copyWith({
     UpdatePhase? phase,
     UpdateRelease? release,
     double? downloadProgress,
     String? errorMessage,
+    String? installerPath,
     bool clearRelease = false,
     bool clearError = false,
     bool clearProgress = false,
@@ -55,6 +68,7 @@ class UpdateState {
           ? null
           : (downloadProgress ?? this.downloadProgress),
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+      installerPath: installerPath ?? this.installerPath,
     );
   }
 }

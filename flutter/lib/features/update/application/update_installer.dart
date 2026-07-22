@@ -61,46 +61,77 @@ class UpdateInstaller {
     return file;
   }
 
-  /// Launches the downloaded Inno Setup installer silently and quits the app.
+  /// Launches the downloaded Inno Setup installer with its wizard visible and,
+  /// on a successful launch, quits the app. Returns `false` when the launch
+  /// itself failed (see below) — the caller then falls back to revealing the
+  /// installer so the user can run it by hand. On success this never returns:
+  /// it hard-exits the process.
   ///
   /// The installer overwrites Wisp.exe and its bundled DLLs (the Flutter engine
-  /// and the Rust native library) in `{app}`. Those files stay locked for as
-  /// long as *our own process* is alive, so the install must not begin until we
-  /// have fully exited. Previously we started the installer, waited 300 ms, then
-  /// called [WindowManager.destroy] — letting Inno's `/CLOSEAPPLICATIONS`
-  /// Restart Manager race our own teardown. By the time Inno reached the copy
-  /// step our DLLs were often still mapped, so it hit a locked file and rolled
-  /// the whole update back.
+  /// and the Rust native library) in `{app}`, which live under Program Files,
+  /// so the setup requests administrator elevation. We previously ran it under
+  /// `/SILENT` from a detached, hidden PowerShell stub — but a silent elevation
+  /// prompt raised by an orphaned process (we had already exited) was easy to
+  /// miss or decline, SmartScreen/AV silently blocked the hidden spawn, and any
+  /// failure left the app simply gone with the old build still in place.
   ///
-  /// Instead we hand the install off to a tiny detached PowerShell stub that
-  /// blocks on our PID and only spawns the installer once we are gone, then we
-  /// hard-exit. With the directory unlocked Inno copies cleanly and its `[Run]`
-  /// entry relaunches Wisp (`skipifsilent` was removed from inno_setup.iss so
-  /// the postinstall relaunch fires under `/SILENT`). `/CLOSEAPPLICATIONS`
-  /// remains as a safety net for any second Wisp instance.
-  Future<void> runWindowsInstaller(File installer) async {
-    // PowerShell single-quoted literals only need the quote itself doubled.
+  /// Instead we launch the wizard *visibly* via `Start-Process` (ShellExecute,
+  /// which auto-elevates the admin installer and shows a normal UAC prompt),
+  /// and we wait just long enough to learn whether the launch succeeded — the
+  /// PowerShell call returns as soon as the process is spawned (or throws if the
+  /// user cancels elevation / the file is missing / a policy blocks it). Only on
+  /// a confirmed launch do we destroy the window and hard-exit, releasing our
+  /// file handles in `{app}` before the user clicks through to the copy step
+  /// (seconds later — no race). Inno's `[Run]` entry then relaunches Wisp, and
+  /// `/CLOSEAPPLICATIONS` stays as a Restart Manager safety net for any second
+  /// instance.
+  Future<bool> runWindowsInstaller(File installer) async {
+    // Single-quoted PowerShell literals only need the quote itself doubled.
     final escapedPath = installer.path.replaceAll("'", "''");
     final command =
-        'Wait-Process -Id $pid -ErrorAction SilentlyContinue; '
-        "Start-Process -FilePath '$escapedPath' "
-        "-ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/CLOSEAPPLICATIONS'";
+        "try { Start-Process -FilePath '$escapedPath' "
+        "-ArgumentList '/CLOSEAPPLICATIONS' -ErrorAction Stop } "
+        'catch { exit 1 }';
 
-    await Process.start('powershell', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-WindowStyle',
-      'Hidden',
-      '-Command',
-      command,
-    ], mode: ProcessStartMode.detached);
+    ProcessResult result;
+    try {
+      // Blocks only until Start-Process has spawned the installer (UAC resolved)
+      // — not for the whole install. A non-zero exit means the launch failed.
+      result = await Process.run('powershell', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        command,
+      ]);
+    } catch (error) {
+      debugPrint('[update] could not launch installer: $error');
+      return false;
+    }
+    if (result.exitCode != 0) {
+      debugPrint('[update] installer launch exited ${result.exitCode}');
+      return false;
+    }
 
-    // Close the window for a clean shutdown, then hard-exit so the process — and
-    // every file handle it holds in {app} — is guaranteed gone before the stub
-    // unblocks and runs the installer. Without the exit() backstop, lingering
-    // native threads could keep us alive and the install would never start.
+    // Launch confirmed. Close the window for a clean shutdown, then hard-exit so
+    // the process — and every file handle it holds in {app} — is gone before the
+    // user reaches the installer's copy step. Without the exit() backstop,
+    // lingering native threads could keep us alive and Inno would hit a locked
+    // file and roll the update back.
     await windowManager.destroy();
     exit(0);
+  }
+
+  /// Opens the file manager with [installer] preselected so the user can run it
+  /// by hand after an automatic launch failed. Windows only; a no-op elsewhere.
+  Future<void> revealInstaller(File installer) async {
+    if (!Platform.isWindows) return;
+    try {
+      // `/select,<path>` must be a single token — Explorer won't accept the
+      // path as a separate argument — so we can't split it into two entries.
+      await Process.start('explorer', ['/select,${installer.path}']);
+    } catch (error) {
+      debugPrint('[update] could not reveal installer: $error');
+    }
   }
 
   Future<void> openReleasesPage() async {

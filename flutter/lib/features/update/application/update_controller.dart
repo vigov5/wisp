@@ -113,7 +113,17 @@ class UpdateController extends Notifier<UpdateState> {
         },
       );
       state = state.copyWith(phase: UpdatePhase.readyToInstall);
-      await _installer.runWindowsInstaller(file);
+      // On a successful launch this quits the app and never returns. A `false`
+      // means the wizard couldn't start (elevation cancelled, blocked, …), so
+      // fall back to revealing the downloaded installer for a manual run.
+      final launched = await _installer.runWindowsInstaller(file);
+      if (!launched) {
+        await _installer.revealInstaller(file);
+        state = state.copyWith(
+          phase: UpdatePhase.manualInstall,
+          installerPath: file.path,
+        );
+      }
     } catch (error) {
       debugPrint('[update] download/install failed: $error');
       state = state.copyWith(
@@ -121,6 +131,14 @@ class UpdateController extends Notifier<UpdateState> {
         errorMessage: 'Download failed. You can update manually instead.',
       );
     }
+  }
+
+  /// Re-opens the file manager at the downloaded installer (the "Open folder"
+  /// action shown when an automatic launch failed).
+  Future<void> revealDownloadedInstaller() async {
+    final path = state.installerPath;
+    if (path == null) return;
+    await _installer.revealInstaller(File(path));
   }
 
   /// Opens the platform's update destination for the "update manually" /

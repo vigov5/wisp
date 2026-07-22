@@ -36,6 +36,7 @@ Name: "{group}\Wisp"; Filename: "{app}\Wisp.exe"
 Name: "{commondesktop}\Wisp"; Filename: "{app}\Wisp.exe"; Tasks: desktopicon
 
 [Run]
-; `skipifsilent` is intentionally omitted so the in-app auto-updater — which
-; runs the installer with /SILENT — relaunches Wisp after a silent update.
+; postinstall shows a checked "Launch Wisp" box on the Finished page. The
+; in-app auto-updater runs this installer with its wizard visible (not
+; /SILENT), so that checkbox is what relaunches Wisp once the update lands.
 Filename: "{app}\Wisp.exe"; Description: "{cm:LaunchProgram,Wisp}"; Flags: nowait postinstall

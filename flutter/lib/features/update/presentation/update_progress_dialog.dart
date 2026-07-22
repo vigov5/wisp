@@ -26,13 +26,20 @@ class _UpdateProgressDialog extends ConsumerWidget {
     final controller = ref.read(updateControllerProvider.notifier);
 
     final isError = state.phase == UpdatePhase.error;
+    final isManual = state.phase == UpdatePhase.manualInstall;
     final isReady = state.phase == UpdatePhase.readyToInstall;
     final progress = state.downloadProgress;
+
+    final title = isError
+        ? 'Update failed'
+        : isManual
+        ? 'Finish the update'
+        : 'Updating Wisp';
 
     return AlertDialog(
       backgroundColor: context.wc.surface,
       title: Text(
-        isError ? 'Update failed' : 'Updating Wisp',
+        title,
         style: wispSans(
           fontSize: 16,
           fontWeight: FontWeight.w700,
@@ -53,10 +60,32 @@ class _UpdateProgressDialog extends ConsumerWidget {
                 height: 1.4,
               ),
             ),
+          ] else if (isManual) ...[
+            Text(
+              'The installer is downloaded but couldn\'t start on its own. '
+              'We\'ve opened its folder — double-click it to finish, then '
+              'Wisp will close so its files can be replaced.',
+              style: wispSans(
+                fontSize: 13,
+                color: context.wc.muted,
+                height: 1.4,
+              ),
+            ),
+            if (_installerName(state.installerPath) != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _installerName(state.installerPath)!,
+                style: wispSans(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: context.wc.ink,
+                ),
+              ),
+            ],
           ] else ...[
             Text(
               isReady
-                  ? 'Download complete. Launching the installer…'
+                  ? 'Download complete. Opening the installer…'
                   : 'Downloading the latest version…',
               style: wispSans(
                 fontSize: 13,
@@ -101,7 +130,29 @@ class _UpdateProgressDialog extends ConsumerWidget {
                 child: const Text('Update manually'),
               ),
             ]
+          : isManual
+          ? [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close'),
+              ),
+              FilledButton(
+                onPressed: controller.revealDownloadedInstaller,
+                style: FilledButton.styleFrom(
+                  backgroundColor: kAccentCyanStrong,
+                ),
+                child: const Text('Open folder'),
+              ),
+            ]
           : null,
     );
+  }
+
+  /// The installer's file name (last path segment) for display, or null when no
+  /// path is set. Splits on both separators so it works regardless of platform.
+  String? _installerName(String? path) {
+    if (path == null || path.isEmpty) return null;
+    final segments = path.split(RegExp(r'[\\/]'));
+    return segments.isEmpty ? null : segments.last;
   }
 }
