@@ -21,9 +21,10 @@ class ReceiverErrorBanner extends StatelessWidget {
   final ReceiverServiceError error;
   final VoidCallback onDismiss;
 
-  static const _bg = Color(0xFFFCEEEE);
-  static const _border = Color(0xFFE6B5B5);
-  static const _ink = Color(0xFF8A1F1F);
+  // Error red matching the transfer failure card's accent, tinted (bg @0.08,
+  // border @0.22) so it reads as an error surface in both light and dark
+  // themes instead of a fixed light-pink panel.
+  static const _errorAccent = Color(0xFFCC3333);
 
   @override
   Widget build(BuildContext context) {
@@ -31,14 +32,17 @@ class ReceiverErrorBanner extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
       decoration: BoxDecoration(
-        color: _bg,
-        border: Border.all(color: _border, width: 0.8),
+        color: _errorAccent.withValues(alpha: 0.08),
+        border: Border.all(
+          color: _errorAccent.withValues(alpha: 0.22),
+          width: 0.8,
+        ),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.error_rounded, size: 18, color: _ink),
+          const Icon(Icons.error_rounded, size: 18, color: _errorAccent),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -49,7 +53,7 @@ class ReceiverErrorBanner extends StatelessWidget {
                   style: wispSans(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: _ink,
+                    color: _errorAccent,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -58,7 +62,7 @@ class ReceiverErrorBanner extends StatelessWidget {
                   style: wispSans(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w400,
-                    color: _ink,
+                    color: context.wc.muted,
                     height: 1.4,
                   ),
                   maxLines: 4,
@@ -68,9 +72,15 @@ class ReceiverErrorBanner extends StatelessWidget {
                   const SizedBox(height: 8),
                   OutlinedButton(
                     onPressed: () => _handleAction(context),
+                    // Cyan action style (same as the finish card's secondary
+                    // button) — the action is the recovery step, distinct from
+                    // the red error accent above.
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: _ink,
-                      side: const BorderSide(color: _border),
+                      foregroundColor: kAccentCyanStrong,
+                      backgroundColor: kAccentCyan.withValues(alpha: 0.08),
+                      side: BorderSide(
+                        color: kAccentCyan.withValues(alpha: 0.15),
+                      ),
                       visualDensity: VisualDensity.compact,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
@@ -85,7 +95,7 @@ class ReceiverErrorBanner extends StatelessWidget {
           ),
           IconButton(
             icon: const Icon(Icons.close_rounded, size: 18),
-            color: _ink,
+            color: context.wc.muted,
             tooltip: 'Dismiss',
             onPressed: onDismiss,
             visualDensity: VisualDensity.compact,
