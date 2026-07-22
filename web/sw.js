@@ -15,7 +15,7 @@
  * Bump CACHE_VERSION whenever the shipped shell changes so old caches are purged
  * on activate. web/sync-docs.sh keeps it in step with the app version.
  */
-const CACHE_VERSION = 'v1.13.2';
+const CACHE_VERSION = 'v2.0.1';
 const CACHE_NAME = `wisp-shell-${CACHE_VERSION}`;
 
 // The static shell to precache for offline launch. Kept small: HTML/CSS/JS,
