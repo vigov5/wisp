@@ -21,6 +21,7 @@ class TransferResultViewData {
     required this.outcome,
     required this.title,
     required this.message,
+    this.recovery,
     this.metrics,
     this.primaryLabel = 'Done',
     required this.deviceName,
@@ -36,6 +37,10 @@ class TransferResultViewData {
   final TransferResultOutcome outcome;
   final String title;
   final String message;
+
+  /// Optional actionable recovery hint shown under the failure message
+  /// (e.g. "Update Wisp to the latest version on both devices").
+  final String? recovery;
   final List<ResultMetric>? metrics;
   final String primaryLabel;
   final String deviceName;
@@ -126,8 +131,9 @@ TransferResultViewData buildTransferResultViewData(TransferSessionState state) {
     ),
     TransferSessionPhase.failed => TransferResultViewData(
       outcome: TransferResultOutcome.failed,
-      title: 'Couldn\'t finish receiving files',
+      title: state.errorTitle ?? 'Couldn\'t finish receiving files',
       message: state.errorMessage ?? 'Couldn\'t finish receiving files.',
+      recovery: state.errorRecovery,
       deviceName: deviceName,
       deviceType: deviceType,
       web: web,

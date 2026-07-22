@@ -158,6 +158,8 @@ class TransferSessionState {
     required this.progress,
     required this.result,
     required this.errorMessage,
+    this.errorTitle,
+    this.errorRecovery,
     this.savedText,
   });
 
@@ -227,12 +229,16 @@ class TransferSessionState {
   const TransferSessionState.failed({
     required TransferIncomingOffer offer,
     required String errorMessage,
+    String? errorTitle,
+    String? errorRecovery,
   }) : this._(
          phase: TransferSessionPhase.failed,
          offer: offer,
          progress: null,
          result: null,
          errorMessage: errorMessage,
+         errorTitle: errorTitle,
+         errorRecovery: errorRecovery,
        );
 
   final TransferSessionPhase phase;
@@ -240,6 +246,12 @@ class TransferSessionState {
   final TransferTransferProgress? progress;
   final TransferTransferResult? result;
   final String? errorMessage;
+
+  /// Failure title (e.g. "Incompatible version") and an optional actionable
+  /// recovery hint, carried alongside [errorMessage] so the finish screen can
+  /// show the same title + message + guide layout the sender uses.
+  final String? errorTitle;
+  final String? errorRecovery;
 
   /// Set only on the completed state of a "Save .txt" inline-text receive.
   final SavedTextLocation? savedText;

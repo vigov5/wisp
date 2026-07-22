@@ -190,6 +190,8 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
           state = TransferSessionState.failed(
             offer: offer,
             errorMessage: event.error?.message ?? event.statusMessage,
+            errorTitle: event.error?.title,
+            errorRecovery: event.error?.recovery,
           );
           _incomingOffer = null;
           _transferStartTime = null;

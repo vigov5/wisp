@@ -32,11 +32,20 @@ class TransferResultCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final visual = _visualForOutcome(viewData.outcome);
 
+    final subtitle = viewData.outcome == TransferResultOutcome.failed
+        ? buildFailureSubtitle(
+            title: viewData.title,
+            message: viewData.message,
+            recovery: viewData.recovery,
+            accent: visual.accentColor,
+          )
+        : buildSubtitleText(viewData.message);
+
     return SizedBox.expand(
       child: TransferFlowLayout(
         statusLabel: visual.statusLabel,
         statusColor: visual.accentColor,
-        subtitle: buildSubtitleText(viewData.message),
+        subtitle: subtitle,
         explainer: _StatsGrid(viewData: viewData),
         illustration: RecipientAvatar(
           deviceName: viewData.deviceName,

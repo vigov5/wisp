@@ -77,10 +77,13 @@ Widget buildFailureSubtitle({
         Text(
           recovery,
           textAlign: TextAlign.center,
+          // Not the error accent (red): the recovery line is an actionable
+          // next step, so it uses the app's action cyan, distinct from the
+          // red failure title above it.
           style: wispSans(
             fontSize: 13.5,
             fontWeight: FontWeight.w600,
-            color: accent,
+            color: kAccentCyan,
             height: 1.4,
           ),
         ),
