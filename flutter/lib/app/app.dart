@@ -44,6 +44,7 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
   StreamSubscription<List<String>>? _shareIntentSub;
   StreamSubscription<String>? _shareTextSub;
   StreamSubscription<List<String>>? _windowsSendSub;
+  StreamSubscription<void>? _windowsSurfaceSub;
   bool _discoverableEnabled = false;
   bool _isForeground = true;
   // True while the USB-cable IP tunnel is up. Forces discoverability on so the
@@ -130,6 +131,13 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
     _windowsSendSub = WindowsContextMenu.onSendViaWisp.listen((paths) {
       if (!mounted) return;
       _handleWindowsSendPaths(paths);
+    });
+    // A plain relaunch of an already-running instance (double-click / taskbar)
+    // asks the window to surface instead of opening a second one. Bring it back
+    // to the front — otherwise a tray-hidden window appears to do nothing.
+    _windowsSurfaceSub = WindowsContextMenu.onSurfaceRequested.listen((_) {
+      if (!mounted) return;
+      unawaited(DesktopIntegration.instance.bringToFront());
     });
   }
 
@@ -300,6 +308,7 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
     unawaited(_shareIntentSub?.cancel());
     unawaited(_shareTextSub?.cancel());
     unawaited(_windowsSendSub?.cancel());
+    unawaited(_windowsSurfaceSub?.cancel());
     WidgetsBinding.instance.removeObserver(_keepaliveObserver);
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_receiverService.setDiscoverable(enabled: false));
@@ -402,7 +411,9 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
               onAccept: isText
                   ? null
                   : () {
-                      if (offerStillPending()) unawaited(notifier.acceptOffer());
+                      if (offerStillPending()) {
+                        unawaited(notifier.acceptOffer());
+                      }
                     },
               onDecline: isText
                   ? null

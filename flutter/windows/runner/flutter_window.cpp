@@ -93,32 +93,48 @@ void FlutterWindow::OnDestroy() {
   Win32Window::OnDestroy();
 }
 
+void FlutterWindow::SurfaceWindow() {
+  // The forwarding process grants us foreground rights
+  // (AllowSetForegroundWindow) so SetForegroundWindow below actually takes.
+  // Handle both minimize paths: iconic (minimized to the taskbar) and fully
+  // hidden (minimized to the tray).
+  HWND hwnd = GetHandle();
+  if (hwnd == nullptr) {
+    return;
+  }
+  if (!IsWindowVisible(hwnd)) {
+    ShowWindow(hwnd, SW_SHOW);
+  }
+  if (IsIconic(hwnd)) {
+    ShowWindow(hwnd, SW_RESTORE);
+  }
+  SetForegroundWindow(hwnd);
+}
+
 void FlutterWindow::HandleForwardedPath(const COPYDATASTRUCT* copy_data) {
   const std::string path =
       wisp_single_instance::DecodeForwardedPath(copy_data);
   if (path.empty() || !windows_integration_channel_) {
     return;
   }
-  // Bring the window forward so the user sees the draft. The forwarding process
-  // grants us foreground rights (AllowSetForegroundWindow) so SetForegroundWindow
-  // below actually takes; the Dart side also restores via window_manager to keep
-  // its tracked state in sync. Handle both minimize paths: iconic (minimized to
-  // the taskbar) and fully hidden (minimized to the tray).
-  HWND hwnd = GetHandle();
-  if (hwnd != nullptr) {
-    if (!IsWindowVisible(hwnd)) {
-      ShowWindow(hwnd, SW_SHOW);
-    }
-    if (IsIconic(hwnd)) {
-      ShowWindow(hwnd, SW_RESTORE);
-    }
-    SetForegroundWindow(hwnd);
-  }
+  // Bring the window forward so the user sees the draft. The Dart side also
+  // restores via window_manager to keep its tracked state in sync.
+  SurfaceWindow();
   windows_integration_channel_->InvokeMethod(
       "onSendViaWisp",
       std::make_unique<flutter::EncodableValue>(flutter::EncodableList{
           flutter::EncodableValue(path),
       }));
+}
+
+void FlutterWindow::HandleSurfaceRequest() {
+  // A plain relaunch. Surface natively, then let Dart restore via
+  // window_manager — that un-hides a tray-hidden window (which a native
+  // SetForegroundWindow alone cannot) and re-syncs window_manager's state.
+  SurfaceWindow();
+  if (windows_integration_channel_) {
+    windows_integration_channel_->InvokeMethod("onSurfaceRequested", nullptr);
+  }
 }
 
 LRESULT
@@ -139,9 +155,16 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
-    case WM_COPYDATA:
-      HandleForwardedPath(reinterpret_cast<const COPYDATASTRUCT*>(lparam));
+    case WM_COPYDATA: {
+      auto* copy_data = reinterpret_cast<const COPYDATASTRUCT*>(lparam);
+      if (copy_data != nullptr &&
+          copy_data->dwData == wisp_single_instance::kSurfaceMagic) {
+        HandleSurfaceRequest();
+      } else {
+        HandleForwardedPath(copy_data);
+      }
       return TRUE;
+    }
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

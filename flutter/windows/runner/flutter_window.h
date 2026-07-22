@@ -33,6 +33,16 @@ class FlutterWindow : public Win32Window {
   // second launch, dispatching it to Dart over windows_integration_channel_.
   void HandleForwardedPath(const COPYDATASTRUCT* copy_data);
 
+  // Handles a surface request from a plain relaunch (WM_COPYDATA carrying
+  // kSurfaceMagic and no path): brings the window forward and notifies Dart so
+  // window_manager un-hides it from the tray and re-syncs its state.
+  void HandleSurfaceRequest();
+
+  // Brings the native window to the foreground, handling both minimize paths:
+  // iconic (taskbar) and fully hidden (tray). Shared by the path + surface
+  // handlers.
+  void SurfaceWindow();
+
   // The project to run.
   flutter::DartProject project_;
 

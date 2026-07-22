@@ -19,6 +19,12 @@ namespace wisp_single_instance {
 // forwarded paths from any other WM_COPYDATA traffic.
 constexpr ULONG_PTR kCopyDataMagic = 0x57495350;  // 'WISP'
 
+// Sentinel for a plain relaunch (double-click / taskbar) that carries no paths:
+// the second process asks the host to surface its window instead of forwarding
+// a "Send via Wisp" path. Distinct from kCopyDataMagic so the host routes it to
+// the tray-aware restore path rather than the path handler.
+constexpr ULONG_PTR kSurfaceMagic = 0x57495352;  // 'WISR'
+
 // Called early in wWinMain. Acquires the single-instance mutex.
 //   - Returns true  => another instance already owns the mutex; `args` (file
 //                      paths) were forwarded to its window. The caller should

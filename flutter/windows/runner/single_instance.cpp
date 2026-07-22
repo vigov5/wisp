@@ -34,13 +34,6 @@ HWND FindHostWindow() {
   return nullptr;
 }
 
-void BringToForeground(HWND hwnd) {
-  if (IsIconic(hwnd)) {
-    ShowWindow(hwnd, SW_RESTORE);
-  }
-  SetForegroundWindow(hwnd);
-}
-
 // Sends one path to the host window as a UTF-8 WM_COPYDATA payload.
 void ForwardPath(HWND hwnd, const std::string& path) {
   COPYDATASTRUCT cds{};
@@ -48,6 +41,18 @@ void ForwardPath(HWND hwnd, const std::string& path) {
   // Include the terminating null so the receiver can treat lpData as a C string.
   cds.cbData = static_cast<DWORD>(path.size() + 1);
   cds.lpData = const_cast<char*>(path.c_str());
+  SendMessageW(hwnd, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds));
+}
+
+// Asks the host to surface its window (a plain relaunch with no paths). Carries
+// no payload — the magic alone signals intent. The host restores through Dart's
+// window_manager so a tray-hidden window is un-hidden and its state re-synced,
+// which a cross-process ShowWindow from here could not do.
+void ForwardSurfaceRequest(HWND hwnd) {
+  COPYDATASTRUCT cds{};
+  cds.dwData = kSurfaceMagic;
+  cds.cbData = 0;
+  cds.lpData = nullptr;
   SendMessageW(hwnd, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds));
 }
 
@@ -109,9 +114,13 @@ bool AcquireOrForward(const std::vector<std::string>& args) {
     AllowSetForegroundWindow(host_pid);
   }
 
-  BringToForeground(host);
-  for (const std::string& path : paths) {
-    ForwardPath(host, path);
+  if (paths.empty()) {
+    // Plain relaunch (double-click / taskbar): just surface the running window.
+    ForwardSurfaceRequest(host);
+  } else {
+    for (const std::string& path : paths) {
+      ForwardPath(host, path);
+    }
   }
   return true;
 }

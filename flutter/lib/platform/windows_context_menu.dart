@@ -20,6 +20,9 @@ class WindowsContextMenu {
   static final StreamController<List<String>> _controller =
       StreamController<List<String>>.broadcast();
 
+  static final StreamController<void> _surfaceController =
+      StreamController<void>.broadcast();
+
   static bool _wired = false;
 
   /// Stream of file/folder paths forwarded from a "Send via Wisp" click while
@@ -28,6 +31,15 @@ class WindowsContextMenu {
   static Stream<List<String>> get onSendViaWisp {
     _ensureWired();
     return _controller.stream;
+  }
+
+  /// Fires when a plain relaunch (double-click / taskbar) of an
+  /// already-running instance asks the window to surface itself.  The single
+  /// instance guard in the native runner forwards this instead of opening a
+  /// second window; the app should bring itself back to the front.
+  static Stream<void> get onSurfaceRequested {
+    _ensureWired();
+    return _surfaceController.stream;
   }
 
   /// True when the context-menu verb is currently registered and points at this
@@ -64,6 +76,8 @@ class WindowsContextMenu {
         if (list.isNotEmpty) {
           _controller.add(list);
         }
+      } else if (call.method == 'onSurfaceRequested') {
+        _surfaceController.add(null);
       }
     });
   }
