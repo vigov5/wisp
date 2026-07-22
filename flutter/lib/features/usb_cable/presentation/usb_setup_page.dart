@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../platform/android/usb_tether_channel.dart';
+import '../../../shell/widgets/page_header.dart';
 import '../../../src/rust/api/lan.dart' as rust_lan;
 import '../../../theme/wisp_theme.dart';
 import '../application/usb_cable_controller.dart';
@@ -55,60 +56,65 @@ class _UsbSetupPageState extends ConsumerState<UsbSetupPage> {
 
     return Scaffold(
       backgroundColor: context.wc.bg,
-      appBar: AppBar(
-        backgroundColor: context.wc.bg,
-        elevation: 0,
-        title: Text(
-          'USB transfer',
-          style: wispSans(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: context.wc.ink,
-          ),
-        ),
-      ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
-          children: [
-            Text(
-              'Move files over a USB cable — a direct, encrypted link with no '
-              'shared Wi-Fi. Pick how you\'re connected below, follow the steps '
-              'on each end, then head to Send to share your files.',
-              style: wispSans(
-                fontSize: 13,
-                color: context.wc.muted,
-                height: 1.45,
+        // Match the Settings screen: a flat top padding + shared PageHeader
+        // instead of a Material AppBar, so the title size and top spacing line
+        // up and clear the desktop window controls.
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const PageHeader(title: 'USB transfer'),
+              const SizedBox(height: 8),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.only(bottom: 28),
+                  children: [
+                    Text(
+                      'Move files over a USB cable — a direct, encrypted link with no '
+                      'shared Wi-Fi. Pick how you\'re connected below, follow the steps '
+                      'on each end, then head to Send to share your files.',
+                      style: wispSans(
+                        fontSize: 13,
+                        color: context.wc.muted,
+                        height: 1.45,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    const _NearbyTipNote(),
+                    const SizedBox(height: 18),
+                    if (cable.supported)
+                      _ModeCard(
+                        icon: Icons.smartphone_rounded,
+                        title: 'Phone to phone',
+                        subtitle:
+                            'One cable between two phones — roles set automatically.',
+                        connected: cable.tunnelUp,
+                        selected: selected == _UsbMode.phoneToPhone,
+                        onTap: () =>
+                            setState(() => _selected = _UsbMode.phoneToPhone),
+                      ),
+                    if (cable.supported) const SizedBox(height: 12),
+                    _ModeCard(
+                      icon: Icons.laptop_mac_rounded,
+                      title: 'Phone to computer',
+                      subtitle:
+                          'USB tethering bridges the phone and a computer.',
+                      connected: tetherUp,
+                      selected: selected == _UsbMode.tether,
+                      onTap: () => setState(() => _selected = _UsbMode.tether),
+                    ),
+                    const SizedBox(height: 20),
+                    if (selected == _UsbMode.phoneToPhone && cable.supported)
+                      _PhoneToPhonePanel(state: cable)
+                    else
+                      _TetherPanel(link: tether),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 14),
-            const _NearbyTipNote(),
-            const SizedBox(height: 18),
-            if (cable.supported)
-              _ModeCard(
-                icon: Icons.smartphone_rounded,
-                title: 'Phone to phone',
-                subtitle:
-                    'One cable between two phones — roles set automatically.',
-                connected: cable.tunnelUp,
-                selected: selected == _UsbMode.phoneToPhone,
-                onTap: () => setState(() => _selected = _UsbMode.phoneToPhone),
-              ),
-            if (cable.supported) const SizedBox(height: 12),
-            _ModeCard(
-              icon: Icons.laptop_mac_rounded,
-              title: 'Phone to computer',
-              subtitle: 'USB tethering bridges the phone and a computer.',
-              connected: tetherUp,
-              selected: selected == _UsbMode.tether,
-              onTap: () => setState(() => _selected = _UsbMode.tether),
-            ),
-            const SizedBox(height: 20),
-            if (selected == _UsbMode.phoneToPhone && cable.supported)
-              _PhoneToPhonePanel(state: cable)
-            else
-              _TetherPanel(link: tether),
-          ],
+            ],
+          ),
         ),
       ),
     );

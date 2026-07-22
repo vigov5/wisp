@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../application/controller.dart';
 import '../application/service.dart';
+import '../../../shell/title_bar_shell.dart';
 import '../../settings/presentation/view.dart';
 import 'qr_pairing_page.dart';
 import 'receive_transfer_route_gate.dart';
@@ -51,7 +52,8 @@ class ReceiveFeature extends ConsumerWidget {
                 onOpenQr: () {
                   Navigator.of(context).push(
                     MaterialPageRoute<void>(
-                      builder: (_) => const QrPairingPage(),
+                      builder: (_) =>
+                          const TitleBarShell(child: QrPairingPage()),
                     ),
                   );
                 },

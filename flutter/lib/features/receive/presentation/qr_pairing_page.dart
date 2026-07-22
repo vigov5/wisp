@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../../shell/widgets/page_header.dart';
 import '../../../src/rust/api/receiver.dart' as rust_receiver;
 import '../../../theme/wisp_theme.dart';
 
@@ -44,28 +45,31 @@ class _QrPairingPageState extends State<QrPairingPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.wc.bg,
-      appBar: AppBar(
-        backgroundColor: context.wc.bg,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        title: Text(
-          'Pair via QR',
-          style: wispSans(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: context.wc.ink,
+      body: SafeArea(
+        // Match the Settings screen: a flat top padding + shared PageHeader
+        // instead of a Material AppBar, so the title size and top spacing line
+        // up and the back button clears the desktop window controls / macOS
+        // traffic lights.
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              PageHeader(
+                title: 'Pair via QR',
+                onBack: () => Navigator.of(context).pop(),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: _info != null
+                    ? _buildContent(context, _info!)
+                    : _error != null
+                    ? _buildError(context, _error!)
+                    : const Center(child: CircularProgressIndicator()),
+              ),
+            ],
           ),
         ),
-      ),
-      body: SafeArea(
-        child: _info != null
-            ? _buildContent(context, _info!)
-            : _error != null
-            ? _buildError(context, _error!)
-            : const Center(child: CircularProgressIndicator()),
       ),
     );
   }
@@ -75,7 +79,9 @@ class _QrPairingPageState extends State<QrPairingPage> {
     rust_receiver.QrPairingInfoData info,
   ) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+      // Sides + top come from the page's outer padding + header gap; only add
+      // the scroll bottom inset here.
+      padding: const EdgeInsets.only(bottom: 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -202,8 +208,7 @@ class _QrPairingPageState extends State<QrPairingPage> {
   }
 
   Widget _buildError(BuildContext context, String message) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
+    return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [

@@ -8,6 +8,7 @@ import '../features/diagnostics/application/firewall_warning_controller.dart';
 import '../features/receive/application/controller.dart';
 import '../features/receive/application/service.dart';
 import '../features/receive/presentation/qr_pairing_page.dart';
+import 'title_bar_shell.dart';
 import '../features/receive/presentation/receive_transfer_route_gate.dart';
 import '../features/receive/presentation/widgets/idle_card.dart';
 import '../features/receive/presentation/widgets/receiver_error_banner.dart';
@@ -121,7 +122,8 @@ class DesktopShell extends ConsumerWidget with ShellPickingActions {
                 onOpenQr: () {
                   Navigator.of(context).push(
                     MaterialPageRoute<void>(
-                      builder: (_) => const QrPairingPage(),
+                      builder: (_) =>
+                          const TitleBarShell(child: QrPairingPage()),
                     ),
                   );
                 },
