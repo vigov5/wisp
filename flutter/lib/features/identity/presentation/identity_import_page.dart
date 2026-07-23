@@ -1,10 +1,9 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../theme/wisp_theme.dart';
 import '../../send/presentation/qr_scan_page.dart';
+import '../../settings/application/controller.dart';
 import '../application/identity_backup_codec.dart';
 import '../application/identity_backup_file.dart';
 import '../identity_providers.dart';
@@ -63,6 +62,8 @@ class _IdentityImportPageState extends ConsumerState<IdentityImportPage> {
         return;
       }
       setState(() => _codeController.text = trimmed);
+    } on IdentityBackupFileTooLargeException {
+      _snack('That file is too large to be a Wisp identity backup.');
     } catch (e) {
       _snack('Couldn\'t read file: $e');
     } finally {
@@ -87,11 +88,20 @@ class _IdentityImportPageState extends ConsumerState<IdentityImportPage> {
     setState(() => _busy = true);
     try {
       final codec = ref.read(identityBackupCodecProvider);
-      final Uint8List bytes = await codec.decode(
+      final backup = await codec.decode(
         code,
         password: _needsPassword ? _passwordController.text : null,
       );
-      await ref.read(identityStorageProvider).replace(bytes);
+      await ref.read(identityStorageProvider).replace(backup.key);
+      // v2 backups also carry the device name; restore it so the device keeps
+      // the name its peers know it by. Takes effect on the same relaunch the
+      // key swap needs (see the restart dialog below).
+      final restoredName = backup.deviceName?.trim();
+      if (restoredName != null && restoredName.isNotEmpty) {
+        await ref
+            .read(settingsControllerProvider.notifier)
+            .applyRestoredDeviceName(restoredName);
+      }
       if (!mounted) return;
       setState(() => _restored = true);
       await _showRestartDialog();

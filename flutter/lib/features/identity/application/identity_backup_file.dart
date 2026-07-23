@@ -8,10 +8,26 @@ import '../../../platform/android_media_store.dart';
 /// Default filename suggested when exporting a backup to a file.
 const String kBackupFileName = 'wisp-identity.wispkey';
 
+/// A backup payload is ~150 chars, so a real `.wispkey` is well under a
+/// kilobyte. We cap the read generously: anything past this is not a backup
+/// (a wrong or huge file), and reading it whole would risk an out-of-memory
+/// crash. Reject on size before touching the bytes.
+const int _maxBackupFileBytes = 64 * 1024;
+
 const _wispKeyTypeGroup = XTypeGroup(
   label: 'Wisp identity backup',
   extensions: <String>['wispkey'],
 );
+
+/// Thrown by [IdentityBackupFile.open] when the chosen file is too large to be
+/// a Wisp identity backup, so the UI can show a friendly message instead of
+/// letting a multi-megabyte read crash the app.
+class IdentityBackupFileTooLargeException implements Exception {
+  const IdentityBackupFileTooLargeException();
+
+  @override
+  String toString() => 'selected file is too large to be an identity backup';
+}
 
 /// Reads/writes the backup payload as a `.wispkey` text file.
 ///
@@ -69,11 +85,19 @@ class IdentityBackupFile {
 
   /// Opens a file picker and returns the file's text contents, or `null` when
   /// the user cancelled.
+  ///
+  /// Guards against a wrong or oversized pick: the size is checked before the
+  /// bytes are read, so choosing (say) a video can't OOM the app. Throws
+  /// [IdentityBackupFileTooLargeException] when the file exceeds
+  /// [_maxBackupFileBytes].
   Future<String?> open() async {
     final file = await openFile(
       acceptedTypeGroups: const <XTypeGroup>[_wispKeyTypeGroup],
     );
     if (file == null) return null;
+    if (await file.length() > _maxBackupFileBytes) {
+      throw const IdentityBackupFileTooLargeException();
+    }
     return file.readAsString();
   }
 }

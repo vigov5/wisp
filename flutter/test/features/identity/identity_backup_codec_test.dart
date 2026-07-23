@@ -27,7 +27,8 @@ void main() {
       expect(IdentityBackupCodec.looksLikeBackup(payload), isTrue);
 
       final decoded = await codec.decode(payload);
-      expect(decoded, equals(key));
+      expect(decoded.key, equals(key));
+      expect(decoded.deviceName, isNull);
     });
 
     test('empty password is treated as no password', () async {
@@ -39,7 +40,77 @@ void main() {
       final bare = base64.encode(key);
       expect(IdentityBackupCodec.looksLikeBackup(bare), isTrue);
       final decoded = await codec.decode(bare);
-      expect(decoded, equals(key));
+      expect(decoded.key, equals(key));
+      expect(decoded.deviceName, isNull);
+    });
+  });
+
+  group('device name (v2)', () {
+    test('round-trips the key and name through the v2 prefix', () async {
+      final payload = await codec.encode(key, deviceName: 'Tien\'s Laptop');
+      expect(payload, startsWith('wisp-key:v2:'));
+      expect(IdentityBackupCodec.isEncrypted(payload), isFalse);
+      expect(IdentityBackupCodec.looksLikeBackup(payload), isTrue);
+
+      final decoded = await codec.decode(payload);
+      expect(decoded.key, equals(key));
+      expect(decoded.deviceName, equals('Tien\'s Laptop'));
+    });
+
+    test('encrypted round-trips key and name via the v2e prefix', () async {
+      final c = fastCodec();
+      final payload = await c.encode(
+        key,
+        deviceName: 'Phòng khách 📱',
+        password: 'pw',
+      );
+      expect(payload, startsWith('wisp-key:v2e:'));
+      expect(IdentityBackupCodec.isEncrypted(payload), isTrue);
+
+      final decoded = await c.decode(payload, password: 'pw');
+      expect(decoded.key, equals(key));
+      expect(decoded.deviceName, equals('Phòng khách 📱'));
+    });
+
+    test(
+      'blank / whitespace name falls back to the key-only v1 form',
+      () async {
+        expect(
+          await codec.encode(key, deviceName: ''),
+          startsWith('wisp-key:v1:'),
+        );
+        expect(
+          await codec.encode(key, deviceName: '   '),
+          startsWith('wisp-key:v1:'),
+        );
+      },
+    );
+
+    test('ignores unknown JSON fields (forward compatible)', () async {
+      // A v2 payload written by some future version with an extra field the
+      // current decoder doesn't know about must still restore cleanly.
+      final json = jsonEncode({
+        'k': base64.encode(key),
+        'n': 'Future Device',
+        'createdAt': 1234567890,
+        'somethingNew': {'nested': true},
+      });
+      final payload = 'wisp-key:v2:${base64.encode(utf8.encode(json))}';
+
+      expect(IdentityBackupCodec.looksLikeBackup(payload), isTrue);
+      final decoded = await codec.decode(payload);
+      expect(decoded.key, equals(key));
+      expect(decoded.deviceName, equals('Future Device'));
+    });
+
+    test('an overlong name is truncated but still decodes', () async {
+      final longName = 'A' * 500;
+      final payload = await codec.encode(key, deviceName: longName);
+      final decoded = await codec.decode(payload);
+      expect(decoded.key, equals(key));
+      expect(decoded.deviceName, isNotNull);
+      expect(decoded.deviceName!.length, lessThan(longName.length));
+      expect(longName, startsWith(decoded.deviceName!));
     });
   });
 
@@ -52,7 +123,8 @@ void main() {
       expect(IdentityBackupCodec.looksLikeBackup(payload), isTrue);
 
       final decoded = await c.decode(payload, password: 'hunter2!');
-      expect(decoded, equals(key));
+      expect(decoded.key, equals(key));
+      expect(decoded.deviceName, isNull);
     });
 
     test('different salt/nonce each call → different ciphertext', () async {

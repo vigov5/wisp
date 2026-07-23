@@ -130,6 +130,19 @@ class SettingsController extends Notifier<SettingsState> {
     await ref.read(settingsRepositoryProvider).save(next);
   }
 
+  /// Persists a device name recovered from an identity backup and reflects it
+  /// in state. Like the restored secret key, this only fully takes effect after
+  /// the relaunch the import screen prompts for — the running receiver keeps
+  /// its current name until then — so we persist + update state without the
+  /// live receiver rebuild [saveSettings] performs.
+  Future<void> applyRestoredDeviceName(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty || trimmed == state.settings.deviceName) return;
+    final next = state.settings.copyWith(deviceName: trimmed);
+    state = state.copyWith(settings: next);
+    await ref.read(settingsRepositoryProvider).save(next);
+  }
+
   bool _isLatestSave(int serial) => serial == _saveRequestSerial;
 
   String _normalizeDeviceName(String value, AppSettings fallback) {

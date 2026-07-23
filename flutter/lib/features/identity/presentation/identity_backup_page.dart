@@ -7,6 +7,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../platform/device_auth_gate.dart';
 import '../../../theme/wisp_theme.dart';
+import '../../settings/application/controller.dart';
 import '../../settings/presentation/widgets/settings_toggle_field.dart';
 import '../application/identity_backup_file.dart';
 import '../identity_providers.dart';
@@ -120,9 +121,18 @@ class _IdentityBackupPageState extends ConsumerState<IdentityBackupPage> {
     setState(() => _busy = true);
     try {
       final codec = ref.read(identityBackupCodecProvider);
+      // Carry this device's name so a restore brings the name back too.
+      final deviceName = ref
+          .read(settingsControllerProvider)
+          .settings
+          .deviceName;
       final payload = _protect
-          ? await codec.encode(key, password: _passwordController.text)
-          : await codec.encode(key);
+          ? await codec.encode(
+              key,
+              deviceName: deviceName,
+              password: _passwordController.text,
+            )
+          : await codec.encode(key, deviceName: deviceName);
       if (mounted) setState(() => _payload = payload);
     } finally {
       if (mounted) setState(() => _busy = false);
