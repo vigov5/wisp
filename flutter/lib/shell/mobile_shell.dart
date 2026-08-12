@@ -45,16 +45,20 @@ class MobileShell extends ConsumerWidget with ShellPickingActions {
                     child: Row(
                       children: [
                         const Spacer(),
-                        IconButton(
-                          onPressed: () => context.pushUsbSetup(),
-                          icon: Icon(
-                            Icons.usb_rounded,
-                            color: usbConnected ? kAccentDirect : null,
+                        // USB transfer rides the Android Open Accessory (AOA)
+                        // transport, which iOS can't drive — hide the entry
+                        // point there.
+                        if (!Platform.isIOS)
+                          IconButton(
+                            onPressed: () => context.pushUsbSetup(),
+                            icon: Icon(
+                              Icons.usb_rounded,
+                              color: usbConnected ? kAccentDirect : null,
+                            ),
+                            tooltip: usbConnected
+                                ? 'USB connected'
+                                : 'USB transfer',
                           ),
-                          tooltip: usbConnected
-                              ? 'USB connected'
-                              : 'USB transfer',
-                        ),
                         IconButton(
                           onPressed: () {
                             Navigator.of(context).push(
