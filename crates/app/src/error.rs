@@ -465,6 +465,18 @@ impl From<ProtocolError> for UserFacingError {
                 "Update Wisp to the latest version on both devices, then try again.",
                 false,
             ),
+            // A frame read/write failure is a *transport* break, not a version
+            // disagreement: the stream died mid-conversation because the
+            // network moved (Wi-Fi switch, cellular handover), the QUIC path
+            // hit its idle timeout, or the peer went away. Classifying these as
+            // ProtocolIncompatible told the user "the devices could not agree
+            // on how to complete the transfer — update Wisp on both devices",
+            // which is actively misleading. Derive the kind from the underlying
+            // I/O error instead. Genuine version rejection arrives as
+            // UnsupportedVersion / HandshakeRejected, which stay above.
+            ProtocolError::FrameRead { source, .. } | ProtocolError::FrameWrite { source, .. } => {
+                map_frame_io_error(source.as_ref())
+            }
             ProtocolError::UnexpectedRole { .. }
             | ProtocolError::UnexpectedMessageKind { .. }
             | ProtocolError::SessionIdMismatch { .. }
@@ -472,8 +484,6 @@ impl From<ProtocolError> for UserFacingError {
             | ProtocolError::InvalidTransition { .. }
             | ProtocolError::MissingPeerIdentity { .. }
             | ProtocolError::MessageTooLarge { .. }
-            | ProtocolError::FrameRead { .. }
-            | ProtocolError::FrameWrite { .. }
             | ProtocolError::MessageSerialize { .. }
             | ProtocolError::MessageDeserialize { .. } => {
                 UserFacingError::from_kind(UserFacingErrorKind::ProtocolIncompatible)
@@ -543,6 +553,27 @@ fn map_network_io_error(error: &(dyn StdError + 'static)) -> UserFacingError {
     }
 
     UserFacingError::from_kind(UserFacingErrorKind::Internal)
+}
+
+/// Classifies a wire frame read/write failure.
+///
+/// Unlike [`map_network_io_error`] this walks the whole source chain, because
+/// the transport errors that reach us here are nested (iroh wraps quinn's
+/// `ReadError`/`WriteError`, which in turn surface as an [`io::Error`]). And
+/// unlike that helper it falls back to `ConnectionLost` rather than `Internal`:
+/// if a frame read/write failed on a stream that was live a moment ago, the
+/// connection broke — that is a transport problem regardless of whether we can
+/// name the exact cause.
+fn map_frame_io_error(error: &(dyn StdError + 'static)) -> UserFacingError {
+    let mut current = Some(error);
+    while let Some(err) = current {
+        if let Some(io_error) = err.downcast_ref::<io::Error>() {
+            return map_io_kind(io_error.kind());
+        }
+        current = err.source();
+    }
+
+    UserFacingError::from_kind(UserFacingErrorKind::ConnectionLost)
 }
 
 fn map_local_io_error(error: &(dyn StdError + 'static)) -> UserFacingError {
@@ -709,6 +740,121 @@ mod tests {
             })
             .kind(),
             UserFacingErrorKind::FileConflict
+        );
+    }
+
+    /// The reported bug: switching Wi-Fi mid-transfer tears down the QUIC path,
+    /// both stream reads fail with `FrameRead`, and the sender used to render
+    /// "Protocol mismatch / the devices could not agree on how to complete the
+    /// transfer / update Wisp on both devices" — none of which is true.
+    #[test]
+    fn frame_io_failures_are_transport_errors_not_protocol_mismatches() {
+        // The connection-shaped io kinds a dropped path produces.
+        for kind in [
+            io::ErrorKind::ConnectionAborted,
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::BrokenPipe,
+            io::ErrorKind::TimedOut,
+            io::ErrorKind::UnexpectedEof,
+            io::ErrorKind::NotConnected,
+        ] {
+            let read = UserFacingError::from(ProtocolError::FrameRead {
+                context: "reading message length",
+                source: Box::new(io::Error::from(kind)),
+            });
+            assert_eq!(
+                read.kind(),
+                UserFacingErrorKind::ConnectionLost,
+                "FrameRead({kind:?}) should read as a lost connection"
+            );
+            assert!(
+                read.is_retryable(),
+                "FrameRead({kind:?}) should be retryable"
+            );
+
+            assert_eq!(
+                UserFacingError::from(ProtocolError::FrameWrite {
+                    context: "writing message length",
+                    source: Box::new(io::Error::from(kind)),
+                })
+                .kind(),
+                UserFacingErrorKind::ConnectionLost,
+                "FrameWrite({kind:?}) should read as a lost connection"
+            );
+        }
+    }
+
+    #[test]
+    fn frame_io_failure_classifies_through_a_nested_source_chain() {
+        // iroh/quinn wrap the io error rather than exposing it at the top level.
+        #[derive(Debug)]
+        struct Wrapper(io::Error);
+        impl fmt::Display for Wrapper {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("stream closed")
+            }
+        }
+        impl StdError for Wrapper {
+            fn source(&self) -> Option<&(dyn StdError + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let error = UserFacingError::from(ProtocolError::FrameRead {
+            context: "reading message bytes",
+            source: Box::new(Wrapper(io::Error::from(io::ErrorKind::ConnectionReset))),
+        });
+        assert_eq!(error.kind(), UserFacingErrorKind::ConnectionLost);
+    }
+
+    #[test]
+    fn frame_io_failure_of_unknown_cause_still_avoids_protocol_mismatch() {
+        // No io::Error anywhere in the chain — must not fall back to
+        // ProtocolIncompatible (or Internal); the transport still broke.
+        #[derive(Debug)]
+        struct Opaque;
+        impl fmt::Display for Opaque {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("opaque transport failure")
+            }
+        }
+        impl StdError for Opaque {}
+
+        let error = UserFacingError::from(ProtocolError::FrameRead {
+            context: "reading message length",
+            source: Box::new(Opaque),
+        });
+        assert_eq!(error.kind(), UserFacingErrorKind::ConnectionLost);
+    }
+
+    /// Guards the other direction: a real version disagreement must keep saying
+    /// "update Wisp", and must not be softened into a transport error by the
+    /// change above. `HandshakeRejected` is what a peer hanging up during the
+    /// Hello exchange produces (see `protocol::send::read_peer_hello`).
+    #[test]
+    fn genuine_version_disagreements_stay_protocol_incompatible() {
+        assert_eq!(
+            UserFacingError::from(ProtocolError::UnsupportedVersion {
+                expected: 5,
+                actual: 4,
+            })
+            .kind(),
+            UserFacingErrorKind::ProtocolIncompatible
+        );
+        assert_eq!(
+            UserFacingError::from(ProtocolError::HandshakeRejected {
+                source: Box::new(io::Error::from(io::ErrorKind::ConnectionReset)),
+            })
+            .kind(),
+            UserFacingErrorKind::ProtocolIncompatible
+        );
+        assert_eq!(
+            UserFacingError::from(ProtocolError::MessageDeserialize {
+                context: "parsing message body",
+                source: Box::new(io::Error::from(io::ErrorKind::InvalidData)),
+            })
+            .kind(),
+            UserFacingErrorKind::ProtocolIncompatible
         );
     }
 

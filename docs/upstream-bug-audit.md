@@ -505,3 +505,85 @@ we managed to receive the TransferCompleted frame before that).
       max (6_500 ms) and `default_path_keep_alive_interval` to 5_000
       ms — gives slightly more headroom without changing semantics.
       Deferred — heartbeat backup makes this less urgent.
+
+---
+
+## Wisp-only: network drops misreported as "Protocol mismatch"
+
+**Reported:** 2026-08-12 (user observation: switched Wi-Fi mid-transfer)
+**Audited:** 2026-08-12
+
+### Status in Wisp fork: **Fixed**
+
+User report: switching Wi-Fi networks while sending made the sender fail
+with "The devices could not agree on how to complete the transfer" plus
+the recovery hint "Update Wisp on both devices and try again" — the
+`UserFacingErrorKind::ProtocolIncompatible` copy.  Nothing was wrong
+with either build's protocol version; the network moved.
+
+This is the same misclassification the export-window race section above
+noted in passing ("it's `ProtocolIncompatible` because FrameRead /
+ChannelClosed errors share that bucket") but never fixed — that section
+only addressed the *race*, leaving the wrong label on every transport
+failure regardless of trigger.
+
+### Root cause
+
+`From<ProtocolError> for UserFacingError` lumped `FrameRead` and
+`FrameWrite` in with the genuine version-disagreement variants:
+
+```
+ProtocolError::UnexpectedRole { .. }
+| ...
+| ProtocolError::FrameRead { .. }     // ← transport failure
+| ProtocolError::FrameWrite { .. }    // ← transport failure
+| ... => from_kind(ProtocolIncompatible)
+```
+
+But those two are produced only by `crates/core/src/protocol/wire.rs`
+(`read_u32` / `read_exact` / `write_all` / `flush`), i.e. they *are*
+the stream I/O calls.  Any transport break — Wi-Fi switch, cellular
+handover, QUIC idle timeout, peer process exit — surfaces there.  The
+label pointed users at a version problem that did not exist, and its
+`retryable = false` suppressed the retry affordance for a failure that
+is exactly the retryable kind.
+
+### Fix
+
+`crates/app/src/error.rs` — `FrameRead`/`FrameWrite` now classify from
+their `source` via a new `map_frame_io_error`, which walks the whole
+error chain (iroh wraps quinn's `ReadError`/`WriteError`, which surface
+as `io::Error`) and reuses `map_io_kind`; when no `io::Error` is found
+it falls back to `ConnectionLost` rather than `Internal`, since a frame
+read/write that failed on a live stream means the connection broke.
+
+Users now get "Connection lost / The connection was interrupted /
+Reconnect and try again" with `retryable = true`.
+
+Version detection is unaffected: a peer rejecting our Hello arrives as
+`HandshakeRejected` (built in `protocol::send::read_peer_hello`, added
+precisely so a handshake abort isn't confused with a bare frame read),
+and `UnsupportedVersion` / `MessageDeserialize` still map to
+`ProtocolIncompatible`.  The `maybe_demote_pre_handshake_failure`
+guard in `crates/app/src/send/session.rs` that preserves
+`ProtocolIncompatible` pre-handshake keeps working for that variant;
+pre-handshake frame failures now correctly fall through to the
+`PeerUnreachable` / `PeerNotReceiving` heuristic instead of claiming a
+version mismatch.
+
+### Follow-up
+
+- [x] Split `FrameRead`/`FrameWrite` out of the `ProtocolIncompatible`
+      arm and add `map_frame_io_error`.
+- [x] Add 4 regression tests in `crates/app/src/error.rs`:
+      - `frame_io_failures_are_transport_errors_not_protocol_mismatches`
+      - `frame_io_failure_classifies_through_a_nested_source_chain`
+      - `frame_io_failure_of_unknown_cause_still_avoids_protocol_mismatch`
+      - `genuine_version_disagreements_stay_protocol_incompatible`
+- [ ] `ProtocolError::MessageSerialize` is still bucketed as
+      `ProtocolIncompatible`, but serializing *our own* struct failing
+      is an internal bug, not a peer disagreement — `Internal` would be
+      truthful.  Left alone: effectively unreachable (serde_json over
+      owned types), and out of scope for this report.
+- [ ] `TransferError::ChannelClosed` maps to `Internal`; worth a look at
+      whether any transport-shaped failure still reaches it.
