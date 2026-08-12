@@ -248,7 +248,7 @@
           type="button"
           @click="$store.rx.doSend()"
         >Send</button>
-        <p class="warn" x-show="$store.rx.sendPhase === 'error'" x-text="$store.rx.sendStatus"></p>
+        <p class="warn" style="margin-top: var(--space-4)" x-show="$store.rx.sendPhase === 'error'" x-text="$store.rx.sendStatus"></p>
         <p class="hint">
           Ask the recipient to open this page, pick <strong>Receive</strong>, and
           read you their 6-character code. It flows peer-to-peer over relay — never
