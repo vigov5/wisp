@@ -580,10 +580,31 @@ version mismatch.
       - `frame_io_failure_classifies_through_a_nested_source_chain`
       - `frame_io_failure_of_unknown_cause_still_avoids_protocol_mismatch`
       - `genuine_version_disagreements_stay_protocol_incompatible`
-- [ ] `ProtocolError::MessageSerialize` is still bucketed as
-      `ProtocolIncompatible`, but serializing *our own* struct failing
-      is an internal bug, not a peer disagreement — `Internal` would be
-      truthful.  Left alone: effectively unreachable (serde_json over
-      owned types), and out of scope for this report.
-- [ ] `TransferError::ChannelClosed` maps to `Internal`; worth a look at
-      whether any transport-shaped failure still reaches it.
+- [x] `ProtocolError::MessageSerialize` moved from `ProtocolIncompatible`
+      to `Internal`.  Encoding our *own* owned struct failing is a Wisp
+      bug with the peer uninvolved, so "update Wisp on both devices" was
+      a wrong lead.  Still effectively unreachable (serde_json over owned
+      types), but it now carries the failing context + source into the
+      message so it's reportable if it ever does fire.
+      Test: `message_serialize_failure_is_internal_not_protocol_mismatch`.
+- [x] Audited `TransferError::ChannelClosed` — it had **three**
+      construction sites with two different meanings:
+      - `transfer/receiver.rs:348` and `:418` — the *local* accept/decline
+        oneshot (`decision_rx`).  Only drops if our own actor dropped the
+        responder, so `Internal` is correct and stays.
+      - `transfer/receiver.rs:911` — the iroh-blobs download event stream
+        yielding `None`, i.e. ending without `Done` or `Failed`.  This one
+        *was* transport-shaped: a well-behaved download failure arrives on
+        the `Failed` arm right below it, so `None` mid-download means the
+        download task went away, in practice because the connection
+        carrying it died.  It reported a dead-end non-retryable "internal
+        error" for what is a retryable network drop.
+
+      Fixed at the source rather than by reclassifying the variant: that
+      site now builds `TransferError::connection_closed("receiving blob
+      download events")`, which already maps to `ConnectionLost`.  This
+      keeps `ChannelClosed` meaning exactly "a local channel dropped", so
+      its `Internal` mapping is now accurate for every remaining use
+      (comment added at the match arm recording that invariant).
+      Tests: `channel_closed_remains_internal`,
+      `connection_closed_is_retryable_transport_failure`.

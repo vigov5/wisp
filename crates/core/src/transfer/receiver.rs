@@ -908,7 +908,16 @@ async fn do_transfer(
                 }
                 None => {
                     download.abort();
-                    return Err(TransferError::channel_closed("blob download stream"));
+                    // The event stream ended without Done or Failed. A download
+                    // that fails in a well-behaved way reports it via the
+                    // Failed arm below, so reaching here mid-download means the
+                    // download task itself went away — in practice because the
+                    // connection carrying it died. Report it as a transport
+                    // failure (retryable) rather than a closed internal channel,
+                    // which would surface as a dead-end "internal error".
+                    return Err(TransferError::connection_closed(
+                        "receiving blob download events",
+                    ));
                 }
                 Some(BlobDownloadUpdate::Failed { error }) => {
                     download.abort();

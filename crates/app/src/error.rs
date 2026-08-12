@@ -477,6 +477,13 @@ impl From<ProtocolError> for UserFacingError {
             ProtocolError::FrameRead { source, .. } | ProtocolError::FrameWrite { source, .. } => {
                 map_frame_io_error(source.as_ref())
             }
+            // Serializing a message is us encoding our *own* owned struct, so a
+            // failure here is a Wisp bug — the peer isn't involved and telling
+            // the user to update both devices would be a wrong lead.
+            ProtocolError::MessageSerialize { context, source } => UserFacingError::internal(
+                "Wisp internal error",
+                format!("Wisp could not encode a protocol message ({context}): {source}"),
+            ),
             ProtocolError::UnexpectedRole { .. }
             | ProtocolError::UnexpectedMessageKind { .. }
             | ProtocolError::SessionIdMismatch { .. }
@@ -484,7 +491,6 @@ impl From<ProtocolError> for UserFacingError {
             | ProtocolError::InvalidTransition { .. }
             | ProtocolError::MissingPeerIdentity { .. }
             | ProtocolError::MessageTooLarge { .. }
-            | ProtocolError::MessageSerialize { .. }
             | ProtocolError::MessageDeserialize { .. } => {
                 UserFacingError::from_kind(UserFacingErrorKind::ProtocolIncompatible)
             }
@@ -502,6 +508,10 @@ impl From<TransferError> for UserFacingError {
             TransferError::ConnectionClosed { .. } | TransferError::Timeout { .. } => {
                 UserFacingError::from_kind(UserFacingErrorKind::ConnectionLost)
             }
+            // Internal is right here: the only remaining ChannelClosed sites are
+            // the local accept/decline oneshot in transfer::receiver, which can
+            // only drop if our own actor dropped the responder. Transport-shaped
+            // stream endings use ConnectionClosed above instead.
             TransferError::ChannelClosed { .. } => {
                 UserFacingError::from_kind(UserFacingErrorKind::Internal)
             }
@@ -855,6 +865,52 @@ mod tests {
             })
             .kind(),
             UserFacingErrorKind::ProtocolIncompatible
+        );
+    }
+
+    /// Encoding our own struct failing is a Wisp bug, so it must not tell the
+    /// user the two devices disagree on the protocol.
+    #[test]
+    fn message_serialize_failure_is_internal_not_protocol_mismatch() {
+        let error = UserFacingError::from(ProtocolError::MessageSerialize {
+            context: "serializing message body",
+            source: Box::new(io::Error::from(io::ErrorKind::InvalidData)),
+        });
+
+        assert_eq!(error.kind(), UserFacingErrorKind::Internal);
+        // The underlying cause has to survive — this is a bug report path.
+        assert!(
+            error.message().contains("serializing message body"),
+            "expected the failing context in the message, got: {}",
+            error.message()
+        );
+    }
+
+    /// `ChannelClosed` now only covers the local accept/decline oneshot, so
+    /// Internal is the honest classification for it.
+    #[test]
+    fn channel_closed_remains_internal() {
+        assert_eq!(
+            UserFacingError::from(TransferError::ChannelClosed {
+                context: "waiting for receiver decision",
+            })
+            .kind(),
+            UserFacingErrorKind::Internal
+        );
+    }
+
+    /// The blob-download event stream ending without a terminal event is a
+    /// transport failure, and `ConnectionClosed` is what carries it.
+    #[test]
+    fn connection_closed_is_retryable_transport_failure() {
+        let error = UserFacingError::from(TransferError::ConnectionClosed {
+            context: "receiving blob download events",
+        });
+
+        assert_eq!(error.kind(), UserFacingErrorKind::ConnectionLost);
+        assert!(
+            error.is_retryable(),
+            "a dropped transport should offer a retry"
         );
     }
 
