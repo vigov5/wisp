@@ -8,6 +8,7 @@ Future<void> showSendSelectionSourceSheet(
   BuildContext context, {
   required FutureOr<void> Function() onChooseFiles,
   required FutureOr<void> Function() onChooseFolder,
+  FutureOr<void> Function()? onChoosePhotos,
   FutureOr<void> Function()? onChooseText,
   FutureOr<void> Function()? onChooseClipboard,
 }) {
@@ -18,6 +19,7 @@ Future<void> showSendSelectionSourceSheet(
       return SendSelectionSourceSheet(
         onChooseFiles: onChooseFiles,
         onChooseFolder: onChooseFolder,
+        onChoosePhotos: onChoosePhotos,
         onChooseText: onChooseText,
         onChooseClipboard: onChooseClipboard,
       );
@@ -30,12 +32,14 @@ class SendSelectionSourceSheet extends StatelessWidget {
     super.key,
     required this.onChooseFiles,
     required this.onChooseFolder,
+    this.onChoosePhotos,
     this.onChooseText,
     this.onChooseClipboard,
   });
 
   final FutureOr<void> Function() onChooseFiles;
   final FutureOr<void> Function() onChooseFolder;
+  final FutureOr<void> Function()? onChoosePhotos;
   final FutureOr<void> Function()? onChooseText;
   final FutureOr<void> Function()? onChooseClipboard;
 
@@ -94,6 +98,12 @@ class SendSelectionSourceSheet extends StatelessWidget {
                   label: 'Folder',
                   onTap: () => _handleSelection(context, onChooseFolder),
                 ),
+                if (onChoosePhotos != null)
+                  _SelectionActionTile(
+                    icon: Icons.photo_library_outlined,
+                    label: 'Photos',
+                    onTap: () => _handleSelection(context, onChoosePhotos!),
+                  ),
                 if (onChooseText != null)
                   _SelectionActionTile(
                     icon: Icons.notes_rounded,

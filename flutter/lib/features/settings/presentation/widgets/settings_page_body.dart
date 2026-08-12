@@ -475,27 +475,35 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                         const _SettingsGroupHeader(title: 'Files & Storage'),
                         SettingsSectionField(
                           label: 'Save received files to',
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              SettingsDownloadRootField(
-                                controller: _downloadRootController,
-                                onChoose: _pickDownloadRoot,
-                              ),
-                              if (_androidDownloadRootHint() != null) ...[
-                                const SizedBox(height: 6),
-                                Text(
-                                  _androidDownloadRootHint()!,
-                                  style: wispSans(
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w400,
-                                    color: context.wc.muted,
-                                    height: 1.45,
-                                  ),
+                          // iOS has no OS folder picker, so the "Choose" button
+                          // can't work there. Received files land in the app's
+                          // Documents/Wisp folder, which UIFileSharingEnabled +
+                          // LSSupportsOpeningDocumentsInPlace expose in the Files
+                          // app — so point the user there instead of a picker.
+                          child: Platform.isIOS
+                              ? const _IosStorageLocationNote()
+                              : Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    SettingsDownloadRootField(
+                                      controller: _downloadRootController,
+                                      onChoose: _pickDownloadRoot,
+                                    ),
+                                    if (_androidDownloadRootHint() != null) ...[
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        _androidDownloadRootHint()!,
+                                        style: wispSans(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w400,
+                                          color: context.wc.muted,
+                                          height: 1.45,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
                                 ),
-                              ],
-                            ],
-                          ),
                         ),
                         const SizedBox(height: 18),
                         SettingsStorageSection(
@@ -828,6 +836,59 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// iOS-only replacement for the download-root picker. iOS doesn't expose an
+/// OS folder picker, and received files are fixed to the app's Documents/Wisp
+/// folder — so instead of a dead "Choose" button, show where the files live
+/// and how to reach them in the Files app.
+class _IosStorageLocationNote extends StatelessWidget {
+  const _IosStorageLocationNote();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: context.wc.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: context.wc.border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.folder_outlined, size: 18, color: context.wc.muted),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'On My iPhone → Wisp',
+                  style: wispSans(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: context.wc.ink,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Received files are saved here. Open the Files app and browse '
+                  'to On My iPhone → Wisp to view, move, or share them.',
+                  style: wispSans(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w400,
+                    color: context.wc.muted,
+                    height: 1.45,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

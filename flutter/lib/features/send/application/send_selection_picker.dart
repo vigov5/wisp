@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../platform/android_file_picker.dart';
 import 'model.dart';
@@ -10,6 +11,10 @@ abstract class SendSelectionPicker {
   Future<List<SendPickedFile>> pickFiles();
 
   Future<List<SendPickedFile>> pickFolder();
+
+  /// Pick photos/videos from the OS media library. On iOS the document-based
+  /// [pickFiles] can't reach the Photos library, so this is the only way in.
+  Future<List<SendPickedFile>> pickPhotos();
 }
 
 final sendSelectionPickerProvider = Provider<SendSelectionPicker>((_) {
@@ -96,5 +101,32 @@ class FileSelectorSendSelectionPicker implements SendSelectionPicker {
         kind: SendPickedFileKind.directory,
       ),
     ];
+  }
+
+  @override
+  Future<List<SendPickedFile>> pickPhotos() async {
+    // pickMultipleMedia copies each selection into an app-owned temp file and
+    // hands back an XFile with a real filesystem path, so it feeds the same
+    // send pipeline as file_selector picks.
+    final picked = await ImagePicker().pickMultipleMedia();
+    return Future.wait(
+      picked.map((file) async {
+        final path = file.path.isNotEmpty ? file.path : file.name;
+        BigInt? sizeBytes;
+        try {
+          sizeBytes = BigInt.from(await file.length());
+        } catch (_) {
+          sizeBytes = null;
+        }
+        return SendPickedFile(
+          path: path,
+          name: file.name.trim().isEmpty
+              ? SendPickedFile.fromPath(path).name
+              : file.name,
+          kind: SendPickedFileKind.file,
+          sizeBytes: sizeBytes,
+        );
+      }),
+    );
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -113,6 +114,11 @@ class MobileShell extends ConsumerWidget with ShellPickingActions {
                           context,
                           onChooseFiles: () => pickFiles(context, ref),
                           onChooseFolder: () => pickFolder(context, ref),
+                          // iOS's document picker can't browse the Photos
+                          // library, so offer it as a dedicated source there.
+                          onChoosePhotos: Platform.isIOS
+                              ? () => pickPhotos(context, ref)
+                              : null,
                         );
                       },
                     ),

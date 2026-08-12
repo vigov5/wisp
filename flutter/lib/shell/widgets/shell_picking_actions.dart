@@ -145,4 +145,8 @@ mixin ShellPickingActions {
   Future<void> pickFolder(BuildContext context, WidgetRef ref) {
     return pickSelection(context, ref, (picker) => picker.pickFolder());
   }
+
+  Future<void> pickPhotos(BuildContext context, WidgetRef ref) {
+    return pickSelection(context, ref, (picker) => picker.pickPhotos());
+  }
 }
