@@ -608,3 +608,20 @@ version mismatch.
       (comment added at the match arm recording that invariant).
       Tests: `channel_closed_remains_internal`,
       `connection_closed_is_retryable_transport_failure`.
+- [x] Cover the `receiver.rs` `None`-arm code path itself, not just the
+      classification of the error it returns.  `do_transfer` took concrete
+      `iroh::endpoint::{SendStream, RecvStream}` plus a
+      `&mut BlobDownloadSession`, none of which can stage "event stream
+      ends with no terminal update".  Made it generic over
+      `AsyncWrite`/`AsyncRead` (mirroring `transfer::sender::do_transfer`,
+      which was already generic for exactly this reason) and over a new
+      `BlobDownloadControl` trait covering the two methods it drives.
+      The trait hands back the concrete `BlobDownloadUpdateStream` rather
+      than an `async fn`, so the `.next()` inside the `tokio::select!` is
+      the same cancel-safe call as before — no behaviour change in the
+      hot loop.
+      Tests: `transfer::receiver::tests::
+      blob_stream_ending_without_terminal_update_is_a_transport_failure`
+      (verified non-vacuous: reverting the fix to `channel_closed` makes
+      it fail) and `blob_stream_done_update_completes_the_transfer` as a
+      control proving the fake reaches the terminal arms.

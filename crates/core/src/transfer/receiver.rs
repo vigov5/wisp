@@ -14,13 +14,15 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::fs;
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{info, instrument, warn};
 
 use crate::{
-    blobs::receive::{BlobDownloadSession, BlobDownloadUpdate, BlobReceiver},
+    blobs::receive::{
+        BlobDownloadSession, BlobDownloadUpdate, BlobDownloadUpdateStream, BlobReceiver,
+    },
     fs_plan::ConflictPolicy,
     protocol::message as protocol_message,
     protocol::message::INLINE_TEXT_HARD_MAX_BYTES,
@@ -844,18 +846,47 @@ async fn do_handshake(
     }
 }
 
-async fn do_transfer(
+/// The slice of [`BlobDownloadSession`] that [`do_transfer`] actually drives.
+///
+/// Exists so tests can end the event stream *without* a terminal `Done` /
+/// `Failed` update — the "download task went away" case that
+/// [`do_transfer`] must report as a transport failure — which is impossible to
+/// stage against a real iroh download. Deliberately hands back the concrete
+/// [`BlobDownloadUpdateStream`] rather than an `async fn`, so the `.next()`
+/// call inside the `tokio::select!` below is the same cancel-safe
+/// `UnboundedReceiverStream::next` it has always been.
+pub(crate) trait BlobDownloadControl {
+    fn events_mut(&mut self) -> &mut BlobDownloadUpdateStream;
+    fn abort(&self);
+}
+
+impl BlobDownloadControl for BlobDownloadSession {
+    fn events_mut(&mut self) -> &mut BlobDownloadUpdateStream {
+        BlobDownloadSession::events_mut(self)
+    }
+
+    fn abort(&self) {
+        BlobDownloadSession::abort(self);
+    }
+}
+
+async fn do_transfer<D, W, R>(
     session_id: &str,
     plan: &TransferPlan,
-    download: &mut BlobDownloadSession,
-    progress_send: &mut iroh::endpoint::SendStream,
-    control_recv: &mut iroh::endpoint::RecvStream,
+    download: &mut D,
+    progress_send: &mut W,
+    control_recv: &mut R,
     cancel_rx: &mut watch::Receiver<bool>,
     event_tx: &Option<mpsc::UnboundedSender<ReceiverEvent>>,
     record: &mut TransferRecord,
     record_dir: &Path,
     resume_from_bytes: u64,
-) -> Result<(TransferOutcome, ProgressTracker)> {
+) -> Result<(TransferOutcome, ProgressTracker)>
+where
+    D: BlobDownloadControl,
+    W: AsyncWrite + Unpin,
+    R: AsyncRead + Unpin,
+{
     let mut tracker = ProgressTracker::new(plan.clone());
     tracker.set_bytes_transferred(resume_from_bytes, std::time::Instant::now());
     tracker.set_phase(TransferPhase::Transferring, std::time::Instant::now());
@@ -1299,6 +1330,149 @@ mod tests {
         assert!(
             local_bytes.windows(2).all(|w| w[0] <= w[1]),
             "local exported-byte count must be monotonic, got {local_bytes:?}",
+        );
+    }
+
+    /// A [`BlobDownloadControl`] whose event stream we drive by hand, so a test
+    /// can end it with or without a terminal `Done` / `Failed` update.
+    struct FakeDownload {
+        events: BlobDownloadUpdateStream,
+        aborted: std::sync::atomic::AtomicBool,
+    }
+
+    impl FakeDownload {
+        /// Builds a fake plus the sender for its event stream. Dropping the
+        /// sender ends the stream; sending `Done` / `Failed` first reaches the
+        /// terminal arms instead.
+        fn new() -> (Self, mpsc::UnboundedSender<BlobDownloadUpdate>) {
+            let (tx, rx) = mpsc::unbounded_channel();
+            (
+                Self {
+                    events: UnboundedReceiverStream::new(rx),
+                    aborted: std::sync::atomic::AtomicBool::new(false),
+                },
+                tx,
+            )
+        }
+
+        fn was_aborted(&self) -> bool {
+            self.aborted.load(Ordering::SeqCst)
+        }
+    }
+
+    impl BlobDownloadControl for FakeDownload {
+        fn events_mut(&mut self) -> &mut BlobDownloadUpdateStream {
+            &mut self.events
+        }
+
+        fn abort(&self) {
+            self.aborted.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn transfer_plan() -> TransferPlan {
+        TransferPlan::try_new(
+            "session-1".to_owned(),
+            vec![super::super::types::TransferPlanFile {
+                id: 0,
+                path: "f.bin".to_owned(),
+                size: 100,
+            }],
+        )
+        .unwrap()
+    }
+
+    /// Regression: the blob download event stream ending *without* a terminal
+    /// `Done` / `Failed` means the download task went away — in practice
+    /// because the connection carrying it died. `do_transfer` must report that
+    /// as a transport failure, not as a closed internal channel: the latter
+    /// mapped to a non-retryable "Wisp internal error — check the logs" for
+    /// what is really a retryable network drop.
+    ///
+    /// The other half of this guarantee (`ConnectionClosed` reading as a
+    /// retryable `ConnectionLost`) is asserted in `wisp-app`'s
+    /// `connection_closed_is_retryable_transport_failure`, since the
+    /// user-facing mapping lives in that crate.
+    #[tokio::test]
+    async fn blob_stream_ending_without_terminal_update_is_a_transport_failure() {
+        let plan = transfer_plan();
+        let (mut download, events_tx) = FakeDownload::new();
+        // End the stream with no Done/Failed: the download task vanished.
+        drop(events_tx);
+
+        let (mut progress_send, _progress_peer) = duplex(8192);
+        // Hold the control stream's write half so it stays open but silent —
+        // otherwise its read would hit EOF and that select arm could fire first.
+        let (mut control_recv, _control_peer) = duplex(8192);
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+        let mut record = record_with_exported(&[]);
+
+        let error = do_transfer(
+            "session-1",
+            &plan,
+            &mut download,
+            &mut progress_send,
+            &mut control_recv,
+            &mut cancel_rx,
+            &None,
+            &mut record,
+            &std::env::temp_dir(),
+            0,
+        )
+        .await
+        .expect_err("a vanished download task must fail the transfer");
+
+        assert!(
+            matches!(
+                &error,
+                TransferError::ConnectionClosed { context } if *context == "receiving blob download events"
+            ),
+            "expected a ConnectionClosed transport failure, got {error:?}",
+        );
+        assert!(
+            !matches!(error, TransferError::ChannelClosed { .. }),
+            "must not report an internal channel closure for a dead transport",
+        );
+        assert!(
+            download.was_aborted(),
+            "the download task must be aborted before returning",
+        );
+    }
+
+    /// Control for the test above: the same harness reaches the terminal arms,
+    /// so the failure there is the `None` branch and not a broken fake.
+    #[tokio::test]
+    async fn blob_stream_done_update_completes_the_transfer() {
+        let plan = transfer_plan();
+        let (mut download, events_tx) = FakeDownload::new();
+        events_tx
+            .send(BlobDownloadUpdate::Done)
+            .expect("stream is open");
+
+        let (mut progress_send, _progress_peer) = duplex(8192);
+        let (mut control_recv, _control_peer) = duplex(8192);
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+        let mut record = record_with_exported(&[]);
+
+        let (outcome, _tracker) = do_transfer(
+            "session-1",
+            &plan,
+            &mut download,
+            &mut progress_send,
+            &mut control_recv,
+            &mut cancel_rx,
+            &None,
+            &mut record,
+            &std::env::temp_dir(),
+            0,
+        )
+        .await
+        .expect("a Done update completes the transfer");
+
+        assert!(matches!(outcome, TransferOutcome::Completed));
+        assert!(
+            !download.was_aborted(),
+            "a completed download must not be aborted",
         );
     }
 
