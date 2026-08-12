@@ -76,10 +76,15 @@ jobs:
       - name: Build iOS (no code signing)
         run: flutter build ios --release --no-codesign
 
-      - name: Package iOS zip
+      # Package as an unsigned .ipa: an IPA is just a zip with the .app nested
+      # under a top-level Payload/ directory. This is the layout sideload tools
+      # (AltStore, Sideloadly, TrollStore, ldid+uicache) expect.
+      - name: Package iOS IPA (unsigned)
         run: |
           cd build/ios/Release-iphoneos
-          zip -r "../../../wisp-ios-unsigned-${{ env.SAFE_VERSION }}.zip" Runner.app
+          mkdir -p Payload
+          mv Runner.app Payload/
+          zip -r "../../../wisp-ios-unsigned-${{ env.SAFE_VERSION }}.ipa" Payload
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
@@ -92,7 +97,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wisp-ios-unsigned
-          path: flutter/wisp-ios-unsigned-${{ env.SAFE_VERSION }}.zip
+          path: flutter/wisp-ios-unsigned-${{ env.SAFE_VERSION }}.ipa
           if-no-files-found: error
 
   linux:
@@ -422,6 +427,7 @@ jobs:
         run: |
           mkdir release-dist
           find artifacts -name "*.zip" -exec mv {} release-dist/ \;
+          find artifacts -name "*.ipa" -exec mv {} release-dist/ \;
           find artifacts -name "*.exe" -exec mv {} release-dist/ \;
           find artifacts -name "*.apk" -exec mv {} release-dist/ \;
           find artifacts -name "*.dmg" -exec mv {} release-dist/ \;
