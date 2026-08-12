@@ -8,13 +8,16 @@ class PermissionProbe {
 
   static const String notificationCheckId = 'permissions.notifications';
 
+  /// Desktop-only. The notification-permission diagnostic is surfaced solely on
+  /// desktop; on mobile (Android + iOS) the OS handles the notification prompt
+  /// through the normal runtime flow, so showing it in Connection Test is noise.
   bool get supportsNotificationCheck {
     if (kIsWeb) return false;
     switch (defaultTargetPlatform) {
-      case TargetPlatform.android:
-      case TargetPlatform.iOS:
       case TargetPlatform.macOS:
         return true;
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
       case TargetPlatform.windows:
       case TargetPlatform.linux:
       case TargetPlatform.fuchsia:
