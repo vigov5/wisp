@@ -36,6 +36,22 @@
 	     sheet / "Open in" list, so files can be sent straight from Photos,
 	     Files, Safari, etc. Rank is Alternate, never Owner/Default: Wisp
 	     forwards files, it isn't the editor for any of these types. -->
+	<!-- Lets the Share Extension ask Wisp to come forward after it drops items
+	     in the App Group. Best-effort only: iOS often refuses, and the app
+	     drains the container on every activation regardless. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>dev.vigov5.wisp</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>wisp</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
