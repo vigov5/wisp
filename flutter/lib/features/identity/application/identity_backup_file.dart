@@ -14,10 +14,26 @@ const String kBackupFileName = 'wisp-identity.wispkey';
 /// crash. Reject on size before touching the bytes.
 const int _maxBackupFileBytes = 64 * 1024;
 
-const _wispKeyTypeGroup = XTypeGroup(
-  label: 'Wisp identity backup',
-  extensions: <String>['wispkey'],
-);
+/// The accepted-type filter for the open dialog.
+///
+/// iOS is special: `file_selector`'s `XTypeGroup` there rejects a group that
+/// carries `extensions` but no `uniformTypeIdentifiers` ("should either allow
+/// all files, or have a non-empty uniformTypeIdentifiers"). `.wispkey` has no
+/// registered system UTI, so we filter on `public.data` — which accepts any
+/// regular file; the picked file's payload is validated after reading, and its
+/// size is guarded first, so a wrong pick can't slip through or OOM the app.
+XTypeGroup get _wispKeyTypeGroup {
+  if (Platform.isIOS) {
+    return const XTypeGroup(
+      label: 'Wisp identity backup',
+      uniformTypeIdentifiers: <String>['public.data'],
+    );
+  }
+  return const XTypeGroup(
+    label: 'Wisp identity backup',
+    extensions: <String>['wispkey'],
+  );
+}
 
 /// Thrown by [IdentityBackupFile.open] when the chosen file is too large to be
 /// a Wisp identity backup, so the UI can show a friendly message instead of
@@ -44,12 +60,14 @@ class IdentityBackupFile {
   const IdentityBackupFile();
 
   /// Whether a "Save to file" affordance should be offered on this platform.
-  /// QR/code backup is always available; the file option is desktop + Android.
+  /// QR/code backup is always available; the file option covers every
+  /// platform now that iOS writes into its Files-app-visible Documents folder.
   static bool get isSupportedForSave =>
       Platform.isWindows ||
       Platform.isMacOS ||
       Platform.isLinux ||
-      Platform.isAndroid;
+      Platform.isAndroid ||
+      Platform.isIOS;
 
   /// Writes [payload] to a user-chosen `.wispkey` file.
   ///
@@ -74,9 +92,21 @@ class IdentityBackupFile {
       }
     }
 
+    if (Platform.isIOS) {
+      // iOS has no save dialog (`file_selector`'s `getSaveLocation` is
+      // unimplemented there), but `UIFileSharingEnabled` +
+      // `LSSupportsOpeningDocumentsInPlace` expose the app's Documents
+      // directory in the Files app as the "Wisp" folder. Write the backup
+      // there so the user can retrieve it from Files → On My iPhone → Wisp.
+      final docs = await getApplicationDocumentsDirectory();
+      final file = File('${docs.path}${Platform.pathSeparator}$kBackupFileName');
+      await file.writeAsString(payload, flush: true);
+      return 'On My iPhone → Wisp/$kBackupFileName';
+    }
+
     final location = await getSaveLocation(
       suggestedName: kBackupFileName,
-      acceptedTypeGroups: const <XTypeGroup>[_wispKeyTypeGroup],
+      acceptedTypeGroups: <XTypeGroup>[_wispKeyTypeGroup],
     );
     if (location == null) return null;
     await File(location.path).writeAsString(payload, flush: true);
@@ -92,7 +122,7 @@ class IdentityBackupFile {
   /// [_maxBackupFileBytes].
   Future<String?> open() async {
     final file = await openFile(
-      acceptedTypeGroups: const <XTypeGroup>[_wispKeyTypeGroup],
+      acceptedTypeGroups: <XTypeGroup>[_wispKeyTypeGroup],
     );
     if (file == null) return null;
     if (await file.length() > _maxBackupFileBytes) {
