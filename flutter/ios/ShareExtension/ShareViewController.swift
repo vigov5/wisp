@@ -11,10 +11,8 @@ import UIKit
 /// iOS 14+; the deployment target here is 13.0.
 class ShareViewController: UIViewController {
   private enum UTI {
-    static let item = "public.item"
     static let plainText = "public.plain-text"
     static let url = "public.url"
-    static let fileURL = "public.file-url"
   }
 
   /// Must match `ShareIntentHandler.appGroupIdentifier`.
@@ -56,40 +54,73 @@ class ShareViewController: UIViewController {
     // for all of them before telling the host we're done. Completing early
     // would tear the extension down mid-copy and lose the share.
     let group = DispatchGroup()
+    let lock = NSLock()
     var collectedText: String?
 
+    func recordText(_ text: String) {
+      lock.lock()
+      defer { lock.unlock() }
+      collectedText = text
+    }
+
+    func copyFile(at url: URL) {
+      // The callback's URL is only valid until it returns, so copy now.
+      let destination = batchDir.appendingPathComponent(url.lastPathComponent)
+      lock.lock()
+      defer { lock.unlock() }
+      try? FileManager.default.copyItem(at: url, to: destination)
+    }
+
     for attachment in attachments {
-      // File-backed items first: a file URL also conforms to public.url, so
-      // checking the URL case first would misread a shared file as a link.
-      if attachment.hasItemConformingToTypeIdentifier(UTI.fileURL)
-        || attachment.hasItemConformingToTypeIdentifier(UTI.item)
-      {
+      // Order matters, and not in the obvious direction: public.url conforms to
+      // public.item, so testing the file case first swallows a Safari link into
+      // a file load that yields nothing. Resolve URLs first and decide from the
+      // loaded value — a file URL still lands in the file branch below.
+      if attachment.hasItemConformingToTypeIdentifier(UTI.url) {
         group.enter()
-        attachment.loadFileRepresentation(forTypeIdentifier: UTI.item) { url, _ in
+        attachment.loadItem(forTypeIdentifier: UTI.url, options: nil) { value, _ in
           defer { group.leave() }
-          guard let url = url else { return }
-          // The callback's URL is only valid until it returns, so copy now.
-          let destination = batchDir.appendingPathComponent(url.lastPathComponent)
-          try? FileManager.default.copyItem(at: url, to: destination)
+          guard let url = value as? URL else { return }
+          if url.isFileURL {
+            copyFile(at: url)
+          } else {
+            recordText(url.absoluteString)
+          }
         }
       } else if attachment.hasItemConformingToTypeIdentifier(UTI.plainText) {
         group.enter()
         attachment.loadItem(forTypeIdentifier: UTI.plainText, options: nil) { value, _ in
           defer { group.leave() }
-          if let text = value as? String { collectedText = text }
+          if let text = value as? String { recordText(text) }
         }
-      } else if attachment.hasItemConformingToTypeIdentifier(UTI.url) {
+      } else if let type = attachment.registeredTypeIdentifiers.first {
+        // Ask for the provider's own concrete type (public.jpeg, com.adobe.pdf,
+        // …). Requesting the abstract public.item instead leaves photo shares
+        // with no matching representation, and the completion never fires — the
+        // extension then hangs and never returns to the app at all.
         group.enter()
-        attachment.loadItem(forTypeIdentifier: UTI.url, options: nil) { value, _ in
+        attachment.loadFileRepresentation(forTypeIdentifier: type) { url, error in
           defer { group.leave() }
-          if let url = value as? URL { collectedText = url.absoluteString }
+          guard let url = url else {
+            NSLog("[wisp] no file representation for \(type): \(String(describing: error))")
+            return
+          }
+          copyFile(at: url)
         }
       }
     }
 
-    group.notify(queue: .main) { [weak self] in
-      guard let self = self else { return }
-      if let text = collectedText, !text.isEmpty {
+    // Watchdog: a provider that never calls back would otherwise leave the
+    // share sheet spinning forever with no way out. Whatever arrived by then
+    // still gets handed over.
+    var finished = false
+    let complete: () -> Void = { [weak self] in
+      guard let self = self, !finished else { return }
+      finished = true
+      lock.lock()
+      let text = collectedText
+      lock.unlock()
+      if let text = text, !text.isEmpty {
         try? text.write(
           to: batchDir.appendingPathComponent(self.textMarkerName),
           atomically: true,
@@ -103,6 +134,9 @@ class ShareViewController: UIViewController {
       self.openHostApp()
       self.finish()
     }
+
+    group.notify(queue: .main, execute: complete)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: complete)
   }
 
   /// Creates this share's batch directory in the App Group container.
