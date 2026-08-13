@@ -158,6 +158,15 @@ if [ -n "$TSH" ]; then
   #   runningboardd: Failed to get LSApplicationRecord ... Code=-10814
   # while it still shows up in the share sheet. Entitle first, sign once.
   GROUP="group.${BID}"
+  # TrollStore's fake team. Whatever we embed here is what ends up installed —
+  # TrollStore preserves existing entitlements rather than replacing them — so
+  # the team prefix has to be spelled out. PlugInKit refuses to spawn an
+  # extension whose application-identifier isn't prefixed with the host app's
+  # team, and the failure surfaces only as
+  #   pkd: RBSRequestErrorDomain Code=5 "Launch failed."
+  #        NSPOSIXErrorDomain Code=111 "Launchd job spawn failed"
+  # The app itself still launches without one, which makes this easy to miss.
+  TEAM=TROLLTROLL
   if [ -d "$APP/PlugIns" ]; then
     command -v ldid >/dev/null || { apt-get update >/dev/null 2>&1 || true; apt-get install -y ldid >/dev/null 2>&1 || true; }
   fi
@@ -173,7 +182,10 @@ if [ -n "$TSH" ]; then
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>application-identifier</key><string>${ebid}</string>
+  <key>application-identifier</key><string>${TEAM}.${ebid}</string>
+  <key>com.apple.developer.team-identifier</key><string>${TEAM}</string>
+  <key>get-task-allow</key><true/>
+  <key>keychain-access-groups</key><array><string>${TEAM}.*</string></array>
   <key>com.apple.security.application-groups</key><array><string>${GROUP}</string></array>
 </dict></plist>
 EOF
@@ -181,11 +193,15 @@ EOF
       ldid -S"$W/ext_ent.plist" "$ext/$eexe" && chmod 0755 "$ext/$eexe"
     done
     # The app needs the same group or it can't read what the extension drops.
+    # Wildcard id + team mirror what TrollStore grants an app on its own.
     cat > "$W/app_ent.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>application-identifier</key><string>${BID}</string>
+  <key>application-identifier</key><string>${TEAM}.*</string>
+  <key>com.apple.developer.team-identifier</key><string>${TEAM}</string>
+  <key>get-task-allow</key><true/>
+  <key>keychain-access-groups</key><array><string>${TEAM}.*</string><string>com.apple.token</string></array>
   <key>com.apple.security.application-groups</key><array><string>${GROUP}</string></array>
 </dict></plist>
 EOF
