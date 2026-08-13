@@ -32,6 +32,26 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<!-- Declaring that Wisp opens any file is what puts it in the iOS share
+	     sheet / "Open in" list, so files can be sent straight from Photos,
+	     Files, Safari, etc. Rank is Alternate, never Owner/Default: Wisp
+	     forwards files, it isn't the editor for any of these types. -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Any file</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.data</string>
+				<string>public.content</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_wisp._udp</string>

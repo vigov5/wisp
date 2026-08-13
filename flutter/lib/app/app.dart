@@ -21,7 +21,7 @@ import '../features/settings/settings_providers.dart';
 import '../features/settings/application/controller.dart';
 import '../platform/android/keepalive_lifecycle_observer.dart';
 import '../features/usb_cable/application/usb_cable_controller.dart';
-import '../platform/android_share_intent.dart';
+import '../platform/share_intent.dart';
 import '../platform/desktop_integration.dart';
 import '../platform/windows_context_menu.dart';
 import '../platform/rust/receiver/source.dart';
@@ -93,29 +93,29 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
     });
   }
 
-  // Wires the Android ACTION_SEND / ACTION_SEND_MULTIPLE intent into the
-  // Send draft route.  On cold start the cached files are pulled once;
-  // on warm start they arrive via the broadcast stream.  No-op on
-  // non-Android platforms.
+  // Wires OS-level shares into the Send draft route: Android's ACTION_SEND /
+  // ACTION_SEND_MULTIPLE, and iOS files opened via the share sheet / "Open in
+  // Wisp".  On cold start the cached files are pulled once; on warm start they
+  // arrive via the broadcast stream.  No-op on desktop.
   void _wireShareIntent() {
-    if (!Platform.isAndroid) return;
+    if (!ShareIntent.isSupported) return;
     unawaited(
-      AndroidShareIntent.getInitialSharedFiles().then((paths) {
+      ShareIntent.getInitialSharedFiles().then((paths) {
         if (!mounted) return;
         _openSendDraftWith(paths);
       }),
     );
     unawaited(
-      AndroidShareIntent.getInitialSharedText().then((text) {
+      ShareIntent.getInitialSharedText().then((text) {
         if (!mounted || text == null) return;
         _openSendTextDraftWith(text);
       }),
     );
-    _shareIntentSub = AndroidShareIntent.onSharedFiles.listen((paths) {
+    _shareIntentSub = ShareIntent.onSharedFiles.listen((paths) {
       if (!mounted) return;
       _openSendDraftWith(paths);
     });
-    _shareTextSub = AndroidShareIntent.onSharedText.listen((text) {
+    _shareTextSub = ShareIntent.onSharedText.listen((text) {
       if (!mounted) return;
       _openSendTextDraftWith(text);
     });

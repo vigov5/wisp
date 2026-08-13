@@ -10,7 +10,7 @@ import 'package:flutter/services.dart';
 /// the running window (single-instance + WM_COPYDATA), they arrive here on
 /// [onSendViaWisp].
 ///
-/// Mirrors the shape of [AndroidShareIntent]: all methods are no-ops / safe
+/// Mirrors the shape of [ShareIntent]: all methods are no-ops / safe
 /// defaults off Windows so callers don't need to platform-guard every call.
 class WindowsContextMenu {
   static const MethodChannel _channel = MethodChannel(
