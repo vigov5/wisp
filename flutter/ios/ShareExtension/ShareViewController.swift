@@ -13,6 +13,8 @@ class ShareViewController: UIViewController {
   private enum UTI {
     static let plainText = "public.plain-text"
     static let url = "public.url"
+    static let fileURL = "public.file-url"
+    static let data = "public.data"
   }
 
   /// Must match `ShareIntentHandler.appGroupIdentifier`.
@@ -63,12 +65,36 @@ class ShareViewController: UIViewController {
       collectedText = text
     }
 
-    func copyFile(at url: URL) {
-      // The callback's URL is only valid until it returns, so copy now.
-      let destination = batchDir.appendingPathComponent(url.lastPathComponent)
+    /// Copies a provider-supplied file into the batch.
+    ///
+    /// `preferredName` is used when the source name is unhelpful:
+    /// `loadFileRepresentation` sometimes hands back a generic temp file (a
+    /// shared link arrives as a file literally called "URL"), while the item's
+    /// own URL carries the real name.
+    ///
+    /// A URL that came straight from the sending app points into *its*
+    /// container, so it needs security-scoped access before we can read it —
+    /// without this the copy fails silently and the share is dropped.
+    func copyFile(at url: URL, preferredName: String? = nil) {
+      let scoped = url.startAccessingSecurityScopedResource()
+      defer {
+        if scoped { url.stopAccessingSecurityScopedResource() }
+      }
+      var name = preferredName ?? url.lastPathComponent
+      if name.isEmpty { name = url.lastPathComponent }
+      let destination = batchDir.appendingPathComponent(name)
       lock.lock()
       defer { lock.unlock() }
-      try? FileManager.default.copyItem(at: url, to: destination)
+      do {
+        try FileManager.default.copyItem(at: url, to: destination)
+      } catch {
+        // Some providers hand over a URL that can't be copied but can be read.
+        if let data = try? Data(contentsOf: url) {
+          try? data.write(to: destination)
+        } else {
+          NSLog("[wisp] could not take shared file \(name): \(error)")
+        }
+      }
     }
 
     for attachment in attachments {
@@ -79,12 +105,33 @@ class ShareViewController: UIViewController {
       if attachment.hasItemConformingToTypeIdentifier(UTI.url) {
         group.enter()
         attachment.loadItem(forTypeIdentifier: UTI.url, options: nil) { value, _ in
-          defer { group.leave() }
-          guard let url = value as? URL else { return }
-          if url.isFileURL {
-            copyFile(at: url)
-          } else {
+          guard let url = value as? URL else {
+            group.leave()
+            return
+          }
+          guard url.isFileURL else {
             recordText(url.absoluteString)
+            group.leave()
+            return
+          }
+          // A file arriving as public.file-url (this is what Filza's "Open in"
+          // sends) gives us a path inside the *sending* app's container. Ask for
+          // a file representation instead, which the system hands over somewhere
+          // we're actually allowed to read; keep the original name, since the
+          // representation's temp file is often named generically.
+          let fileType =
+            attachment.registeredTypeIdentifiers.first { $0 != UTI.url && $0 != UTI.fileURL }
+            ?? UTI.data
+          attachment.loadFileRepresentation(forTypeIdentifier: fileType) { fileURL, error in
+            defer { group.leave() }
+            if let fileURL = fileURL {
+              copyFile(at: fileURL, preferredName: url.lastPathComponent)
+            } else {
+              NSLog("[wisp] no representation for \(fileType): \(String(describing: error))")
+              // Last resort: the raw URL, which works when the sender granted
+              // us a security scope we can open.
+              copyFile(at: url)
+            }
           }
         }
       } else if attachment.hasItemConformingToTypeIdentifier(UTI.plainText) {
