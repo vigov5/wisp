@@ -30,8 +30,25 @@ class ShareViewController: UIViewController {
   private func processShare() {
     let attachments = (extensionContext?.inputItems as? [NSExtensionItem] ?? [])
       .flatMap { $0.attachments ?? [] }
-    guard !attachments.isEmpty, let batchDir = makeBatchDirectory() else {
+    guard !attachments.isEmpty else {
       finish()
+      return
+    }
+    // No App Group means there is nowhere to put the share. That happens on
+    // installs where the entitlement wasn't granted (an unsigned sideload
+    // without the group injected). Report it instead of completing normally,
+    // so the user sees a failure rather than a share that silently vanishes.
+    guard let batchDir = makeBatchDirectory() else {
+      extensionContext?.cancelRequest(
+        withError: NSError(
+          domain: "dev.vigov5.wisp.ShareExtension",
+          code: 1,
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "Wisp can't access its shared storage on this install."
+          ]
+        )
+      )
       return
     }
 
