@@ -150,7 +150,65 @@ if [ -n "$TSH" ]; then
   # app, remove it by container path first (works for TrollStore & non-TrollStore).
   OLD="$(uicache -l 2>/dev/null | grep "^${BID} " | sed 's/.*: //' | head -1)"
   [ -n "$OLD" ] && { echo "    removing existing: $OLD"; "$TSH" uninstall-path "$OLD" >/dev/null 2>&1 || true; }
-  "$TSH" install "$IN" 2>&1 | grep -iE 'created app container|new app path|already installed|error|returning' | tail -4
+  OUT="$("$TSH" install "$IN" 2>&1)"
+  echo "$OUT" | grep -iE 'created app container|new app path|already installed|error|returning' | tail -4
+
+  # TrollStore signs nested plugins but gives them no entitlements, because a
+  # CI `--no-codesign` build has none embedded for it to carry over: only the
+  # main binary gets TrollStore's own TROLLTROLL.* identity. An app extension
+  # without `application-identifier` is killed at exec, which is why tapping
+  # Wisp in the share sheet crashed. Grant it here, after the install.
+  NEW="$(echo "$OUT" | sed -n 's/.*new app path: \(.*\.app\).*/\1/p' | tail -1)"
+  [ -n "$NEW" ] || NEW="$(uicache -l 2>/dev/null | grep "^${BID} " | sed 's/.*: //' | head -1)"
+  if [ -n "$NEW" ] && [ -d "$NEW/PlugIns" ]; then
+    command -v ldid >/dev/null || { apt-get update >/dev/null 2>&1 || true; apt-get install -y ldid >/dev/null 2>&1 || true; }
+    if command -v ldid >/dev/null; then
+      GROUP="group.${BID}"
+      NEWEXE="$([ -x "$PB" ] && "$PB" -c 'Print :CFBundleExecutable' "$NEW/Info.plist" 2>/dev/null || true)"
+      case "$NEWEXE" in ""|"(null)") NEWEXE="$(basename "$NEW" .app)";; esac
+      # jb.pmap_cs.custom_trust is TrollStore's marker telling the jailbreak to
+      # trust these pages — re-signing without it would break execution.
+      for ext in "$NEW"/PlugIns/*.appex; do
+        [ -d "$ext" ] || continue
+        ebid="$([ -x "$PB" ] && "$PB" -c 'Print :CFBundleIdentifier' "$ext/Info.plist" 2>/dev/null || true)"
+        case "$ebid" in ""|"(null)") ebid="${BID}.$(basename "$ext" .appex)";; esac
+        eexe="$([ -x "$PB" ] && "$PB" -c 'Print :CFBundleExecutable' "$ext/Info.plist" 2>/dev/null || true)"
+        case "$eexe" in ""|"(null)") eexe="$(basename "$ext" .appex)";; esac
+        [ -f "$ext/$eexe" ] || continue
+        cat > /tmp/_wisp_ext_ent.plist <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>application-identifier</key><string>TROLLTROLL.${ebid}</string>
+  <key>com.apple.developer.team-identifier</key><string>TROLLTROLL</string>
+  <key>get-task-allow</key><true/>
+  <key>keychain-access-groups</key><array><string>TROLLTROLL.*</string></array>
+  <key>com.apple.security.application-groups</key><array><string>${GROUP}</string></array>
+  <key>jb.pmap_cs.custom_trust</key><string>PMAP_CS_APP_STORE</string>
+</dict></plist>
+EOF
+        echo "    entitling extension $ebid"
+        ldid -S/tmp/_wisp_ext_ent.plist "$ext/$eexe" && chmod 0755 "$ext/$eexe"
+      done
+      # The app needs the same group, or it can't read what the extension drops.
+      cat > /tmp/_wisp_app_ent.plist <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>application-identifier</key><string>TROLLTROLL.*</string>
+  <key>com.apple.developer.team-identifier</key><string>TROLLTROLL</string>
+  <key>get-task-allow</key><true/>
+  <key>keychain-access-groups</key><array><string>TROLLTROLL.*</string><string>com.apple.token</string></array>
+  <key>com.apple.security.application-groups</key><array><string>${GROUP}</string></array>
+  <key>jb.pmap_cs.custom_trust</key><string>PMAP_CS_APP_STORE</string>
+</dict></plist>
+EOF
+      echo "    entitling app $BID"
+      ldid -S/tmp/_wisp_app_ent.plist "$NEW/$NEWEXE" && chmod 0755 "$NEW/$NEWEXE"
+      rm -f /tmp/_wisp_ext_ent.plist /tmp/_wisp_app_ent.plist
+      uicache -p "$NEW" >/dev/null 2>&1 || true
+    fi
+  fi
   echo "INSTALLED_VIA=trollstore"
 else
   echo "==> no TrollStore — fake-signing with ldid (Filza will do the install)"
