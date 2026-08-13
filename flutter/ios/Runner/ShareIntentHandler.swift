@@ -86,6 +86,9 @@ enum ShareIntentHandler {
   /// extension's attempt to foreground us is best-effort, so a share may well
   /// be sitting here from a session where the user never got bounced over.
   static func drainAppGroupDropBox() {
+    // First, since the guards below bail out whenever the drop box is absent —
+    // which is the common case, and the cache still needs collecting.
+    purgeStaleCache()
     let fileManager = FileManager.default
     guard
       let container = fileManager.containerURL(
@@ -119,6 +122,29 @@ enum ShareIntentHandler {
     }
 
     deliver(files: paths, text: text)
+  }
+
+  /// Drops shared copies older than a day.
+  ///
+  /// Nothing else ever deletes them: the paths are handed to Dart and have to
+  /// outlive the send, so they can't be cleaned on delivery. Without this the
+  /// cache just grows — a few shared videos or an 18 MB .ipa each time adds up.
+  private static func purgeStaleCache() {
+    let fileManager = FileManager.default
+    let root = fileManager.temporaryDirectory.appendingPathComponent(
+      cacheDirName, isDirectory: true)
+    guard
+      let batches = try? fileManager.contentsOfDirectory(
+        at: root, includingPropertiesForKeys: [.contentModificationDateKey])
+    else { return }
+    let cutoff = Date(timeIntervalSinceNow: -24 * 60 * 60)
+    for batch in batches {
+      let modified = (try? batch.resourceValues(forKeys: [.contentModificationDateKey]))?
+        .contentModificationDate
+      if let modified = modified, modified < cutoff {
+        try? fileManager.removeItem(at: batch)
+      }
+    }
   }
 
   private static func deliver(files: [String], text: String?) {
