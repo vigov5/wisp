@@ -2,7 +2,8 @@ use crate::fs_plan::ConflictPolicy;
 use crate::protocol::message::TransferManifest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -59,9 +60,45 @@ impl TransferRecord {
 
     pub fn save(&self, dir: &Path) -> std::io::Result<()> {
         let path = dir.join("record.json");
-        let content = serde_json::to_string_pretty(self)
+        let content = serde_json::to_vec(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        fs::write(path, content)
+
+        // Create the temporary file atomically in the record directory. A
+        // random, create-new name avoids following an attacker-controlled
+        // symlink, while the same-directory rename prevents readers from ever
+        // observing a partially-written JSON document after a crash.
+        let (temp_path, mut temp_file) = (0..16)
+            .find_map(|_| {
+                let temp_path = dir.join(format!(".record-{:016x}.tmp", rand::random::<u64>()));
+                match OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&temp_path)
+                {
+                    Ok(file) => Some(Ok((temp_path, file))),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                    Err(error) => Some(Err(error)),
+                }
+            })
+            .unwrap_or_else(|| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "could not allocate a unique transfer record temp file",
+                ))
+            })?;
+
+        if let Err(error) = temp_file.write_all(&content) {
+            drop(temp_file);
+            let _ = fs::remove_file(&temp_path);
+            return Err(error);
+        }
+        drop(temp_file);
+
+        if let Err(error) = fs::rename(&temp_path, &path) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(error);
+        }
+        Ok(())
     }
 }
 
@@ -114,5 +151,31 @@ mod tests {
         let loaded: TransferRecord = serde_json::from_str(json).unwrap();
 
         assert_eq!(loaded.bytes_received, 0);
+    }
+
+    #[test]
+    fn record_save_atomically_replaces_previous_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut record = TransferRecord::new(
+            [2u8; 32].into(),
+            PathBuf::from("/tmp/out"),
+            ConflictPolicy::Rename,
+            TransferManifest { items: Vec::new() },
+        );
+
+        record.bytes_received = 10;
+        record.save(dir.path()).unwrap();
+        record.bytes_received = 20;
+        record.save(dir.path()).unwrap();
+
+        assert_eq!(TransferRecord::load(dir.path()).unwrap().bytes_received, 20);
+        assert_eq!(
+            fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(std::result::Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+                .count(),
+            0,
+        );
     }
 }

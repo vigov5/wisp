@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_lite::StreamExt;
 use iroh::endpoint::{ConnectOptions, MtuDiscoveryConfig, QuicTransportConfig};
@@ -28,13 +28,60 @@ use crate::lan::in_usb_tunnel_subnet;
 /// so the raised TUN MTU is actually usable end-to-end.
 const AOA_MTU_DISCOVERY_UPPER_BOUND: u16 = 7_900;
 
+/// Maximum rate at which blob progress crosses into the transfer/application
+/// layers. `iroh-blobs` reports progress at BAO-content granularity (16 KiB for
+/// regular leaves), which can otherwise create thousands of JSON checkpoints,
+/// QUIC progress frames, and UI events per second on a fast link.
+const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
+
+#[derive(Debug)]
+struct ProgressCoalescer {
+    interval: Duration,
+    last_emit_at: Option<Instant>,
+    latest_bytes: Option<u64>,
+    last_emitted_bytes: Option<u64>,
+}
+
+impl ProgressCoalescer {
+    fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            last_emit_at: None,
+            latest_bytes: None,
+            last_emitted_bytes: None,
+        }
+    }
+
+    fn observe(&mut self, now: Instant, bytes_received: u64) -> Option<u64> {
+        self.latest_bytes = Some(bytes_received);
+        let should_emit = self
+            .last_emit_at
+            .is_none_or(|last| now.duration_since(last) >= self.interval);
+        should_emit.then(|| self.mark_emitted(now, bytes_received))
+    }
+
+    /// Return the newest value when it has not been emitted yet. This is used
+    /// immediately before `Done`/`Failed`, so throttling never hides the final
+    /// byte position from resume state or the UI.
+    fn flush_pending(&mut self, now: Instant) -> Option<u64> {
+        let latest = self.latest_bytes?;
+        (self.last_emitted_bytes != Some(latest)).then(|| self.mark_emitted(now, latest))
+    }
+
+    fn mark_emitted(&mut self, now: Instant, bytes_received: u64) -> u64 {
+        self.last_emit_at = Some(now);
+        self.last_emitted_bytes = Some(bytes_received);
+        bytes_received
+    }
+}
+
 /// Chooses a per-path QUIC transport config for the receiver's blob dial.
 ///
 /// The receiver is the puller, so the `stream_receive_window` it advertises is
 /// what governs throughput — making this dial the right place to tune per path.
 ///
 /// Returns `None` for relay / Wi-Fi / LAN, so the dial inherits the endpoint's
-/// global config (Tier 1: tuned `stream_receive_window` + BBR + keepalive) — that
+/// global config (Tier 1: tuned `stream_receive_window` + CUBIC + keepalive) — that
 /// is exactly the large window that lifts the relay ceiling.
 ///
 /// Returns a tunnel-specific override only for the AOA USB cable: there the win
@@ -143,7 +190,7 @@ impl BlobDownloadStrategy for SequentialBlobDownload {
             let ticket_context = format!("ticket {ticket:?}");
             let addr = ticket.addr().clone();
             // Per-path dial: relay/Wi-Fi/LAN inherit the endpoint's global
-            // transport config (Tier 1 window + BBR); the AOA USB tunnel gets a
+            // transport config (Tier 1 window + CUBIC); the AOA USB tunnel gets a
             // raised MTU-discovery ceiling instead. See `blob_connect_options`.
             let connection = match blob_connect_options(&addr) {
                 Some(opts) => {
@@ -166,19 +213,26 @@ impl BlobDownloadStrategy for SequentialBlobDownload {
             };
 
             let mut stream = store.remote().fetch(connection, ticket).stream();
+            let mut progress = ProgressCoalescer::new(PROGRESS_EMIT_INTERVAL);
 
             loop {
                 match stream.next().await {
                     Some(GetProgressItem::Progress(offset)) => {
-                        let _ = update_tx.send(BlobDownloadUpdate::Progress {
-                            bytes_received: offset,
-                        });
+                        if let Some(bytes_received) = progress.observe(Instant::now(), offset) {
+                            let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
+                        }
                     }
                     Some(GetProgressItem::Done(_)) | None => {
+                        if let Some(bytes_received) = progress.flush_pending(Instant::now()) {
+                            let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
+                        }
                         let _ = update_tx.send(BlobDownloadUpdate::Done);
                         break Ok(());
                     }
                     Some(GetProgressItem::Error(err)) => {
+                        if let Some(bytes_received) = progress.flush_pending(Instant::now()) {
+                            let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
+                        }
                         let message = format!("blob fetch error: {err}");
                         let _ = update_tx.send(BlobDownloadUpdate::Failed {
                             error: BlobError::fetch(
@@ -261,10 +315,11 @@ where
 #[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
+    use std::time::{Duration, Instant};
 
     use iroh::{EndpointAddr, SecretKey, TransportAddr};
 
-    use super::blob_connect_options;
+    use super::{ProgressCoalescer, blob_connect_options};
 
     fn addr_with(ip: &str) -> EndpointAddr {
         let id = SecretKey::from_bytes(&[7u8; 32]).public();
@@ -295,5 +350,34 @@ mod tests {
         // Relay-only ticket (no direct IPs) → None.
         let id = SecretKey::from_bytes(&[9u8; 32]).public();
         assert!(blob_connect_options(&EndpointAddr::new(id)).is_none());
+    }
+
+    #[test]
+    fn progress_coalescer_limits_rate_and_flushes_latest_value() {
+        let start = Instant::now();
+        let mut progress = ProgressCoalescer::new(Duration::from_millis(100));
+
+        assert_eq!(progress.observe(start, 16 * 1024), Some(16 * 1024));
+        assert_eq!(
+            progress.observe(start + Duration::from_millis(25), 32 * 1024),
+            None
+        );
+        assert_eq!(
+            progress.observe(start + Duration::from_millis(100), 48 * 1024),
+            Some(48 * 1024)
+        );
+        assert_eq!(
+            progress.observe(start + Duration::from_millis(125), 64 * 1024),
+            None
+        );
+
+        assert_eq!(
+            progress.flush_pending(start + Duration::from_millis(126)),
+            Some(64 * 1024)
+        );
+        assert_eq!(
+            progress.flush_pending(start + Duration::from_millis(127)),
+            None
+        );
     }
 }

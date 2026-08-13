@@ -37,6 +37,13 @@ lto = "thin"
 opt-level = "z"
 strip = "symbols"
 
+# Keep the small bridge crate size-optimized, but compile the transfer stack,
+# BLAKE3, and QUIC/AEAD dependencies for runtime speed. `opt-level = "z"`
+# disables loop vectorization and can otherwise make CPU the bottleneck before
+# Wi-Fi, relay, or USB bandwidth is saturated.
+[profile.release.package."*"]
+opt-level = 3
+
 # Optimize dependencies (e.g. blake3, iroh) even in debug builds. Without this,
 # deps compile at opt-level=0 and on-device hashing/crypto runs ~25x slower
 # (BLAKE3 measured 28 MB/s debug vs 747 MB/s optimized), making debug transfers

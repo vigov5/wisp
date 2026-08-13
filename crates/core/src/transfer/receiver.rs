@@ -45,6 +45,13 @@ use super::types::{
 
 type Result<T> = TransferResult<T>;
 
+/// Resume metadata is useful, but persisting it for every 16 KiB BAO progress
+/// item overwhelms fast receivers with JSON/file-system work. Keep at most one
+/// checkpoint per second, while also bounding the amount of progress lost if a
+/// very fast transfer fails between timer ticks.
+const RECORD_CHECKPOINT_INTERVAL: Duration = Duration::from_secs(1);
+const RECORD_CHECKPOINT_BYTES: u64 = 64 * 1024 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceiverRequest {
     pub device_name: String,
@@ -456,8 +463,7 @@ async fn run_session(
                 request.conflict_policy,
                 offer.manifest.clone(),
             );
-            r.save(&record_dir)
-                .map_err(|e| TransferError::other("saving initial record", e))?;
+            save_transfer_record(&r, &record_dir, "saving initial record").await?;
             r
         }
     };
@@ -566,9 +572,12 @@ async fn run_session(
 
         record.status = TransferStatus::DataComplete;
         record.bytes_received = plan.total_bytes;
-        record
-            .save(&record_dir)
-            .map_err(|e| TransferError::other("saving record after download", e))?;
+        save_transfer_record(
+            &record,
+            &record_dir,
+            "saving record after download",
+        )
+        .await?;
         let _ = blob_download.shutdown().await;
         (outcome, tracker)
     };
@@ -576,9 +585,7 @@ async fn run_session(
     // --- Phase 5: Export & Acknowledgement ---
     info!(%session_id, "exporting files to {}", request.out_dir.display());
     record.status = TransferStatus::Finalizing;
-    record
-        .save(&record_dir)
-        .map_err(|e| TransferError::other("saving record before export", e))?;
+    save_transfer_record(&record, &record_dir, "saving record before export").await?;
 
     tracker.mark_finalizing(std::time::Instant::now());
     let finalizing_snapshot = tracker.snapshot(std::time::Instant::now());
@@ -666,9 +673,7 @@ async fn run_session(
     };
 
     record.status = TransferStatus::Completed;
-    record
-        .save(&record_dir)
-        .map_err(|e| TransferError::other("saving final record", e))?;
+    save_transfer_record(&record, &record_dir, "saving final record").await?;
 
     let _ = protocol_wire::write_receiver_message(
         &mut progress_send,
@@ -860,6 +865,61 @@ pub(crate) trait BlobDownloadControl {
     fn abort(&self);
 }
 
+#[derive(Debug)]
+struct RecordCheckpoint {
+    last_saved_at: std::time::Instant,
+    last_saved_bytes: u64,
+}
+
+impl RecordCheckpoint {
+    fn new(now: std::time::Instant, bytes_received: u64) -> Self {
+        Self {
+            last_saved_at: now,
+            last_saved_bytes: bytes_received,
+        }
+    }
+
+    fn should_save(&self, now: std::time::Instant, bytes_received: u64) -> bool {
+        now.duration_since(self.last_saved_at) >= RECORD_CHECKPOINT_INTERVAL
+            || bytes_received.saturating_sub(self.last_saved_bytes) >= RECORD_CHECKPOINT_BYTES
+    }
+
+    fn mark_saved(&mut self, now: std::time::Instant, bytes_received: u64) {
+        self.last_saved_at = now;
+        self.last_saved_bytes = bytes_received;
+    }
+
+    fn has_pending(&self, bytes_received: u64) -> bool {
+        self.last_saved_bytes != bytes_received
+    }
+}
+
+async fn save_transfer_record(
+    record: &TransferRecord,
+    record_dir: &Path,
+    context: &'static str,
+) -> Result<()> {
+    let record = record.clone();
+    let record_dir = record_dir.to_owned();
+    tokio::task::spawn_blocking(move || record.save(&record_dir))
+        .await
+        .map_err(|source| TransferError::other("joining transfer record write", source))?
+        .map_err(|source| TransferError::other(context, source))
+}
+
+async fn save_pending_progress_best_effort(
+    checkpoint: &RecordCheckpoint,
+    record: &TransferRecord,
+    record_dir: &Path,
+) {
+    if !checkpoint.has_pending(record.bytes_received) {
+        return;
+    }
+    if let Err(error) = save_transfer_record(record, record_dir, "saving final progress").await {
+        warn!(%error, "failed to persist latest transfer progress");
+    }
+}
+
 impl BlobDownloadControl for BlobDownloadSession {
     fn events_mut(&mut self) -> &mut BlobDownloadUpdateStream {
         BlobDownloadSession::events_mut(self)
@@ -887,9 +947,11 @@ where
     W: AsyncWrite + Unpin,
     R: AsyncRead + Unpin,
 {
+    let started_at = std::time::Instant::now();
     let mut tracker = ProgressTracker::new(plan.clone());
-    tracker.set_bytes_transferred(resume_from_bytes, std::time::Instant::now());
-    tracker.set_phase(TransferPhase::Transferring, std::time::Instant::now());
+    tracker.set_bytes_transferred(resume_from_bytes, started_at);
+    tracker.set_phase(TransferPhase::Transferring, started_at);
+    let mut checkpoint = RecordCheckpoint::new(started_at, record.bytes_received);
     emit_receiver_event(
         event_tx,
         ReceiverEvent::TransferStarted {
@@ -917,9 +979,11 @@ where
                     tracker.set_bytes_transferred(bytes_received, now);
                     if record.bytes_received != bytes_received {
                         record.bytes_received = bytes_received;
-                        record
-                            .save(record_dir)
-                            .map_err(|e| TransferError::other("saving record progress", e))?;
+                        if checkpoint.should_save(now, bytes_received) {
+                            save_transfer_record(record, record_dir, "saving record progress")
+                                .await?;
+                            checkpoint.mark_saved(now, bytes_received);
+                        }
                     }
                     let snapshot = tracker.snapshot(now);
                     emit_receiver_event(event_tx, ReceiverEvent::TransferProgress {
@@ -939,6 +1003,7 @@ where
                 }
                 None => {
                     download.abort();
+                    save_pending_progress_best_effort(&checkpoint, record, record_dir).await;
                     // The event stream ended without Done or Failed. A download
                     // that fails in a well-behaved way reports it via the
                     // Failed arm below, so reaching here mid-download means the
@@ -952,6 +1017,7 @@ where
                 }
                 Some(BlobDownloadUpdate::Failed { error }) => {
                     download.abort();
+                    save_pending_progress_best_effort(&checkpoint, record, record_dir).await;
                     return Err(error.into());
                 }
             },
@@ -1058,9 +1124,7 @@ pub async fn export_downloaded_collection(
             .map_err(|source| TransferError::other("exporting downloaded file", source))?;
 
         record.exported_files.insert(exp.path.clone());
-        record
-            .save(record_dir)
-            .map_err(|e| TransferError::other("saving record during export", e))?;
+        save_transfer_record(record, record_dir, "saving record during export").await?;
         exported_total = exported_total.saturating_add(exp.size);
         exported_bytes.store(exported_total, Ordering::Relaxed);
     }
@@ -1483,6 +1547,26 @@ mod tests {
         record.bytes_received = 42;
 
         assert_eq!(resume_offset_for_record(&record, 100), 42);
+    }
+
+    #[test]
+    fn record_checkpoint_is_limited_by_time_or_byte_distance() {
+        let start = std::time::Instant::now();
+        let mut checkpoint = RecordCheckpoint::new(start, 10);
+
+        assert!(!checkpoint.should_save(
+            start + RECORD_CHECKPOINT_INTERVAL - Duration::from_millis(1),
+            10 + RECORD_CHECKPOINT_BYTES - 1,
+        ));
+        assert!(checkpoint.should_save(start + RECORD_CHECKPOINT_INTERVAL, 11));
+
+        checkpoint.mark_saved(start + RECORD_CHECKPOINT_INTERVAL, 11);
+        assert!(checkpoint.should_save(
+            start + RECORD_CHECKPOINT_INTERVAL + Duration::from_millis(1),
+            11 + RECORD_CHECKPOINT_BYTES,
+        ));
+        assert!(checkpoint.has_pending(12));
+        assert!(!checkpoint.has_pending(11));
     }
 
     #[test]
