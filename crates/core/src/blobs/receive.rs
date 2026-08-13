@@ -1,10 +1,11 @@
 use std::net::SocketAddr;
+use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_lite::StreamExt;
-use iroh::endpoint::{ConnectOptions, MtuDiscoveryConfig, QuicTransportConfig};
+use iroh::endpoint::{ConnectOptions, ConnectionInfo, MtuDiscoveryConfig, QuicTransportConfig};
 use iroh::{Endpoint, EndpointAddr};
 use iroh_blobs::{
     ALPN as BLOBS_ALPN, api::remote::GetProgressItem, store::fs::FsStore, ticket::BlobTicket,
@@ -15,6 +16,9 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, trace};
 
 use super::error::{BlobError, BlobTextError, Result};
+use super::telemetry::{
+    BlobTransferTelemetry, TELEMETRY_SAMPLE_INTERVAL, TransferEnd, is_enabled as telemetry_enabled,
+};
 use crate::lan::in_usb_tunnel_subnet;
 
 /// QUIC MTU-discovery ceiling (max UDP payload, bytes) for the Android↔Android
@@ -72,6 +76,56 @@ impl ProgressCoalescer {
         self.last_emit_at = Some(now);
         self.last_emitted_bytes = Some(bytes_received);
         bytes_received
+    }
+}
+
+fn handle_download_item(
+    item: Option<GetProgressItem>,
+    progress: &mut ProgressCoalescer,
+    update_tx: &mpsc::UnboundedSender<BlobDownloadUpdate>,
+    ticket_context: &str,
+    telemetry: Option<(&mut BlobTransferTelemetry, &ConnectionInfo)>,
+) -> ControlFlow<Result<()>> {
+    let now = Instant::now();
+    match item {
+        Some(GetProgressItem::Progress(offset)) => {
+            if let Some((telemetry, _)) = telemetry {
+                telemetry.observe_progress(now, offset);
+            }
+            if let Some(bytes_received) = progress.observe(now, offset) {
+                let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
+            }
+            ControlFlow::Continue(())
+        }
+        Some(GetProgressItem::Done(_)) | None => {
+            if let Some((telemetry, connection)) = telemetry {
+                telemetry.finish(now, connection, TransferEnd::Complete);
+            }
+            if let Some(bytes_received) = progress.flush_pending(now) {
+                let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
+            }
+            let _ = update_tx.send(BlobDownloadUpdate::Done);
+            ControlFlow::Break(Ok(()))
+        }
+        Some(GetProgressItem::Error(err)) => {
+            if let Some((telemetry, connection)) = telemetry {
+                telemetry.finish(now, connection, TransferEnd::Failed);
+            }
+            if let Some(bytes_received) = progress.flush_pending(now) {
+                let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
+            }
+            let message = format!("blob fetch error: {err}");
+            let _ = update_tx.send(BlobDownloadUpdate::Failed {
+                error: BlobError::fetch(
+                    ticket_context.to_owned(),
+                    BlobTextError::new(message.clone()),
+                ),
+            });
+            ControlFlow::Break(Err(BlobError::fetch(
+                ticket_context.to_owned(),
+                BlobTextError::new(message),
+            )))
+        }
     }
 }
 
@@ -212,39 +266,45 @@ impl BlobDownloadStrategy for SequentialBlobDownload {
                     .map_err(|source| BlobError::connect(ticket_context.clone(), source))?,
             };
 
+            // Preserve the original hot loop when telemetry is disabled: no
+            // timer, `select!`, path-stat read, or connection-info handle.
+            let connection_info = telemetry_enabled().then(|| connection.to_info());
             let mut stream = store.remote().fetch(connection, ticket).stream();
             let mut progress = ProgressCoalescer::new(PROGRESS_EMIT_INTERVAL);
+            let Some(connection_info) = connection_info else {
+                loop {
+                    if let ControlFlow::Break(result) = handle_download_item(
+                        stream.next().await,
+                        &mut progress,
+                        &update_tx,
+                        &ticket_context,
+                        None,
+                    ) {
+                        return result;
+                    }
+                }
+            };
 
+            let mut telemetry = BlobTransferTelemetry::new(Instant::now());
+            let mut interval = tokio::time::interval(TELEMETRY_SAMPLE_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            interval.reset();
             loop {
-                match stream.next().await {
-                    Some(GetProgressItem::Progress(offset)) => {
-                        if let Some(bytes_received) = progress.observe(Instant::now(), offset) {
-                            let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
-                        }
+                let item = tokio::select! {
+                    item = stream.next() => item,
+                    _ = interval.tick() => {
+                        telemetry.emit_sample(Instant::now(), &connection_info);
+                        continue;
                     }
-                    Some(GetProgressItem::Done(_)) | None => {
-                        if let Some(bytes_received) = progress.flush_pending(Instant::now()) {
-                            let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
-                        }
-                        let _ = update_tx.send(BlobDownloadUpdate::Done);
-                        break Ok(());
-                    }
-                    Some(GetProgressItem::Error(err)) => {
-                        if let Some(bytes_received) = progress.flush_pending(Instant::now()) {
-                            let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
-                        }
-                        let message = format!("blob fetch error: {err}");
-                        let _ = update_tx.send(BlobDownloadUpdate::Failed {
-                            error: BlobError::fetch(
-                                ticket_context.clone(),
-                                BlobTextError::new(message.clone()),
-                            ),
-                        });
-                        break Err(BlobError::fetch(
-                            ticket_context,
-                            BlobTextError::new(message),
-                        ));
-                    }
+                };
+                if let ControlFlow::Break(result) = handle_download_item(
+                    item,
+                    &mut progress,
+                    &update_tx,
+                    &ticket_context,
+                    Some((&mut telemetry, &connection_info)),
+                ) {
+                    break result;
                 }
             }
         })

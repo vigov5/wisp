@@ -1,6 +1,7 @@
 pub(crate) mod error;
 pub mod receive;
 pub mod send;
+mod telemetry;
 pub(crate) mod util;
 
 pub use error::BlobError;
