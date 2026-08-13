@@ -36,6 +36,14 @@
 	     sheet / "Open in" list, so files can be sent straight from Photos,
 	     Files, Safari, etc. Rank is Alternate, never Owner/Default: Wisp
 	     forwards files, it isn't the editor for any of these types. -->
+	<!-- Wisp consumes incoming URLs itself in ShareIntentHandler; it has no
+	     universal links and no route matching a file:// path. Left enabled
+	     (the engine default), FlutterSceneLifeCycle hands every opened URL to
+	     the framework as a deep link, so sharing a file produced
+	     "GoException: no routes for location: file:///…/Documents/Inbox/…" —
+	     and then relayToSystemIfUnhandled threw the URL back at iOS. -->
+	<key>FlutterDeepLinkingEnabled</key>
+	<false/>
 	<!-- Lets the Share Extension ask Wisp to come forward after it drops items
 	     in the App Group. Best-effort only: iOS often refuses, and the app
 	     drains the container on every activation regardless. -->
