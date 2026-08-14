@@ -762,6 +762,171 @@ class TelemetryAnalysisTests(unittest.TestCase):
         self.assertEqual(provider["config_source"], "configured")
         self.assertEqual(provider["local_stream_receive_window_bytes"], 1_000_000)
 
+    def test_connection_counters_expose_payload_the_selected_path_missed(self):
+        # Reproduces the provenance failure seen on device: the provider served
+        # a large payload while `selected_path()` accounted for a sliver of it,
+        # because iroh reports no selected path unless its watcher holds an
+        # address matching a live path. Connection-scoped counters keep
+        # counting regardless, so the report can state the real figure and how
+        # much the path counters saw.
+        starved_sample = json.loads(provider_sample(31))
+        starved_sample["fields"].update(
+            udp_tx_bytes_delta=4_261,
+            connection_stats_available=True,
+            connection_udp_tx_bytes_delta=268_435_456,
+            path_count=4,
+        )
+        starved_summary = json.loads(provider_summary(31))
+        starved_summary["fields"].update(
+            udp_tx_bytes_total=4_261,
+            connection_udp_tx_bytes_total=268_435_456,
+            connection_samples_without_stats=0,
+            stream_data_blocked_tx_total=0,
+        )
+        provider = telemetry.build_report(
+            telemetry.parse_stream(
+                io.StringIO(
+                    "\n".join(
+                        [
+                            config(31, role="provider"),
+                            json.dumps(starved_sample),
+                            json.dumps(starved_summary),
+                        ]
+                    )
+                    + "\n"
+                )
+            )
+        )["provider_runs"][0]
+
+        self.assertTrue(provider["connection_stats_present"])
+        self.assertEqual(provider["connection_udp_tx_bytes_total"], 268_435_456)
+        self.assertEqual(provider["udp_tx_bytes_total"], 4_261)
+        self.assertLess(provider["path_counter_coverage"], 0.001)
+        self.assertFalse(provider["receive_window_bound_evidence"])
+        # More than one live path is the ordinary explanation for coverage
+        # below 1.0, and the report has to distinguish it from a run where no
+        # path was selected at all.
+        self.assertEqual(provider["max_path_count"], 4)
+
+    def test_stream_data_blocked_settles_the_receive_window_question(self):
+        blocked_sample = json.loads(
+            sample(32, 1_000, 1_000, sample_ms=1_000)
+        )
+        blocked_sample["fields"].update(
+            connection_stats_available=True,
+            connection_udp_rx_bytes_delta=1_200,
+            stream_data_blocked_rx_delta=7,
+        )
+        blocked_summary = json.loads(summary(32))
+        blocked_summary["fields"].update(
+            connection_udp_rx_bytes_total=1_200,
+            path_udp_rx_bytes_total=1_000,
+            stream_data_blocked_rx_total=7,
+        )
+        run = telemetry.build_report(
+            telemetry.parse_stream(
+                io.StringIO(
+                    "\n".join(
+                        [
+                            config(32),
+                            json.dumps(blocked_sample),
+                            json.dumps(blocked_summary),
+                        ]
+                    )
+                    + "\n"
+                )
+            )
+        )["runs"][0]
+
+        self.assertTrue(run["connection_stats_present"])
+        self.assertEqual(run["stream_data_blocked_rx_total"], 7)
+        self.assertTrue(run["receive_window_bound_evidence"])
+        self.assertAlmostEqual(run["path_counter_coverage"], 1_000 / 1_200)
+
+    def test_pre_v6_logs_report_no_connection_counters_rather_than_zeroes(self):
+        # Older logs simply lack these fields. They must read as "unmeasured",
+        # never as a measured zero — otherwise a run with no evidence either
+        # way would look like proven evidence of not being window bound.
+        run = telemetry.build_report(
+            telemetry.parse_stream(
+                io.StringIO(
+                    "\n".join(
+                        [
+                            config(33),
+                            sample(33, 1_000, 1_000, sample_ms=1_000),
+                            summary(33),
+                        ]
+                    )
+                    + "\n"
+                )
+            )
+        )["runs"][0]
+
+        self.assertFalse(run["connection_stats_present"])
+        self.assertIsNone(run["connection_udp_rx_bytes_total"])
+        self.assertIsNone(run["path_counter_coverage"])
+        self.assertIsNone(run["receive_window_bound_evidence"])
+        self.assertIsNone(run["stream_data_blocked_rx_total"])
+        # Throughput and stall metrics stay fully usable: a missing additive
+        # diagnostic must not invalidate the rest of the record.
+        self.assertEqual(run["p50_bytes_per_sec"], 1_000)
+        self.assertEqual(run["outcome"], "complete")
+
+    def test_wire_path_attribution_sees_relay_bytes_payload_ratio_misses(self):
+        # The payload-based relay ratio attributes application bytes to the
+        # selected path, so a transfer whose payload partly rides a
+        # never-selected relay path reports no relay traffic at all. Wire-byte
+        # attribution across every path is what exposes it.
+        relaying = json.loads(provider_sample(34))
+        relaying["fields"].update(
+            connection_stats_available=True,
+            connection_udp_tx_bytes_delta=1_000_000,
+            all_paths_udp_tx_bytes_delta=1_000_000,
+            path_count=4,
+            active_path_count=3,
+            direct_path_udp_bytes_delta=750_000,
+            relay_path_udp_bytes_delta=250_000,
+        )
+        provider = telemetry.build_report(
+            telemetry.parse_stream(
+                io.StringIO(
+                    "\n".join(
+                        [
+                            config(34, role="provider"),
+                            json.dumps(relaying),
+                            provider_summary(34),
+                        ]
+                    )
+                    + "\n"
+                )
+            )
+        )["provider_runs"][0]
+
+        self.assertTrue(provider["wire_path_bytes_available"])
+        self.assertEqual(provider["wire_relay_bytes"], 250_000)
+        self.assertEqual(provider["wire_direct_bytes"], 750_000)
+        self.assertAlmostEqual(provider["wire_relay_bytes_ratio"], 0.25)
+        self.assertEqual(provider["max_active_path_count"], 3)
+
+    def test_pre_v6_logs_have_no_wire_path_attribution(self):
+        provider = telemetry.build_report(
+            telemetry.parse_stream(
+                io.StringIO(
+                    "\n".join(
+                        [
+                            config(35, role="provider"),
+                            provider_sample(35),
+                            provider_summary(35),
+                        ]
+                    )
+                    + "\n"
+                )
+            )
+        )["provider_runs"][0]
+
+        self.assertFalse(provider["wire_path_bytes_available"])
+        self.assertIsNone(provider["wire_relay_bytes_ratio"])
+
     def test_legacy_provider_window_names_remain_parseable(self):
         config_payload = json.loads(config(19, role="provider"))
         fields = config_payload["fields"]

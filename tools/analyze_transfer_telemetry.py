@@ -83,6 +83,20 @@ class Sample:
     local_congestion_events_delta: int
     current_mtu: int
     local_plpmtud_probe_loss_delta: int
+    # Connection-scoped counters (schema v6). Absent in older logs, where they
+    # read as zero/False and must not be mistaken for measured zeros.
+    connection_stats_available: bool = False
+    connection_udp_rx_bytes_delta: int = 0
+    connection_udp_tx_bytes_delta: int = 0
+    stream_data_blocked_rx_delta: int = 0
+    stream_data_blocked_tx_delta: int = 0
+    path_count: int = 0
+    active_path_count: int = 0
+    all_paths_udp_rx_bytes_delta: int = 0
+    all_paths_lost_packets_delta: int = 0
+    direct_path_udp_bytes_delta: int = 0
+    relay_path_udp_bytes_delta: int = 0
+    aoa_path_udp_bytes_delta: int = 0
 
 
 @dataclass(frozen=True)
@@ -99,6 +113,10 @@ class TransferSummary:
     stall_total_ms: int
     longest_stall_ms: int
     path: str
+    path_udp_rx_bytes_total: int = 0
+    connection_udp_rx_bytes_total: int = 0
+    connection_samples_without_stats: int = 0
+    stream_data_blocked_rx_total: int = 0
 
 
 @dataclass(frozen=True)
@@ -131,6 +149,17 @@ class ProviderSample:
     congestion_events_delta: int
     current_mtu: int
     plpmtud_probe_loss_delta: int
+    connection_stats_available: bool = False
+    connection_udp_tx_bytes_delta: int = 0
+    connection_udp_rx_bytes_delta: int = 0
+    stream_data_blocked_tx_delta: int = 0
+    path_count: int = 0
+    active_path_count: int = 0
+    all_paths_udp_tx_bytes_delta: int = 0
+    all_paths_lost_packets_delta: int = 0
+    direct_path_udp_bytes_delta: int = 0
+    relay_path_udp_bytes_delta: int = 0
+    aoa_path_udp_bytes_delta: int = 0
 
 
 @dataclass(frozen=True)
@@ -143,6 +172,10 @@ class ProviderSummary:
     congestion_events_total: int
     path_counter_discontinuity_count: int
     path: str
+    connection_udp_tx_bytes_total: int = 0
+    connection_udp_rx_bytes_total: int = 0
+    connection_samples_without_stats: int = 0
+    stream_data_blocked_tx_total: int = 0
 
 
 @dataclass(frozen=True)
@@ -195,6 +228,19 @@ def _event_group(
             raise AnalysisError(f"transfer limit exceeded ({max_transfers:,})")
         groups[key] = TransferEvents() if role == "receiver" else ProviderEvents()
     return groups[key]
+
+
+def _optional_count(fields: dict[str, object], name: str) -> int:
+    """Read a counter that only exists from schema v6 onwards.
+
+    Older logs simply lack the field. Treat a missing or malformed value as
+    zero rather than rejecting the whole record: the connection-scoped counters
+    are additive diagnostics, and dropping historical samples over them would
+    lose throughput and stall data that is still perfectly valid.
+    """
+
+    value = _non_negative_int(fields.get(name, 0))
+    return value if value is not None else 0
 
 
 def _non_negative_int(value: object) -> int | None:
@@ -321,6 +367,34 @@ def _parse_sample(fields: dict[str, object]) -> tuple[int, Sample] | None:
         local_congestion_events_delta=local_congestion_events_delta,
         current_mtu=current_mtu,
         local_plpmtud_probe_loss_delta=local_plpmtud_probe_loss_delta,
+        connection_stats_available=fields.get("connection_stats_available") is True,
+        connection_udp_rx_bytes_delta=_optional_count(
+            fields, "connection_udp_rx_bytes_delta"
+        ),
+        connection_udp_tx_bytes_delta=_optional_count(
+            fields, "connection_udp_tx_bytes_delta"
+        ),
+        stream_data_blocked_rx_delta=_optional_count(
+            fields, "stream_data_blocked_rx_delta"
+        ),
+        stream_data_blocked_tx_delta=_optional_count(
+            fields, "stream_data_blocked_tx_delta"
+        ),
+        path_count=_optional_count(fields, "path_count"),
+        all_paths_udp_rx_bytes_delta=_optional_count(
+            fields, "all_paths_udp_rx_bytes_delta"
+        ),
+        active_path_count=_optional_count(fields, "active_path_count"),
+        all_paths_lost_packets_delta=_optional_count(
+            fields, "all_paths_lost_packets_delta"
+        ),
+        direct_path_udp_bytes_delta=_optional_count(
+            fields, "direct_path_udp_bytes_delta"
+        ),
+        relay_path_udp_bytes_delta=_optional_count(
+            fields, "relay_path_udp_bytes_delta"
+        ),
+        aoa_path_udp_bytes_delta=_optional_count(fields, "aoa_path_udp_bytes_delta"),
     )
 
 
@@ -368,6 +442,16 @@ def _parse_summary(fields: dict[str, object]) -> tuple[int, TransferSummary] | N
         stall_total_ms=stall_total_ms,
         longest_stall_ms=longest_stall_ms,
         path=_known_path(fields.get("path")),
+        path_udp_rx_bytes_total=_optional_count(fields, "path_udp_rx_bytes_total"),
+        connection_udp_rx_bytes_total=_optional_count(
+            fields, "connection_udp_rx_bytes_total"
+        ),
+        connection_samples_without_stats=_optional_count(
+            fields, "connection_samples_without_stats"
+        ),
+        stream_data_blocked_rx_total=_optional_count(
+            fields, "stream_data_blocked_rx_total"
+        ),
     )
 
 
@@ -478,6 +562,31 @@ def _parse_provider_sample(
         congestion_events_delta=values["congestion_events_delta"],
         current_mtu=values["current_mtu"],
         plpmtud_probe_loss_delta=values["plpmtud_probe_loss_delta"],
+        connection_stats_available=fields.get("connection_stats_available") is True,
+        connection_udp_tx_bytes_delta=_optional_count(
+            fields, "connection_udp_tx_bytes_delta"
+        ),
+        connection_udp_rx_bytes_delta=_optional_count(
+            fields, "connection_udp_rx_bytes_delta"
+        ),
+        stream_data_blocked_tx_delta=_optional_count(
+            fields, "stream_data_blocked_tx_delta"
+        ),
+        path_count=_optional_count(fields, "path_count"),
+        all_paths_udp_tx_bytes_delta=_optional_count(
+            fields, "all_paths_udp_tx_bytes_delta"
+        ),
+        active_path_count=_optional_count(fields, "active_path_count"),
+        all_paths_lost_packets_delta=_optional_count(
+            fields, "all_paths_lost_packets_delta"
+        ),
+        direct_path_udp_bytes_delta=_optional_count(
+            fields, "direct_path_udp_bytes_delta"
+        ),
+        relay_path_udp_bytes_delta=_optional_count(
+            fields, "relay_path_udp_bytes_delta"
+        ),
+        aoa_path_udp_bytes_delta=_optional_count(fields, "aoa_path_udp_bytes_delta"),
     )
 
 
@@ -519,6 +628,18 @@ def _parse_provider_summary(
             "path_counter_discontinuity_count"
         ],
         path=_known_path(fields.get("path")),
+        connection_udp_tx_bytes_total=_optional_count(
+            fields, "connection_udp_tx_bytes_total"
+        ),
+        connection_udp_rx_bytes_total=_optional_count(
+            fields, "connection_udp_rx_bytes_total"
+        ),
+        connection_samples_without_stats=_optional_count(
+            fields, "connection_samples_without_stats"
+        ),
+        stream_data_blocked_tx_total=_optional_count(
+            fields, "stream_data_blocked_tx_total"
+        ),
     )
 
 
@@ -984,6 +1105,39 @@ def _path_metrics(samples: list[Sample]) -> dict[str, object]:
     }
 
 
+def _wire_path_attribution(samples: list) -> dict[str, object]:
+    """Split wire bytes by the kind of path that carried them.
+
+    This is the only measurement that can answer "how much went over the
+    relay" on a multipath connection. The payload-based `relay_bytes_ratio`
+    attributes application bytes to whichever path was *selected*, so a
+    transfer whose payload partly rides a relay path that is never selected
+    reports a relay ratio of zero. Measured on a real Wi-Fi transfer the
+    selected path carried 42.6% of the wire bytes and a relay path carried
+    25.7%, which the payload-based ratio reported as entirely direct.
+    """
+
+    direct = sum(sample.direct_path_udp_bytes_delta for sample in samples)
+    relay = sum(sample.relay_path_udp_bytes_delta for sample in samples)
+    aoa = sum(sample.aoa_path_udp_bytes_delta for sample in samples)
+    total = direct + relay + aoa
+    if total == 0:
+        return {
+            "wire_path_bytes_available": False,
+            "wire_direct_bytes": None,
+            "wire_relay_bytes": None,
+            "wire_aoa_bytes": None,
+            "wire_relay_bytes_ratio": None,
+        }
+    return {
+        "wire_path_bytes_available": True,
+        "wire_direct_bytes": direct,
+        "wire_relay_bytes": relay,
+        "wire_aoa_bytes": aoa,
+        "wire_relay_bytes_ratio": relay / total,
+    }
+
+
 def summarize_transfer(
     source_id: int,
     transfer_id: int,
@@ -1047,6 +1201,33 @@ def summarize_transfer(
     )
     stats_samples = sum(sample.path_stats_available for sample in events.samples)
     network_samples = [sample for sample in events.samples if sample.path_stats_available]
+    # Connection-scoped counters (schema v6) keep counting while no path is
+    # selected and across migrations, so they are the denominator that reveals
+    # how much of the payload the per-path counters actually saw.
+    connection_samples = [
+        sample for sample in events.samples if sample.connection_stats_available
+    ]
+    path_udp_rx_observed = sum(sample.udp_rx_bytes_delta for sample in network_samples)
+    connection_udp_rx_total = (
+        summary.connection_udp_rx_bytes_total
+        if summary is not None and summary.connection_udp_rx_bytes_total > 0
+        else sum(sample.connection_udp_rx_bytes_delta for sample in connection_samples)
+    )
+    connection_stats_present = bool(connection_samples) and connection_udp_rx_total > 0
+    path_counter_coverage = (
+        min(1.0, path_udp_rx_observed / connection_udp_rx_total)
+        if connection_stats_present
+        else None
+    )
+    max_path_count = max(
+        (sample.path_count for sample in events.samples), default=0
+    )
+    wire_paths = _wire_path_attribution(events.samples)
+    stream_data_blocked_rx_total = (
+        summary.stream_data_blocked_rx_total
+        if summary is not None and summary.stream_data_blocked_rx_total > 0
+        else sum(sample.stream_data_blocked_rx_delta for sample in connection_samples)
+    )
     rtts = [sample.rtt_us for sample in network_samples if sample.rtt_us > 0]
     min_rtt_us = min(rtts) if rtts else None
     rtt_inflations = (
@@ -1173,6 +1354,29 @@ def summarize_transfer(
         "path_counter_discontinuity_count": sum(
             sample.path_counter_discontinuity for sample in events.samples
         ),
+        "connection_stats_present": connection_stats_present,
+        "connection_udp_rx_bytes_total": (
+            connection_udp_rx_total if connection_stats_present else None
+        ),
+        "path_counter_coverage": path_counter_coverage,
+        "max_path_count": max_path_count,
+        "max_active_path_count": max(
+            (sample.active_path_count for sample in events.samples), default=0
+        ),
+        # Wire bytes attributed to the kind of path that carried them, summed
+        # over every path. `relay_bytes_ratio` above is application payload
+        # attributed to the *selected* path, so it reports no relay traffic
+        # whenever payload rides a relay path that was never selected.
+        **wire_paths,
+        # STREAM_DATA_BLOCKED frames received: the sender had payload ready and
+        # this receiver's advertised stream window stopped it. Non-zero settles
+        # the window-bound question that `bdp_window_ratio` can only hint at.
+        "stream_data_blocked_rx_total": (
+            stream_data_blocked_rx_total if connection_stats_present else None
+        ),
+        "receive_window_bound_evidence": (
+            stream_data_blocked_rx_total > 0 if connection_stats_present else None
+        ),
         "rtt_min_us": min_rtt_us,
         "rtt_p50_us": percentile(rtts, 0.50) if rtts else None,
         "rtt_p90_us": percentile(rtts, 0.90) if rtts else None,
@@ -1228,6 +1432,34 @@ def summarize_provider(
         if summary is not None
         else sum(sample.udp_tx_bytes_delta for sample in network_samples)
     )
+    # Connection-scoped counters (schema v6) are immune to the two ways the
+    # path-scoped ones lose payload: no path being selected, and migration
+    # voiding an interval. Where both exist, their ratio is the provenance
+    # check — it says outright how much of the connection's traffic the
+    # per-path loss/cwnd figures were in a position to observe.
+    connection_samples = [
+        sample for sample in events.samples if sample.connection_stats_available
+    ]
+    connection_udp_tx_total = (
+        summary.connection_udp_tx_bytes_total
+        if summary is not None and summary.connection_udp_tx_bytes_total > 0
+        else sum(sample.connection_udp_tx_bytes_delta for sample in connection_samples)
+    )
+    connection_stats_present = bool(connection_samples) and connection_udp_tx_total > 0
+    path_counter_coverage = (
+        min(1.0, udp_tx_total / connection_udp_tx_total)
+        if connection_stats_present
+        else None
+    )
+    max_path_count = max(
+        (sample.path_count for sample in events.samples), default=0
+    )
+    wire_paths = _wire_path_attribution(events.samples)
+    stream_data_blocked_total = (
+        summary.stream_data_blocked_tx_total
+        if summary is not None and summary.stream_data_blocked_tx_total > 0
+        else sum(sample.stream_data_blocked_tx_delta for sample in connection_samples)
+    )
     return {
         "source_id": source_id,
         "transfer_id": transfer_id,
@@ -1240,11 +1472,43 @@ def summarize_provider(
             if summary is not None
             else max(sample.elapsed_ms for sample in events.samples)
         ),
+        # Path-scoped, and a lower bound whenever `path_counter_coverage` is
+        # below 1.0. Read `connection_udp_tx_bytes_total` for the real figure.
         "udp_tx_bytes_total": udp_tx_total,
         "udp_tx_average_bytes_per_sec": (
             round(udp_tx_total * 1_000 / summary.elapsed_ms)
             if summary is not None and summary.elapsed_ms > 0
             else None
+        ),
+        "connection_stats_present": connection_stats_present,
+        "connection_udp_tx_bytes_total": (
+            connection_udp_tx_total if connection_stats_present else None
+        ),
+        "connection_udp_tx_average_bytes_per_sec": (
+            round(connection_udp_tx_total * 1_000 / summary.elapsed_ms)
+            if connection_stats_present
+            and summary is not None
+            and summary.elapsed_ms > 0
+            else None
+        ),
+        "path_counter_coverage": path_counter_coverage,
+        "max_path_count": max_path_count,
+        "max_active_path_count": max(
+            (sample.active_path_count for sample in events.samples), default=0
+        ),
+        **wire_paths,
+        "connection_samples_without_stats": (
+            summary.connection_samples_without_stats if summary is not None else None
+        ),
+        # STREAM_DATA_BLOCKED frames this provider sent: it had payload ready
+        # and the receiver's advertised stream window held it. Non-zero is
+        # direct proof of a receive-window-bound transfer, which no ratio of
+        # throughput to window can establish on its own.
+        "stream_data_blocked_tx_total": (
+            stream_data_blocked_total if connection_stats_present else None
+        ),
+        "receive_window_bound_evidence": (
+            stream_data_blocked_total > 0 if connection_stats_present else None
         ),
         "rtt_min_us": min_rtt_us,
         "rtt_p50_us": percentile(rtts, 0.50) if rtts else None,
@@ -1535,6 +1799,7 @@ def print_human_report(report: dict[str, object]) -> None:
                     f"{int(run['path_counter_discontinuity_count'])}; "
                     "network totals are lower bounds"
                 )
+            _print_transport_provenance(run, "udp rx")
     else:
         print("Receiver throughput samples unavailable; stability metrics were not computed.")
 
@@ -1563,6 +1828,7 @@ def print_human_report(report: dict[str, object]) -> None:
                     f"{int(provider['path_counter_discontinuity_count'])}; "
                     "network totals are lower bounds"
                 )
+            _print_transport_provenance(provider, "udp tx")
             _print_phase_timings(provider)
     aggregate = report["aggregate"]
     assert isinstance(aggregate, dict)
@@ -1588,6 +1854,44 @@ def print_human_report(report: dict[str, object]) -> None:
             f"Ignored lines: {report['skipped_lines']} non-telemetry, "
             f"{report['malformed_telemetry_lines']} malformed telemetry",
             file=sys.stderr,
+        )
+
+
+def _print_transport_provenance(row: dict[str, object], direction: str) -> None:
+    """Say how much of the connection's traffic the path counters observed.
+
+    Silent when there is nothing to report: full coverage needs no comment, and
+    a pre-v6 log has no connection counters to compare against, which is not the
+    same as a bad measurement.
+    """
+
+    coverage = row.get("path_counter_coverage")
+    if not isinstance(coverage, (int, float)):
+        return
+    if coverage < 0.99:
+        max_paths = row.get("max_path_count")
+        # Two different diagnoses share the same symptom, so name which one it
+        # is: several live paths means the selected path only ever carried part
+        # of the traffic, while a single path means samples were taken with no
+        # path selected at all.
+        cause = (
+            f" ({int(max_paths)} paths in use)"
+            if isinstance(max_paths, int) and max_paths > 1
+            else " (samples with no selected path)"
+            if isinstance(max_paths, int) and max_paths > 0
+            else ""
+        )
+        print(
+            f"     path counters saw {coverage * 100:.1f}% of connection "
+            f"{direction}{cause}; per-path loss/cwnd are lower bounds"
+        )
+    if row.get("receive_window_bound_evidence") is True:
+        print("     peer reported STREAM_DATA_BLOCKED: receive window bound")
+    relay_ratio = row.get("wire_relay_bytes_ratio")
+    if isinstance(relay_ratio, (int, float)) and relay_ratio > 0.01:
+        print(
+            f"     {relay_ratio * 100:.1f}% of wire bytes went over a relay path "
+            "(payload-based relay ratio cannot see this)"
         )
 
 
