@@ -820,16 +820,50 @@ Point 2 also explains the 25.7% relay share in a direct transfer: keeping the
 relay path alive alongside direct is intentional iroh behaviour, not a failure to
 upgrade the path.
 
-The one lever left at this version is building a benchmark endpoint at
-`RelayMode::Disabled`, which removes relay paths at the source instead of asking
-iroh not to reopen them. Combined with `WISP_BENCH_SINGLE_PATH` that should give a
-direct-only run to compare against. Otherwise this question waits for E4, where a
-newer iroh may expose the knob.
+The third lever — a benchmark endpoint at `RelayMode::Disabled`, which removes
+relay paths at the source instead of asking iroh not to reopen them — **does
+work, and has now been run.** `WISP_BENCH_NO_RELAY` binds both endpoints without
+a relay; because such an endpoint never comes online, receiver registration
+publishes a direct-addresses-only ticket instead of waiting for
+`Endpoint::online()`.
 
-Until then the multipath hypothesis can only be tested observationally: correlate
-per-sample `active_path_count` and `relay_path_udp_bytes_delta` against app
-throughput and delivery gaps across many runs. That is weaker evidence than an
-A/B and must be labelled as such.
+**Result on loopback: no reliable difference.** Release build, 256 MiB payload,
+one warm-up run then five alternating pairs:
+
+| arm | p50 median | range | max paths | relay bytes | stalls |
+| --- | --- | --- | --- | --- | --- |
+| relay on | 49.6 MiB/s | 5.5-82.5 | 4 | ~16-20 KB/run | 0 |
+| no relay | 73.6 MiB/s | 15.8-84.2 | 3 | 0 | 0 |
+
+The medians differ but the ranges overlap almost completely, and the spread is
+explained by warm-up, not by the arm: the last two pairs land at 67.6/82.5
+(relay on) against 75.9/73.6 (no relay), with the arms swapping the win. A first
+debug-build pair looked like a 5.7x win for no-relay and was cold-start noise —
+worth recording as the trap this experiment sets.
+
+Three things the run does settle:
+
+- **The relay is not stealing payload.** It carried ~16-20 KB per transfer, all
+  of it in the pre-hole-punch window. That matches iroh's design: relay defaults
+  to `TransportBias::backup()`, i.e. QUIC `PathStatus::Backup`, and is only used
+  when no primary transport is available (`src/socket/transports.rs:743`).
+- **The receive window is not the ceiling here.** `stream_data_blocked` was 0 in
+  all ten runs, in both directions.
+- **Extra paths alone do not cost throughput.** The relay-on arm ran 4 paths to
+  the no-relay arm's 3 and matched it once warm.
+
+That last point reverses the reading of the 25.7% relay share measured on
+Android. If a healthy direct path keeps the relay at a handshake-sized share,
+then a quarter of a transfer going over relay is not iroh striping by design —
+it means the direct path was degraded or never properly established on that run.
+**D2 is re-scoped**: the question is no longer "does multipath striping hurt"
+but "why did relay carry a quarter of a transfer that reported itself direct
+throughout", which belongs with D1.
+
+The loopback caveat matters both ways: paths there differ by microseconds, so it
+is the testbed least likely to show reordering costs. The remaining A/B worth
+running is phone-to-desktop over Wi-Fi, where `WISP_BENCH_NO_RELAY` on the
+desktop receiver is enough to make the whole connection relay-free.
 
 - For many small files: A/B concurrency 1/2/4/8 with a bounded queue and a memory
   limit.

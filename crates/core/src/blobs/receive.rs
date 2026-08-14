@@ -246,10 +246,11 @@ const BENCH_SINGLE_PATH_ENV: &str = "WISP_BENCH_SINGLE_PATH";
 /// punching for more. Measured on loopback, this switch took the path count from
 /// 1/3/4 down to 1/3 — a narrower start, not control.
 ///
-/// It is kept because it is still the right starting point for the one lever
-/// that remains: pairing it with a benchmark endpoint built at
-/// `RelayMode::Disabled`, which removes relay paths at the source rather than
-/// asking iroh not to reopen them.
+/// The lever that does work is binding without a relay at all — see
+/// `WISP_BENCH_NO_RELAY` in `wisp_app::bench`, which removes relay addresses at
+/// the source rather than asking iroh not to reopen them. On loopback that
+/// found no reliable throughput difference; this switch remains useful for
+/// narrowing the direct address set alongside it.
 ///
 /// Prefers the USB cable subnet when present so the AOA path keeps its own dial,
 /// then falls back to the first IPv4 address in the ticket.

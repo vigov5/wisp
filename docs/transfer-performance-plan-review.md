@@ -659,13 +659,35 @@ addresses it holds — the comment there reads "we may have raced this with a re
 address" — and then calls `trigger_holepunching()` to look for more. The dial is
 one input to that address set, not the boundary of it.
 
-That has a second consequence worth stating plainly: the 25.7% relay share in V16
-is **intentional iroh behaviour**, not a failure to upgrade the path. iroh keeps the
-relay path alive alongside direct on purpose. Whether that is a good trade for a
-bulk transfer is exactly the open question, and it cannot be A/B'd at this version.
+**Binding without a relay.** The third lever works. `WISP_BENCH_NO_RELAY` binds
+both endpoints at `RelayMode::Disabled`, which removes relay addresses at the
+source rather than asking iroh not to reopen them. It needs one companion change:
+a no-relay endpoint never satisfies `Endpoint::online()`, so receiver registration
+has to publish a direct-addresses-only ticket rather than wait to come online.
 
-The one lever left is a benchmark endpoint built at `RelayMode::Disabled`, which
-removes relay paths at the source rather than asking iroh not to reopen them.
+Run on loopback — release build, 256 MiB, warm-up plus five alternating pairs — it
+found **no reliable difference**: p50 median 49.6 MiB/s with the relay against
+73.6 MiB/s without, ranges 5.5-82.5 and 15.8-84.2, and the last two pairs
+splitting the win. The spread tracks warm-up, not the arm. The first debug-build
+pair had looked like a clean 5.7x win, which is a good reminder of how easily a
+cold machine manufactures an effect.
+
+That result corrects the paragraph this section used to end with. The relay
+carried only ~16-20 KB per transfer, all in the pre-hole-punch window — iroh
+defaults relay to `TransportBias::backup()` (QUIC `PathStatus::Backup`,
+`src/socket/transports.rs:743`), so a healthy direct path really does keep it
+idle. **The 25.7% relay share in V16 is therefore not intentional striping.** It
+is evidence that the direct path on that Android run was degraded or never
+properly established, which moves the finding from D2 to D1.
+
+Two further readings from the same ten runs: `stream_data_blocked` was 0 in every
+one, so flow control was not the ceiling on this link; and the relay-on arm ran 4
+paths against the no-relay arm's 3 while matching its throughput, so extra paths
+by themselves are not what costs. Loopback is the weakest possible testbed for
+reordering — paths there differ by microseconds — so this rules out a large
+effect on a fast local link and nothing more. The A/B worth running next is
+phone-to-desktop over Wi-Fi, where setting the switch on the desktop receiver
+alone is enough to make the connection relay-free.
 Failing that, the hypothesis can only be tested observationally — correlating
 `active_path_count` and `relay_path_udp_bytes_delta` against throughput and
 delivery gaps across many runs — which is weaker evidence and must be labelled as
