@@ -218,6 +218,57 @@ struct DownloadTerminal {
     result: Result<()>,
 }
 
+/// Opt-in switch that narrows the blob dial to a single direct address.
+///
+/// Benchmark use only — it drops the relay address from the dial, so a transfer
+/// whose direct address turns out to be unreachable has one less way to
+/// recover.
+const BENCH_SINGLE_PATH_ENV: &str = "WISP_BENCH_SINGLE_PATH";
+
+/// Narrows a blob dial to one direct address when [`BENCH_SINGLE_PATH_ENV`] is
+/// set, returning `None` when the switch is off or no direct address is on offer.
+///
+/// Telemetry showed 3-8 paths carrying payload at the same time, with the
+/// selected path accounting for as little as 11% of the bytes and a relay path
+/// taking 25.7% of a transfer the receiver reported as direct throughout. That
+/// raises a question worth answering: does the concurrency help, or do paths
+/// with differing RTT reorder enough that BAO verification stalls behind the
+/// slowest one?
+///
+/// **This switch does not answer it, and neither does anything else in iroh
+/// 0.97.** Both `max_concurrent_multipath_paths` and
+/// `set_max_remote_nat_traversal_addresses` refuse values below their
+/// recommended floors — they warn and keep the default — so the path count can
+/// be raised but never lowered. Narrowing the dial does not substitute for it
+/// either: iroh tracks addresses per *remote*, not per dial, and
+/// `remote_state.rs` deliberately reopens relay paths once a direct path comes
+/// up ("we may have raced this with a relay address") and then triggers hole
+/// punching for more. Measured on loopback, this switch took the path count from
+/// 1/3/4 down to 1/3 — a narrower start, not control.
+///
+/// It is kept because it is still the right starting point for the one lever
+/// that remains: pairing it with a benchmark endpoint built at
+/// `RelayMode::Disabled`, which removes relay paths at the source rather than
+/// asking iroh not to reopen them.
+///
+/// Prefers the USB cable subnet when present so the AOA path keeps its own dial,
+/// then falls back to the first IPv4 address in the ticket.
+fn bench_single_path_addr(addr: &EndpointAddr) -> Option<EndpointAddr> {
+    if std::env::var_os(BENCH_SINGLE_PATH_ENV).is_none() {
+        return None;
+    }
+    let mut ipv4 = addr.ip_addrs().filter(|sa| matches!(sa, SocketAddr::V4(_)));
+    let cable = addr.ip_addrs().find(|sa| match sa {
+        SocketAddr::V4(v4) => in_usb_tunnel_subnet(*v4.ip()),
+        SocketAddr::V6(_) => false,
+    });
+    let chosen = cable.copied().or_else(|| ipv4.next().copied())?;
+    Some(EndpointAddr::from_parts(
+        addr.id,
+        [iroh::TransportAddr::Ip(chosen)],
+    ))
+}
+
 /// Chooses a per-path QUIC transport config for the receiver's blob dial.
 ///
 /// The receiver is the puller, so the `stream_receive_window` it advertises is
@@ -338,7 +389,15 @@ impl BlobDownloadStrategy for SequentialBlobDownload {
     ) -> JoinHandle<Result<()>> {
         tokio::spawn(async move {
             let ticket_context = format!("ticket {ticket:?}");
-            let addr = ticket.addr().clone();
+            let mut addr = ticket.addr().clone();
+            if let Some(single) = bench_single_path_addr(&addr) {
+                debug!(
+                    from = ?addr,
+                    to = ?single,
+                    "blob dial: {BENCH_SINGLE_PATH_ENV} set, offering one direct address"
+                );
+                addr = single;
+            }
             // Per-path dial: relay/Wi-Fi/LAN inherit the endpoint's global
             // transport config (Tier 1 window + CUBIC); the AOA USB tunnel gets a
             // raised MTU-discovery ceiling instead. See `blob_connect_options`.
