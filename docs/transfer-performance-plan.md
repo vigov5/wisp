@@ -885,6 +885,33 @@ branch to investigate is multicast/broadcast, the Windows firewall and AP
 isolation, and how to obtain a peer address safely for targeted unicast. Do not
 blind-scan an entire `/24` in production.
 
+**Resolved — it was three bugs, none of them the network.** Neither the firewall
+nor AP isolation was involved: a raw socket on the desktop heard 19 `_wisp`
+packets from the phone in 30 s, including full announcements, at the same time
+the app's browse reported zero.
+
+1. **`mdns-sd` ignores unsolicited announcements** (`accept_unsolicited` defaults
+   to false), so it discarded every one of those packets. Enabling it took
+   desktop-finds-phone from never to 0.2 s.
+2. **The phone could not receive multicast at all.** Android filters inbound
+   multicast unless an app holds a `WifiManager.MulticastLock`; sending is
+   unaffected, which is exactly why the phone appeared to be advertising
+   correctly while hearing nothing. `CHANGE_WIFI_MULTICAST_STATE` had been in
+   the manifest all along with nothing taking the lock. This is also why the
+   phone never answered the desktop's queries, which is what made bug 1 fatal
+   rather than cosmetic.
+3. **The CLI receiver never advertised.** `ReceiverService` starts with
+   discovery off and only the Flutter app ever called `set_discoverable`, while
+   the sender's own error message tells the user to run `wisp receive` on the
+   other machine.
+
+After the three fixes, verified in both directions: the desktop lists the phone,
+the phone lists the desktop, and a 273 MB transfer completed over discovery
+alone with no short code. The lesson worth keeping is the diagnostic order — a
+raw socket next to the application's own browse separated "the packets are not
+arriving" from "we are throwing them away" in one step, and the answer was the
+latter.
+
 An early schema v5 smoke showed Windows → Android timing out on
 `control_handshake`/`LastOpenPath` while Android → Windows completed direct. After
 the Pixel moved from Wi-Fi 4 / 2.4 GHz to `TienNA 5G`, the handshake took 24-37 ms
