@@ -41,9 +41,12 @@ def sample(
     benchmark_run_id_available=False,
     benchmark_run_id=0,
     application_path=None,
+    udp_rx_bytes_delta=None,
 ):
     if bytes_delta is None:
         bytes_delta = rate * sample_ms // 1_000
+    if udp_rx_bytes_delta is None:
+        udp_rx_bytes_delta = rate
     return event(
         "blob_sample",
         transfer_id,
@@ -64,7 +67,7 @@ def sample(
         path_stats_available=True,
         rtt_us=rtt_us,
         local_cwnd_bytes=1_000_000,
-        udp_rx_bytes_delta=rate,
+        udp_rx_bytes_delta=udp_rx_bytes_delta,
         local_lost_packets_delta=0,
         local_lost_bytes_delta=0,
         local_congestion_events_delta=0,
@@ -234,12 +237,85 @@ class TelemetryAnalysisTests(unittest.TestCase):
         self.assertEqual(run["windows_below_10pct_median"], 1)
         self.assertEqual(run["low_speed_episodes"], 1)
         self.assertEqual(run["stall_count"], 1)
+        self.assertEqual(run["transport_idle_stall_count"], 1)
+        self.assertEqual(run["transport_active_delivery_gap_count"], 0)
+        self.assertEqual(run["unclassified_stall_count"], 0)
         self.assertEqual(run["full_throughput_window_count"], 3)
         self.assertTrue(run["measurement_valid"])
         self.assertEqual(run["rtt_p50_us"], 2_000.0)
         self.assertEqual(run["path_mtu_min"], 1_200)
         self.assertFalse(run["passes_p10_70pct_median"])
         self.assertFalse(run["passes_no_stall"])
+
+    def test_stall_with_sustained_udp_rx_is_classified_as_delivery_gap(self):
+        lines = [
+            sample(11, 100_000, 250),
+            sample(
+                11,
+                0,
+                750,
+                sample_ms=500,
+                stalled_for_ms=500,
+                udp_rx_bytes_delta=500_000,
+            ),
+            sample(
+                11,
+                0,
+                1_250,
+                sample_ms=500,
+                stalled_for_ms=1_000,
+                udp_rx_bytes_delta=500_000,
+            ),
+            sample(11, 100_000, 1_500),
+            summary(
+                11,
+                stall_count=1,
+                stall_total_ms=1_000,
+                longest_stall_ms=1_000,
+            ),
+        ]
+        run = telemetry.build_report(
+            telemetry.parse_stream(io.StringIO("\n".join(lines) + "\n"))
+        )["runs"][0]
+
+        self.assertEqual(run["transport_active_delivery_gap_count"], 1)
+        self.assertEqual(run["transport_idle_stall_count"], 0)
+        self.assertEqual(run["unclassified_stall_count"], 0)
+        self.assertEqual(run["stall_episodes"][0]["duration_ms"], 1_000)
+        self.assertEqual(run["stall_episodes"][0]["udp_rx_bytes"], 1_000_000)
+        self.assertFalse(run["passes_no_stall"])
+
+    def test_stall_episode_details_are_bounded(self):
+        lines = []
+        elapsed_ms = 0
+        for _ in range(telemetry.MAX_REPORTED_STALL_EPISODES + 1):
+            elapsed_ms += 500
+            lines.append(
+                sample(
+                    12,
+                    0,
+                    elapsed_ms,
+                    sample_ms=500,
+                    stalled_for_ms=500,
+                    udp_rx_bytes_delta=100_000,
+                )
+            )
+            elapsed_ms += 250
+            lines.append(sample(12, 100_000, elapsed_ms))
+        samples = telemetry.parse_stream(
+            io.StringIO("\n".join(lines) + "\n")
+        ).transfers[(0, 12)].samples
+
+        episodes, kind_counts, observed_count = telemetry._classify_stall_episodes(
+            samples
+        )
+
+        self.assertEqual(observed_count, telemetry.MAX_REPORTED_STALL_EPISODES + 1)
+        self.assertEqual(len(episodes), telemetry.MAX_REPORTED_STALL_EPISODES)
+        self.assertEqual(
+            kind_counts["transport_active_delivery_gap"],
+            telemetry.MAX_REPORTED_STALL_EPISODES + 1,
+        )
 
     def test_resampling_uses_non_overlapping_weighted_one_second_windows(self):
         lines = [

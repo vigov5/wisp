@@ -43,6 +43,11 @@ DEFAULT_MAX_SAMPLES = 1_000_000
 DEFAULT_MAX_TRANSFERS = 10_000
 THROUGHPUT_WINDOW_MS = 1_000
 MIN_STABILITY_WINDOWS = 3
+# ACK/control traffic is far smaller than this. Sustained receive traffic above
+# the threshold while application bytes remain flat means the transport is
+# active, so the episode is a delivery/HOL gap rather than a network-idle stall.
+UDP_ACTIVE_RATE_THRESHOLD_BYTES_PER_SEC = 64 * 1024
+MAX_REPORTED_STALL_EPISODES = 100
 MAX_U64 = (1 << 64) - 1
 
 
@@ -655,6 +660,66 @@ def _observed_stalls(samples: list[Sample]) -> tuple[int, int]:
     return episodes, longest_ms
 
 
+def _classify_stall_episodes(
+    samples: list[Sample],
+) -> tuple[list[dict[str, object]], Counter[str], int]:
+    """Classify sampled stalls without treating all flat app counters alike.
+
+    Receiver UDP counters include protocol overhead, so this is deliberately a
+    coarse diagnostic rather than a payload-throughput replacement. A bounded
+    64 KiB/s threshold keeps ACK/keepalive traffic from being mistaken for an
+    active bulk receive path.
+    """
+
+    episodes: list[dict[str, object]] = []
+    kind_counts: Counter[str] = Counter()
+    episode_count = 0
+    current: list[Sample] = []
+
+    def finish_episode() -> None:
+        nonlocal episode_count
+        if not current:
+            return
+        duration_ms = max(sample.stalled_for_ms for sample in current)
+        end_ms = max(sample.elapsed_ms for sample in current)
+        network_samples = [sample for sample in current if sample.path_stats_available]
+        sampled_ms = sum(sample.sample_ms for sample in network_samples)
+        udp_rx_bytes = sum(sample.udp_rx_bytes_delta for sample in network_samples)
+        udp_rx_rate = (
+            udp_rx_bytes * 1_000.0 / sampled_ms if sampled_ms > 0 else None
+        )
+        if udp_rx_rate is None:
+            kind = "unknown"
+        elif udp_rx_rate >= UDP_ACTIVE_RATE_THRESHOLD_BYTES_PER_SEC:
+            kind = "transport_active_delivery_gap"
+        else:
+            kind = "transport_idle_stall"
+        episode_count += 1
+        kind_counts[kind] += 1
+        if len(episodes) < MAX_REPORTED_STALL_EPISODES:
+            episodes.append(
+                {
+                    "kind": kind,
+                    "start_ms": max(0, end_ms - duration_ms),
+                    "end_ms": end_ms,
+                    "duration_ms": duration_ms,
+                    "sample_count": len(current),
+                    "network_sample_count": len(network_samples),
+                    "udp_rx_bytes": udp_rx_bytes if network_samples else None,
+                    "udp_rx_average_bytes_per_sec": udp_rx_rate,
+                }
+            )
+
+    for sample in samples:
+        if sample.stalled_for_ms >= 500:
+            current.append(sample)
+        elif current:
+            finish_episode()
+            current = []
+    finish_episode()
+    return episodes, kind_counts, episode_count
+
+
 def _samples_through_last_payload_progress(samples: list[Sample]) -> list[Sample]:
     """Drop the trailing finalization tail after the last payload byte delta."""
     last_payload_index = next(
@@ -769,6 +834,9 @@ def summarize_transfer(
     low_threshold = median * 0.10
     payload_samples = _samples_through_last_payload_progress(events.samples)
     observed_stall_count, observed_longest_stall_ms = _observed_stalls(payload_samples)
+    stall_episodes, stall_kind_counts, observed_stall_episode_count = (
+        _classify_stall_episodes(payload_samples)
+    )
     path_metrics = _path_metrics(events.samples)
 
     final_path = summary.path if summary is not None else events.samples[-1].path
@@ -778,6 +846,14 @@ def summarize_transfer(
     stall_count = summary.stall_count if summary is not None else observed_stall_count
     longest_stall_ms = (
         summary.longest_stall_ms if summary is not None else observed_longest_stall_ms
+    )
+    transport_active_delivery_gap_count = stall_kind_counts[
+        "transport_active_delivery_gap"
+    ]
+    transport_idle_stall_count = stall_kind_counts["transport_idle_stall"]
+    explicitly_unknown_stall_count = stall_kind_counts["unknown"]
+    unclassified_stall_count = explicitly_unknown_stall_count + max(
+        0, stall_count - observed_stall_episode_count
     )
     stats_samples = sum(sample.path_stats_available for sample in events.samples)
     network_samples = [sample for sample in events.samples if sample.path_stats_available]
@@ -880,6 +956,18 @@ def summarize_transfer(
         "stall_count": stall_count,
         "stall_total_ms": summary.stall_total_ms if summary is not None else None,
         "longest_stall_ms": longest_stall_ms,
+        "observed_stall_episode_count": observed_stall_episode_count,
+        "reported_stall_episode_count": len(stall_episodes),
+        "truncated_stall_episode_count": max(
+            0, observed_stall_episode_count - len(stall_episodes)
+        ),
+        "stall_episodes": stall_episodes,
+        "stall_udp_active_threshold_bytes_per_sec": (
+            UDP_ACTIVE_RATE_THRESHOLD_BYTES_PER_SEC
+        ),
+        "transport_active_delivery_gap_count": transport_active_delivery_gap_count,
+        "transport_idle_stall_count": transport_idle_stall_count,
+        "unclassified_stall_count": unclassified_stall_count,
         "network_stats_coverage": stats_samples / len(speeds),
         "rtt_p50_us": percentile(rtts, 0.50) if rtts else None,
         "rtt_p90_us": percentile(rtts, 0.90) if rtts else None,
@@ -1061,6 +1149,21 @@ def build_report(parsed: ParsedTelemetry) -> dict[str, object]:
         "total_stall_count": (
             sum(int(run["stall_count"]) for run in runs) if runs else None
         ),
+        "total_transport_active_delivery_gap_count": (
+            sum(int(run["transport_active_delivery_gap_count"]) for run in runs)
+            if runs
+            else None
+        ),
+        "total_transport_idle_stall_count": (
+            sum(int(run["transport_idle_stall_count"]) for run in runs)
+            if runs
+            else None
+        ),
+        "total_unclassified_stall_count": (
+            sum(int(run["unclassified_stall_count"]) for run in runs)
+            if runs
+            else None
+        ),
         "accepted_run_count_70pct": sum(
             bool(run["passes_p10_70pct_median"] and run["passes_no_stall"])
             for run in runs
@@ -1156,6 +1259,13 @@ def print_human_report(report: dict[str, object]) -> None:
                 f"{int(run['stall_count']):>6}"
             )
             _print_phase_timings(run)
+            if int(run["stall_count"]) > 0:
+                print(
+                    "     stall classes: "
+                    f"transport-active delivery={int(run['transport_active_delivery_gap_count'])}, "
+                    f"transport-idle={int(run['transport_idle_stall_count'])}, "
+                    f"unknown={int(run['unclassified_stall_count'])}"
+                )
     else:
         print("Receiver throughput samples unavailable; stability metrics were not computed.")
 
