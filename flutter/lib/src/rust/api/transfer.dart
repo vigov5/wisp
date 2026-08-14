@@ -20,12 +20,16 @@ enum TransferPhaseData {
 
 class TransferPlanData {
   final String sessionId;
+
+  /// Pseudonymous token produced by the same Rust function used in core logs.
+  final BigInt? benchmarkRunId;
   final int totalFiles;
   final BigInt totalBytes;
   final List<TransferPlanFileData> files;
 
   const TransferPlanData({
     required this.sessionId,
+    this.benchmarkRunId,
     required this.totalFiles,
     required this.totalBytes,
     required this.files,
@@ -34,6 +38,7 @@ class TransferPlanData {
   @override
   int get hashCode =>
       sessionId.hashCode ^
+      benchmarkRunId.hashCode ^
       totalFiles.hashCode ^
       totalBytes.hashCode ^
       files.hashCode;
@@ -44,6 +49,7 @@ class TransferPlanData {
       other is TransferPlanData &&
           runtimeType == other.runtimeType &&
           sessionId == other.sessionId &&
+          benchmarkRunId == other.benchmarkRunId &&
           totalFiles == other.totalFiles &&
           totalBytes == other.totalBytes &&
           files == other.files;

@@ -1612,13 +1612,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TransferPlanData dco_decode_transfer_plan_data(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return TransferPlanData(
       sessionId: dco_decode_String(arr[0]),
-      totalFiles: dco_decode_u_32(arr[1]),
-      totalBytes: dco_decode_u_64(arr[2]),
-      files: dco_decode_list_transfer_plan_file_data(arr[3]),
+      benchmarkRunId: dco_decode_opt_box_autoadd_u_64(arr[1]),
+      totalFiles: dco_decode_u_32(arr[2]),
+      totalBytes: dco_decode_u_64(arr[3]),
+      files: dco_decode_list_transfer_plan_file_data(arr[4]),
     );
   }
 
@@ -2489,11 +2490,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TransferPlanData sse_decode_transfer_plan_data(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_sessionId = sse_decode_String(deserializer);
+    var var_benchmarkRunId = sse_decode_opt_box_autoadd_u_64(deserializer);
     var var_totalFiles = sse_decode_u_32(deserializer);
     var var_totalBytes = sse_decode_u_64(deserializer);
     var var_files = sse_decode_list_transfer_plan_file_data(deserializer);
     return TransferPlanData(
       sessionId: var_sessionId,
+      benchmarkRunId: var_benchmarkRunId,
       totalFiles: var_totalFiles,
       totalBytes: var_totalBytes,
       files: var_files,
@@ -3323,6 +3326,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.sessionId, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.benchmarkRunId, serializer);
     sse_encode_u_32(self.totalFiles, serializer);
     sse_encode_u_64(self.totalBytes, serializer);
     sse_encode_list_transfer_plan_file_data(self.files, serializer);

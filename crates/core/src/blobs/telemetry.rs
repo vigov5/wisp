@@ -36,7 +36,7 @@ pub(super) fn is_enabled() -> bool {
 /// Deriving a domain-separated token lets both endpoints correlate opt-in
 /// telemetry without logging either the raw ID or a trivially reversible
 /// base-conversion of it. This is pseudonymization, not anonymization.
-pub(crate) fn benchmark_run_id(session_id: &str) -> Option<u64> {
+pub fn benchmark_run_id(session_id: &str) -> Option<u64> {
     let valid = session_id.len() == 16
         && session_id
             .bytes()

@@ -8,11 +8,9 @@ use wisp_app::{
     SendDestination, SendDraft, SendEvent as AppSendEvent, SendPhase as AppSendPhase, SendSession,
     SendSessionOutcome,
 };
-use wisp_core::transfer::{TransferPhase, TransferPlan, TransferPlanFile, TransferSnapshot};
+use wisp_core::transfer::{TransferPhase, TransferSnapshot};
 
-use super::transfer::{
-    TransferPhaseData, TransferPlanData, TransferPlanFileData, TransferSnapshotData,
-};
+use super::transfer::{map_plan, TransferPhaseData, TransferPlanData, TransferSnapshotData};
 use super::RUNTIME;
 use crate::api::error::internal_user_facing_error;
 use crate::api::error::map_optional_user_facing_error;
@@ -397,23 +395,6 @@ fn map_connection_candidate(candidate: AppCandidatePath) -> SendConnectionCandid
         addr: candidate.addr,
         kind: kind.to_owned(),
         active: candidate.active,
-    }
-}
-
-fn map_plan(plan: TransferPlan) -> TransferPlanData {
-    TransferPlanData {
-        session_id: plan.session_id,
-        total_files: plan.total_files,
-        total_bytes: plan.total_bytes,
-        files: plan.files.into_iter().map(map_plan_file).collect(),
-    }
-}
-
-fn map_plan_file(file: TransferPlanFile) -> TransferPlanFileData {
-    TransferPlanFileData {
-        id: file.id,
-        path: file.path,
-        size: file.size,
     }
 }
 

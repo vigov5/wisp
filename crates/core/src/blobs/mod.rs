@@ -6,3 +6,4 @@ pub(crate) mod util;
 
 pub use error::BlobError;
 pub use send::{BlobProtocolHandler, BlobServingStrategy, ExternalBlobRegistrar};
+pub use telemetry::benchmark_run_id;

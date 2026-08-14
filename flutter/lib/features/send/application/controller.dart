@@ -455,7 +455,7 @@ class SendController extends _$SendController {
       role: MobileTransferTelemetryRole.sender,
       phase: MobileTransferTelemetryPhase.safReadCopy,
       outcome: MobileTransferTelemetryOutcome.complete,
-      sessionId: plan.sessionId,
+      benchmarkRunId: plan.benchmarkRunId,
       elapsed: Duration(microseconds: elapsedMicros),
       bytesTotal: bytesCopied,
       fileCount: plan.totalFiles,

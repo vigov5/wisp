@@ -518,7 +518,7 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
             : saveFailed
             ? MobileTransferTelemetryOutcome.failed
             : MobileTransferTelemetryOutcome.complete,
-        sessionId: plan.sessionId,
+        benchmarkRunId: plan.benchmarkRunId,
         elapsed: saveStopwatch.elapsed,
         bytesTotal: plan.totalBytes,
         fileCount: plan.totalFiles,

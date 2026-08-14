@@ -11,7 +11,7 @@ void main() {
         role: MobileTransferTelemetryRole.sender,
         phase: MobileTransferTelemetryPhase.safReadCopy,
         outcome: MobileTransferTelemetryOutcome.complete,
-        sessionId: '0123456789abcdef',
+        benchmarkRunId: BigInt.one,
         elapsed: Duration.zero,
         bytesTotal: BigInt.zero,
         fileCount: 0,
@@ -25,7 +25,7 @@ void main() {
       role: MobileTransferTelemetryRole.receiver,
       phase: MobileTransferTelemetryPhase.backgroundSave,
       outcome: MobileTransferTelemetryOutcome.complete,
-      sessionId: 'ffffffffffffffff',
+      benchmarkRunId: BigInt.parse('18446744073709551615'),
       elapsed: const Duration(milliseconds: 1250),
       bytesTotal: BigInt.parse('18446744073709551615'),
       fileCount: 3,
@@ -44,20 +44,20 @@ void main() {
     expect(fields['file_count'], 3);
   });
 
-  test('rejects session IDs outside the pseudonymous benchmark format', () {
-    String? encode(String sessionId) => encodeMobileTransferPhase(
+  test('rejects missing or out-of-range benchmark tokens', () {
+    String? encode(BigInt? benchmarkRunId) => encodeMobileTransferPhase(
       role: MobileTransferTelemetryRole.sender,
       phase: MobileTransferTelemetryPhase.safReadCopy,
       outcome: MobileTransferTelemetryOutcome.complete,
-      sessionId: sessionId,
+      benchmarkRunId: benchmarkRunId,
       elapsed: Duration.zero,
       bytesTotal: BigInt.zero,
       fileCount: 0,
     );
 
-    expect(encode('ABCDEF0123456789'), isNull);
-    expect(encode('../private-path'), isNull);
-    expect(encode('0123456789abcdef0'), isNull);
+    expect(encode(null), isNull);
+    expect(encode(BigInt.from(-1)), isNull);
+    expect(encode(BigInt.parse('18446744073709551616')), isNull);
   });
 
   test('rejects counters outside the u64 telemetry schema', () {
@@ -65,7 +65,7 @@ void main() {
       role: MobileTransferTelemetryRole.sender,
       phase: MobileTransferTelemetryPhase.safReadCopy,
       outcome: MobileTransferTelemetryOutcome.complete,
-      sessionId: '0123456789abcdef',
+      benchmarkRunId: BigInt.one,
       elapsed: Duration.zero,
       bytesTotal: BigInt.parse('18446744073709551616'),
       fileCount: 1,

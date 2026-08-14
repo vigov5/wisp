@@ -7,7 +7,6 @@ const bool transferTelemetryEnabled = bool.fromEnvironment(
 );
 
 const String _telemetryTarget = 'wisp_transfer_telemetry';
-final RegExp _telemetrySessionPattern = RegExp(r'^[0-9a-f]{16}$');
 final BigInt _maxU64 = BigInt.parse('18446744073709551615');
 
 enum MobileTransferTelemetryRole { sender, receiver }
@@ -23,7 +22,7 @@ bool emitMobileTransferPhase({
   required MobileTransferTelemetryRole role,
   required MobileTransferTelemetryPhase phase,
   required MobileTransferTelemetryOutcome outcome,
-  required String sessionId,
+  required BigInt? benchmarkRunId,
   required Duration elapsed,
   required BigInt bytesTotal,
   required int fileCount,
@@ -33,7 +32,7 @@ bool emitMobileTransferPhase({
     role: role,
     phase: phase,
     outcome: outcome,
-    sessionId: sessionId,
+    benchmarkRunId: benchmarkRunId,
     elapsed: elapsed,
     bytesTotal: bytesTotal,
     fileCount: fileCount,
@@ -48,21 +47,20 @@ String? encodeMobileTransferPhase({
   required MobileTransferTelemetryRole role,
   required MobileTransferTelemetryPhase phase,
   required MobileTransferTelemetryOutcome outcome,
-  required String sessionId,
+  required BigInt? benchmarkRunId,
   required Duration elapsed,
   required BigInt bytesTotal,
   required int fileCount,
 }) {
-  if (!_telemetrySessionPattern.hasMatch(sessionId) ||
+  if (benchmarkRunId == null ||
+      benchmarkRunId.isNegative ||
+      benchmarkRunId > _maxU64 ||
       elapsed.isNegative ||
       bytesTotal.isNegative ||
       bytesTotal > _maxU64 ||
       fileCount < 0) {
     return null;
   }
-  final runId = BigInt.tryParse(sessionId, radix: 16);
-  if (runId == null) return null;
-
   // Dart's native `int` is signed, while the Rust run ID and byte counters are
   // u64. Canonical decimal strings preserve all 64 bits; the bounded analyzer
   // accepts this representation alongside ordinary JSON integers.
@@ -75,7 +73,7 @@ String? encodeMobileTransferPhase({
         MobileTransferTelemetryRole.receiver => 'receiver',
       },
       'benchmark_run_id_available': true,
-      'benchmark_run_id': runId.toString(),
+      'benchmark_run_id': benchmarkRunId.toString(),
       'phase': switch (phase) {
         MobileTransferTelemetryPhase.safReadCopy => 'saf_read_copy',
         MobileTransferTelemetryPhase.backgroundSave => 'background_save',
