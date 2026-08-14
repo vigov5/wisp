@@ -110,31 +110,49 @@ def config(transfer_id, role="receiver", **overrides):
     return event("blob_config", transfer_id, role=role, **fields)
 
 
-def provider_sample(transfer_id, *, benchmark_run_id=42):
+def provider_sample(
+    transfer_id,
+    *,
+    benchmark_run_id=42,
+    sample_ms=250,
+    elapsed_ms=250,
+    rtt_us=2_000,
+    lost_packets_delta=2,
+    lost_bytes_delta=2_400,
+    congestion_events_delta=1,
+):
     return event(
         "blob_sample",
         transfer_id,
         role="provider",
         benchmark_run_id_available=True,
         benchmark_run_id=benchmark_run_id,
-        sample_ms=250,
-        elapsed_ms=250,
+        sample_ms=sample_ms,
+        elapsed_ms=elapsed_ms,
         terminal_sample=False,
         path="direct",
         path_stats_available=True,
-        rtt_us=2_000,
+        rtt_us=rtt_us,
         cwnd_bytes=2_000_000,
         udp_tx_bytes_delta=250_000,
         udp_rx_bytes_delta=10_000,
-        lost_packets_delta=2,
-        lost_bytes_delta=2_400,
-        congestion_events_delta=1,
+        lost_packets_delta=lost_packets_delta,
+        lost_bytes_delta=lost_bytes_delta,
+        congestion_events_delta=congestion_events_delta,
         current_mtu=1_200,
         plpmtud_probe_loss_delta=0,
     )
 
 
-def provider_summary(transfer_id, *, benchmark_run_id=42):
+def provider_summary(
+    transfer_id,
+    *,
+    benchmark_run_id=42,
+    elapsed_ms=250,
+    lost_packets_total=2,
+    lost_bytes_total=2_400,
+    congestion_events_total=1,
+):
     return event(
         "blob_summary",
         transfer_id,
@@ -142,11 +160,11 @@ def provider_summary(transfer_id, *, benchmark_run_id=42):
         benchmark_run_id_available=True,
         benchmark_run_id=benchmark_run_id,
         outcome="complete",
-        elapsed_ms=250,
+        elapsed_ms=elapsed_ms,
         udp_tx_bytes_total=250_000,
-        lost_packets_total=2,
-        lost_bytes_total=2_400,
-        congestion_events_total=1,
+        lost_packets_total=lost_packets_total,
+        lost_bytes_total=lost_bytes_total,
+        congestion_events_total=congestion_events_total,
         path="direct",
     )
 
@@ -239,10 +257,12 @@ class TelemetryAnalysisTests(unittest.TestCase):
         self.assertEqual(run["stall_count"], 1)
         self.assertEqual(run["transport_idle_stall_count"], 1)
         self.assertEqual(run["transport_active_delivery_gap_count"], 0)
+        self.assertEqual(run["transport_active_loss_recovery_count"], 0)
         self.assertEqual(run["unclassified_stall_count"], 0)
         self.assertEqual(run["full_throughput_window_count"], 3)
         self.assertTrue(run["measurement_valid"])
         self.assertEqual(run["rtt_p50_us"], 2_000.0)
+        self.assertEqual(run["network_stats_coverage"], 1.0)
         self.assertEqual(run["path_mtu_min"], 1_200)
         self.assertFalse(run["passes_p10_70pct_median"])
         self.assertFalse(run["passes_no_stall"])
@@ -279,11 +299,146 @@ class TelemetryAnalysisTests(unittest.TestCase):
         )["runs"][0]
 
         self.assertEqual(run["transport_active_delivery_gap_count"], 1)
+        self.assertEqual(run["transport_active_loss_recovery_count"], 0)
         self.assertEqual(run["transport_idle_stall_count"], 0)
         self.assertEqual(run["unclassified_stall_count"], 0)
         self.assertEqual(run["stall_episodes"][0]["duration_ms"], 1_000)
         self.assertEqual(run["stall_episodes"][0]["udp_rx_bytes"], 1_000_000)
+        self.assertFalse(
+            run["stall_episodes"][0]["provider_loss_evidence_available"]
+        )
         self.assertFalse(run["passes_no_stall"])
+
+    def test_provider_loss_reclassifies_transport_active_gap_as_recovery(self):
+        run_fields = {
+            "benchmark_run_id_available": True,
+            "benchmark_run_id": 42,
+        }
+        receiver_lines = [
+            sample(13, 100_000, 250, **run_fields),
+            sample(
+                13,
+                0,
+                750,
+                sample_ms=500,
+                stalled_for_ms=500,
+                udp_rx_bytes_delta=500_000,
+                **run_fields,
+            ),
+            sample(
+                13,
+                0,
+                1_250,
+                sample_ms=500,
+                stalled_for_ms=1_000,
+                udp_rx_bytes_delta=500_000,
+                **run_fields,
+            ),
+            sample(13, 100_000, 1_500, **run_fields),
+            summary(
+                13,
+                elapsed_ms=1_500,
+                stall_count=1,
+                stall_total_ms=1_000,
+                longest_stall_ms=1_000,
+                **run_fields,
+            ),
+        ]
+        parsed = telemetry.parse_stream(
+            io.StringIO("\n".join(receiver_lines) + "\n"), source_id=0
+        )
+        provider_lines = [
+            provider_sample(
+                14,
+                sample_ms=500,
+                elapsed_ms=500,
+                lost_packets_delta=0,
+                lost_bytes_delta=0,
+                congestion_events_delta=0,
+            ),
+            provider_sample(
+                14,
+                sample_ms=500,
+                elapsed_ms=1_000,
+                lost_packets_delta=7,
+                lost_bytes_delta=8_400,
+                congestion_events_delta=3,
+            ),
+            provider_sample(
+                14,
+                sample_ms=500,
+                elapsed_ms=1_500,
+                lost_packets_delta=0,
+                lost_bytes_delta=0,
+                congestion_events_delta=0,
+            ),
+            provider_summary(
+                14,
+                elapsed_ms=1_500,
+                lost_packets_total=7,
+                lost_bytes_total=8_400,
+                congestion_events_total=3,
+            ),
+        ]
+        telemetry.parse_stream(
+            io.StringIO("\n".join(provider_lines) + "\n"),
+            parsed,
+            source_id=1,
+        )
+
+        run = telemetry.build_report(parsed)["runs"][0]
+        episode = run["stall_episodes"][0]
+        self.assertTrue(run["provider_loss_timeline_aligned"])
+        self.assertEqual(run["provider_timeline_alignment_offset_ms"], 0)
+        self.assertEqual(run["transport_active_loss_recovery_count"], 1)
+        self.assertEqual(run["transport_active_delivery_gap_count"], 0)
+        self.assertEqual(episode["kind"], "transport_active_loss_recovery")
+        self.assertTrue(episode["provider_loss_evidence_available"])
+        self.assertEqual(episode["provider_lost_packets"], 7)
+        self.assertEqual(episode["provider_lost_bytes"], 8_400)
+        self.assertEqual(episode["provider_congestion_events"], 3)
+
+    def test_provider_loss_is_not_joined_when_terminal_timeline_skew_is_large(self):
+        run_fields = {
+            "benchmark_run_id_available": True,
+            "benchmark_run_id": 42,
+        }
+        receiver_lines = [
+            sample(15, 100_000, 250, **run_fields),
+            sample(
+                15,
+                0,
+                750,
+                sample_ms=500,
+                stalled_for_ms=500,
+                udp_rx_bytes_delta=500_000,
+                **run_fields,
+            ),
+            sample(15, 100_000, 1_000, **run_fields),
+            summary(15, elapsed_ms=1_000, stall_count=1, **run_fields),
+        ]
+        parsed = telemetry.parse_stream(
+            io.StringIO("\n".join(receiver_lines) + "\n"), source_id=0
+        )
+        telemetry.parse_stream(
+            io.StringIO(
+                "\n".join(
+                    [
+                        provider_sample(16, elapsed_ms=500),
+                        provider_summary(16, elapsed_ms=3_000),
+                    ]
+                )
+                + "\n"
+            ),
+            parsed,
+            source_id=1,
+        )
+
+        run = telemetry.build_report(parsed)["runs"][0]
+        self.assertFalse(run["provider_loss_timeline_aligned"])
+        self.assertIsNone(run["provider_timeline_alignment_offset_ms"])
+        self.assertEqual(run["transport_active_loss_recovery_count"], 0)
+        self.assertEqual(run["transport_active_delivery_gap_count"], 1)
 
     def test_stall_episode_details_are_bounded(self):
         lines = []
@@ -419,7 +574,26 @@ class TelemetryAnalysisTests(unittest.TestCase):
         self.assertAlmostEqual(run["bdp_window_ratio_p50"], 0.8)
         self.assertEqual(run["congestion_controller"], "cubic")
 
-    def test_provider_stats_join_receiver_by_anonymous_run_id(self):
+    def test_bdp_and_rtt_inflation_use_time_aligned_windows(self):
+        lines = [
+            config(17),
+            sample(17, 1_000_000, 250, rtt_us=1_000),
+            sample(17, 1_000_000, 500, rtt_us=1_000),
+            sample(17, 1_000_000, 750, rtt_us=3_000),
+            sample(17, 1_000_000, 1_000, rtt_us=5_000),
+            summary(17),
+        ]
+        run = telemetry.build_report(
+            telemetry.parse_stream(io.StringIO("\n".join(lines) + "\n"))
+        )["runs"][0]
+
+        self.assertAlmostEqual(run["bdp_window_ratio_p50"], 0.0025)
+        self.assertEqual(run["rtt_min_us"], 1_000)
+        self.assertEqual(run["rtt_inflation_p50"], 2.0)
+        self.assertEqual(run["rtt_inflation_p90"], 4.4)
+        self.assertEqual(run["rtt_inflation_max"], 5.0)
+
+    def test_provider_stats_join_receiver_by_pseudonymous_run_id(self):
         run_fields = {
             "benchmark_run_id_available": True,
             "benchmark_run_id": 42,
@@ -495,7 +669,7 @@ class TelemetryAnalysisTests(unittest.TestCase):
         ):
             self.assertEqual(telemetry.main(["unused", "--fail-on-unstable"]), 1)
 
-    def test_phase_timings_join_receiver_by_anonymous_run_id(self):
+    def test_phase_timings_join_receiver_by_pseudonymous_run_id(self):
         run_fields = {
             "benchmark_run_id_available": True,
             "benchmark_run_id": 42,
@@ -511,7 +685,7 @@ class TelemetryAnalysisTests(unittest.TestCase):
         report = telemetry.build_report(parsed)
         run = report["runs"][0]
 
-        self.assertEqual(report["schema_version"], 3)
+        self.assertEqual(report["schema_version"], 4)
         self.assertEqual(run["phase_timing_count"], 3)
         self.assertEqual(run["phase_timings_ms"]["sender.prepare_total"], 350)
         self.assertEqual(run["phase_timings_ms"]["receiver.fetch_store"], 1_250)

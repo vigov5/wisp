@@ -48,6 +48,7 @@ MIN_STABILITY_WINDOWS = 3
 # active, so the episode is a delivery/HOL gap rather than a network-idle stall.
 UDP_ACTIVE_RATE_THRESHOLD_BYTES_PER_SEC = 64 * 1024
 MAX_REPORTED_STALL_EPISODES = 100
+MAX_PROVIDER_TIMELINE_SKEW_MS = 1_000
 MAX_U64 = (1 << 64) - 1
 
 
@@ -662,13 +663,17 @@ def _observed_stalls(samples: list[Sample]) -> tuple[int, int]:
 
 def _classify_stall_episodes(
     samples: list[Sample],
+    *,
+    provider_samples: list[ProviderSample] | None = None,
+    provider_timeline_offset_ms: int | None = None,
 ) -> tuple[list[dict[str, object]], Counter[str], int]:
     """Classify sampled stalls without treating all flat app counters alike.
 
     Receiver UDP counters include protocol overhead, so this is deliberately a
     coarse diagnostic rather than a payload-throughput replacement. A bounded
     64 KiB/s threshold keeps ACK/keepalive traffic from being mistaken for an
-    active bulk receive path.
+    active bulk receive path. When a uniquely matched provider timeline is
+    available, overlapping payload loss identifies a loss-recovery/HOL gap.
     """
 
     episodes: list[dict[str, object]] = []
@@ -688,10 +693,40 @@ def _classify_stall_episodes(
         udp_rx_rate = (
             udp_rx_bytes * 1_000.0 / sampled_ms if sampled_ms > 0 else None
         )
+        start_ms = max(0, end_ms - duration_ms)
+        provider_overlap = (
+            [
+                sample
+                for sample in provider_samples
+                if sample.path_stats_available
+                and sample.elapsed_ms - provider_timeline_offset_ms > start_ms
+                and sample.elapsed_ms
+                - sample.sample_ms
+                - provider_timeline_offset_ms
+                < end_ms
+            ]
+            if provider_samples is not None
+            and provider_timeline_offset_ms is not None
+            else []
+        )
+        provider_lost_packets = sum(
+            sample.lost_packets_delta for sample in provider_overlap
+        )
+        provider_lost_bytes = sum(sample.lost_bytes_delta for sample in provider_overlap)
+        provider_congestion_events = sum(
+            sample.congestion_events_delta for sample in provider_overlap
+        )
+        provider_loss_evidence_available = bool(provider_overlap)
+
         if udp_rx_rate is None:
             kind = "unknown"
         elif udp_rx_rate >= UDP_ACTIVE_RATE_THRESHOLD_BYTES_PER_SEC:
-            kind = "transport_active_delivery_gap"
+            kind = (
+                "transport_active_loss_recovery"
+                if provider_loss_evidence_available
+                and (provider_lost_packets > 0 or provider_lost_bytes > 0)
+                else "transport_active_delivery_gap"
+            )
         else:
             kind = "transport_idle_stall"
         episode_count += 1
@@ -700,13 +735,30 @@ def _classify_stall_episodes(
             episodes.append(
                 {
                     "kind": kind,
-                    "start_ms": max(0, end_ms - duration_ms),
+                    "start_ms": start_ms,
                     "end_ms": end_ms,
                     "duration_ms": duration_ms,
                     "sample_count": len(current),
                     "network_sample_count": len(network_samples),
                     "udp_rx_bytes": udp_rx_bytes if network_samples else None,
                     "udp_rx_average_bytes_per_sec": udp_rx_rate,
+                    "provider_loss_evidence_available": (
+                        provider_loss_evidence_available
+                    ),
+                    "provider_sample_count": len(provider_overlap),
+                    "provider_lost_packets": (
+                        provider_lost_packets
+                        if provider_loss_evidence_available
+                        else None
+                    ),
+                    "provider_lost_bytes": (
+                        provider_lost_bytes if provider_loss_evidence_available else None
+                    ),
+                    "provider_congestion_events": (
+                        provider_congestion_events
+                        if provider_loss_evidence_available
+                        else None
+                    ),
                 }
             )
 
@@ -718,6 +770,20 @@ def _classify_stall_episodes(
             current = []
     finish_episode()
     return episodes, kind_counts, episode_count
+
+
+def _provider_timeline_offset_ms(
+    receiver: TransferEvents, provider: ProviderEvents
+) -> int | None:
+    """Align sampler elapsed times only when both terminal clocks are close."""
+    if receiver.summary is None or provider.summary is None:
+        return None
+    offset_ms = provider.summary.elapsed_ms - receiver.summary.elapsed_ms
+    return (
+        offset_ms
+        if abs(offset_ms) <= MAX_PROVIDER_TIMELINE_SKEW_MS
+        else None
+    )
 
 
 def _samples_through_last_payload_progress(samples: list[Sample]) -> list[Sample]:
@@ -777,6 +843,44 @@ def resample_throughput(
     return rates, full_window_count, analyzed_ms
 
 
+def _resample_rtt(
+    samples: list[Sample], window_ms: int = THROUGHPUT_WINDOW_MS
+) -> list[float | None]:
+    """Return time-weighted RTT values on the same windows as throughput."""
+    if window_ms < 1:
+        raise ValueError("throughput window must be positive")
+
+    steady_samples = [
+        sample
+        for sample in _samples_through_last_payload_progress(samples)
+        if not sample.warmup and sample.sample_ms > 0
+    ]
+    rtts: list[float | None] = []
+    window_elapsed_ms = 0.0
+    weighted_rtt = 0.0
+    network_ms = 0.0
+
+    for sample in steady_samples:
+        remaining_ms = float(sample.sample_ms)
+        while remaining_ms > 0:
+            take_ms = min(float(window_ms) - window_elapsed_ms, remaining_ms)
+            window_elapsed_ms += take_ms
+            remaining_ms -= take_ms
+            if sample.path_stats_available and sample.rtt_us > 0:
+                weighted_rtt += float(sample.rtt_us) * take_ms
+                network_ms += take_ms
+
+            if window_elapsed_ms >= window_ms:
+                rtts.append(weighted_rtt / network_ms if network_ms > 0 else None)
+                window_elapsed_ms = 0.0
+                weighted_rtt = 0.0
+                network_ms = 0.0
+
+    if not rtts and window_elapsed_ms > 0:
+        rtts.append(weighted_rtt / network_ms if network_ms > 0 else None)
+    return rtts
+
+
 def _path_metrics(samples: list[Sample]) -> dict[str, object]:
     bytes_by_path = Counter()
     path_migrations = 0
@@ -813,10 +917,14 @@ def _path_metrics(samples: list[Sample]) -> dict[str, object]:
 
 
 def summarize_transfer(
-    source_id: int, transfer_id: int, events: TransferEvents
+    source_id: int,
+    transfer_id: int,
+    events: TransferEvents,
+    provider_events: ProviderEvents | None = None,
 ) -> dict[str, object]:
     summary = events.summary
     speeds, full_window_count, analyzed_ms = resample_throughput(events.samples)
+    rtt_windows = _resample_rtt(events.samples)
     if not speeds:
         fallback_rate = (
             summary.average_bytes_per_sec
@@ -834,8 +942,19 @@ def summarize_transfer(
     low_threshold = median * 0.10
     payload_samples = _samples_through_last_payload_progress(events.samples)
     observed_stall_count, observed_longest_stall_ms = _observed_stalls(payload_samples)
+    provider_timeline_offset_ms = (
+        _provider_timeline_offset_ms(events, provider_events)
+        if provider_events is not None
+        else None
+    )
     stall_episodes, stall_kind_counts, observed_stall_episode_count = (
-        _classify_stall_episodes(payload_samples)
+        _classify_stall_episodes(
+            payload_samples,
+            provider_samples=(
+                provider_events.samples if provider_events is not None else None
+            ),
+            provider_timeline_offset_ms=provider_timeline_offset_ms,
+        )
     )
     path_metrics = _path_metrics(events.samples)
 
@@ -850,6 +969,9 @@ def summarize_transfer(
     transport_active_delivery_gap_count = stall_kind_counts[
         "transport_active_delivery_gap"
     ]
+    transport_active_loss_recovery_count = stall_kind_counts[
+        "transport_active_loss_recovery"
+    ]
     transport_idle_stall_count = stall_kind_counts["transport_idle_stall"]
     explicitly_unknown_stall_count = stall_kind_counts["unknown"]
     unclassified_stall_count = explicitly_unknown_stall_count + max(
@@ -857,7 +979,11 @@ def summarize_transfer(
     )
     stats_samples = sum(sample.path_stats_available for sample in events.samples)
     network_samples = [sample for sample in events.samples if sample.path_stats_available]
-    rtts = [sample.rtt_us for sample in network_samples]
+    rtts = [sample.rtt_us for sample in network_samples if sample.rtt_us > 0]
+    min_rtt_us = min(rtts) if rtts else None
+    rtt_inflations = (
+        [rtt / min_rtt_us for rtt in rtts] if min_rtt_us is not None else []
+    )
     cwnds = [sample.local_cwnd_bytes for sample in network_samples]
     mtus = [sample.current_mtu for sample in network_samples if sample.current_mtu > 0]
     config = events.config
@@ -868,11 +994,11 @@ def summarize_transfer(
     )
     bdp_window_ratios = (
         [
-            sample.bytes_per_sec
-            * (sample.rtt_us / 1_000_000.0)
+            speed
+            * (rtt_us / 1_000_000.0)
             / config.stream_receive_window_bytes
-            for sample in payload_samples
-            if not sample.warmup and sample.path_stats_available and sample.rtt_us > 0
+            for speed, rtt_us in zip(speeds, rtt_windows)
+            if rtt_us is not None
         ]
         if window_config_known and config is not None
         else []
@@ -965,12 +1091,25 @@ def summarize_transfer(
         "stall_udp_active_threshold_bytes_per_sec": (
             UDP_ACTIVE_RATE_THRESHOLD_BYTES_PER_SEC
         ),
+        "provider_timeline_alignment_offset_ms": provider_timeline_offset_ms,
+        "provider_loss_timeline_aligned": provider_timeline_offset_ms is not None,
         "transport_active_delivery_gap_count": transport_active_delivery_gap_count,
+        "transport_active_loss_recovery_count": (
+            transport_active_loss_recovery_count
+        ),
         "transport_idle_stall_count": transport_idle_stall_count,
         "unclassified_stall_count": unclassified_stall_count,
-        "network_stats_coverage": stats_samples / len(speeds),
+        "network_stats_coverage": stats_samples / len(events.samples),
+        "rtt_min_us": min_rtt_us,
         "rtt_p50_us": percentile(rtts, 0.50) if rtts else None,
         "rtt_p90_us": percentile(rtts, 0.90) if rtts else None,
+        "rtt_inflation_p50": (
+            percentile(rtt_inflations, 0.50) if rtt_inflations else None
+        ),
+        "rtt_inflation_p90": (
+            percentile(rtt_inflations, 0.90) if rtt_inflations else None
+        ),
+        "rtt_inflation_max": max(rtt_inflations) if rtt_inflations else None,
         "local_cwnd_p50_bytes": percentile(cwnds, 0.50) if cwnds else None,
         "udp_rx_bytes_observed": sum(sample.udp_rx_bytes_delta for sample in network_samples),
         "local_lost_packets_observed": sum(
@@ -1003,7 +1142,11 @@ def summarize_provider(
 ) -> dict[str, object]:
     summary = events.summary
     network_samples = [sample for sample in events.samples if sample.path_stats_available]
-    rtts = [sample.rtt_us for sample in network_samples]
+    rtts = [sample.rtt_us for sample in network_samples if sample.rtt_us > 0]
+    min_rtt_us = min(rtts) if rtts else None
+    rtt_inflations = (
+        [rtt / min_rtt_us for rtt in rtts] if min_rtt_us is not None else []
+    )
     cwnds = [sample.cwnd_bytes for sample in network_samples]
     mtus = [sample.current_mtu for sample in network_samples if sample.current_mtu > 0]
     config = events.config
@@ -1030,8 +1173,16 @@ def summarize_provider(
             if summary is not None and summary.elapsed_ms > 0
             else None
         ),
+        "rtt_min_us": min_rtt_us,
         "rtt_p50_us": percentile(rtts, 0.50) if rtts else None,
         "rtt_p90_us": percentile(rtts, 0.90) if rtts else None,
+        "rtt_inflation_p50": (
+            percentile(rtt_inflations, 0.50) if rtt_inflations else None
+        ),
+        "rtt_inflation_p90": (
+            percentile(rtt_inflations, 0.90) if rtt_inflations else None
+        ),
+        "rtt_inflation_max": max(rtt_inflations) if rtt_inflations else None,
         "cwnd_p50_bytes": percentile(cwnds, 0.50) if cwnds else None,
         "cwnd_p90_bytes": percentile(cwnds, 0.90) if cwnds else None,
         "lost_packets_total": (
@@ -1061,15 +1212,36 @@ def summarize_provider(
 
 
 def build_report(parsed: ParsedTelemetry) -> dict[str, object]:
+    provider_event_rows = [
+        (source_id, transfer_id, events)
+        for (source_id, transfer_id), events in sorted(parsed.providers.items())
+        if events.samples
+    ]
+    provider_events_by_run_id: dict[int, list[ProviderEvents]] = {}
+    for _, _, events in provider_event_rows:
+        if isinstance(events.benchmark_run_id, int):
+            provider_events_by_run_id.setdefault(events.benchmark_run_id, []).append(
+                events
+            )
+
     runs = [
-        summarize_transfer(source_id, transfer_id, events)
+        summarize_transfer(
+            source_id,
+            transfer_id,
+            events,
+            provider_events=(
+                provider_events_by_run_id[events.benchmark_run_id][0]
+                if isinstance(events.benchmark_run_id, int)
+                and len(provider_events_by_run_id.get(events.benchmark_run_id, [])) == 1
+                else None
+            ),
+        )
         for (source_id, transfer_id), events in sorted(parsed.transfers.items())
         if events.samples
     ]
     provider_runs = [
         summarize_provider(source_id, transfer_id, events)
-        for (source_id, transfer_id), events in sorted(parsed.providers.items())
-        if events.samples
+        for source_id, transfer_id, events in provider_event_rows
     ]
     if not runs and not provider_runs:
         raise AnalysisError("no blob telemetry samples found")
@@ -1154,6 +1326,11 @@ def build_report(parsed: ParsedTelemetry) -> dict[str, object]:
             if runs
             else None
         ),
+        "total_transport_active_loss_recovery_count": (
+            sum(int(run["transport_active_loss_recovery_count"]) for run in runs)
+            if runs
+            else None
+        ),
         "total_transport_idle_stall_count": (
             sum(int(run["transport_idle_stall_count"]) for run in runs)
             if runs
@@ -1174,7 +1351,7 @@ def build_report(parsed: ParsedTelemetry) -> dict[str, object]:
         ),
     }
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "skipped_lines": parsed.skipped_lines,
         "malformed_telemetry_lines": parsed.malformed_telemetry_lines,
         "runs": runs,
@@ -1262,6 +1439,7 @@ def print_human_report(report: dict[str, object]) -> None:
             if int(run["stall_count"]) > 0:
                 print(
                     "     stall classes: "
+                    f"loss-recovery={int(run['transport_active_loss_recovery_count'])}, "
                     f"transport-active delivery={int(run['transport_active_delivery_gap_count'])}, "
                     f"transport-idle={int(run['transport_idle_stall_count'])}, "
                     f"unknown={int(run['unclassified_stall_count'])}"
