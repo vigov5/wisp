@@ -7,8 +7,16 @@ use std::{
 };
 
 use super::error::{BlobError, BlobTextError, Result};
+use super::receive::BlobTransportProfile;
+use super::telemetry::{
+    BlobProviderTelemetry, TransferEnd, benchmark_run_id, is_enabled as telemetry_enabled,
+};
 use super::util::import_files;
-use iroh::{Endpoint, protocol::Router};
+use iroh::{
+    Endpoint,
+    endpoint::Connection,
+    protocol::{AcceptError, ProtocolHandler, Router},
+};
 use iroh_blobs::{
     ALPN, BlobFormat, BlobsProtocol, api::TempTag, format::collection::Collection,
     store::fs::FsStore, ticket::BlobTicket,
@@ -26,7 +34,7 @@ use tracing::trace;
 /// **External**: the caller already has a process-wide accept loop that
 /// multiplexes ALPNs (e.g. the app crate's `BlobDispatcher` plugged into the
 /// receiver service's `Router`).  In that mode we do *not* spawn another
-/// router — we hand the prepared `BlobsProtocol` to the caller-provided
+/// router — we hand the prepared [`BlobProtocolHandler`] to the caller-provided
 /// registrar, and the existing accept loop dispatches `iroh_blobs::ALPN`
 /// connections to it.  Avoids the "two routers fighting for `endpoint.accept`"
 /// race and, more importantly, avoids the "two endpoints with the same
@@ -52,6 +60,59 @@ impl Default for BlobServingStrategy {
     }
 }
 
+/// Blob protocol handler with optional provider-side QUIC telemetry.
+///
+/// The wrapper is used by both the internal Router and the app's shared
+/// dispatcher, keeping congestion/loss measurement on the payload-sending
+/// endpoint without changing `iroh-blobs` itself.
+#[derive(Debug, Clone)]
+pub struct BlobProtocolHandler {
+    protocol: BlobsProtocol,
+    transport_profile: BlobTransportProfile,
+    benchmark_run_id: Option<u64>,
+}
+
+impl BlobProtocolHandler {
+    fn new(
+        protocol: BlobsProtocol,
+        transport_profile: BlobTransportProfile,
+        benchmark_run_id: Option<u64>,
+    ) -> Self {
+        Self {
+            protocol,
+            transport_profile,
+            benchmark_run_id,
+        }
+    }
+}
+
+impl ProtocolHandler for BlobProtocolHandler {
+    async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
+        let mut telemetry = telemetry_enabled().then(|| {
+            BlobProviderTelemetry::start(
+                std::time::Instant::now(),
+                connection.to_info(),
+                self.transport_profile,
+                self.benchmark_run_id,
+            )
+        });
+        // `ConnectionInfo` is weak. Keep one strong handle until the terminal
+        // sample has captured the provider's last congestion counters.
+        let telemetry_connection = telemetry.as_ref().map(|_| connection.clone());
+        let result = self.protocol.accept(connection).await;
+        if let Some(telemetry) = telemetry.as_mut() {
+            let outcome = if result.is_ok() {
+                TransferEnd::Complete
+            } else {
+                TransferEnd::Failed
+            };
+            telemetry.finish(outcome).await;
+        }
+        drop(telemetry_connection);
+        result
+    }
+}
+
 /// Caller-provided hook for the **External** [`BlobServingStrategy`].
 ///
 /// The implementer is responsible for routing inbound `iroh_blobs::ALPN`
@@ -60,7 +121,7 @@ impl Default for BlobServingStrategy {
 /// - `register_blob_protocol` is called once before the sender writes its
 ///   `BlobTicket` to the peer.  After this returns Ok, the dispatcher must
 ///   be able to serve `iroh_blobs::ALPN` connections referencing the
-///   collection hash inside `protocol`.
+///   collection served by `protocol`.
 /// - `unregister_blob_protocol` is called exactly once after the transfer
 ///   finishes (success or failure).  It MUST clear the registration so the
 ///   next send can install its own protocol.
@@ -69,7 +130,7 @@ impl Default for BlobServingStrategy {
 pub trait ExternalBlobRegistrar: std::fmt::Debug + Send + Sync + 'static {
     fn register_blob_protocol(
         &self,
-        protocol: BlobsProtocol,
+        protocol: BlobProtocolHandler,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
     fn unregister_blob_protocol(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
@@ -166,6 +227,8 @@ impl PreparedStore {
 #[derive(Debug)]
 pub(crate) struct BlobService {
     endpoint: Endpoint,
+    transport_profile: BlobTransportProfile,
+    benchmark_run_id: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -184,17 +247,34 @@ enum BlobRegistrationInner {
     /// connections to `protocol` for us.  Shutdown asks the registrar to
     /// drop its reference so the next send can install a different protocol.
     ///
-    /// We hold `protocol` here only to keep the `Arc<BlobsInner>` alive
+    /// We hold `protocol` here only to keep its `Arc<BlobsInner>` alive
     /// until shutdown — the registrar already has its own clone.
     External {
         registrar: Arc<dyn ExternalBlobRegistrar>,
-        _protocol: BlobsProtocol,
+        _protocol: BlobProtocolHandler,
     },
 }
 
 impl BlobService {
     pub(crate) fn new(endpoint: Endpoint) -> Self {
-        Self { endpoint }
+        Self {
+            endpoint,
+            transport_profile: BlobTransportProfile::default(),
+            benchmark_run_id: None,
+        }
+    }
+
+    pub(crate) fn with_transport_profile(
+        mut self,
+        transport_profile: BlobTransportProfile,
+    ) -> Self {
+        self.transport_profile = transport_profile;
+        self
+    }
+
+    pub(crate) fn with_session_id(mut self, session_id: &str) -> Self {
+        self.benchmark_run_id = benchmark_run_id(session_id);
+        self
     }
 
     /// Register `prepared` for serving using the supplied strategy.  See
@@ -204,7 +284,11 @@ impl BlobService {
         prepared: PreparedStore,
         strategy: &BlobServingStrategy,
     ) -> Result<BlobRegistration> {
-        let protocol = BlobsProtocol::new(prepared.store().as_ref(), None);
+        let protocol = BlobProtocolHandler::new(
+            BlobsProtocol::new(prepared.store().as_ref(), None),
+            self.transport_profile,
+            self.benchmark_run_id,
+        );
         let ticket = BlobTicket::new(
             self.endpoint.addr(),
             prepared.collection_tag().hash(),
@@ -325,11 +409,9 @@ mod tests {
         use std::sync::atomic::AtomicUsize;
         use std::sync::{Arc, Mutex};
 
-        use iroh::{Endpoint, SecretKey};
-        use iroh_blobs::BlobsProtocol;
-
-        use super::{BlobService, BlobServingStrategy, ExternalBlobRegistrar};
+        use super::{BlobProtocolHandler, BlobService, BlobServingStrategy, ExternalBlobRegistrar};
         use crate::blobs::error::Result as BlobResult;
+        use iroh::{Endpoint, SecretKey};
 
         #[derive(Debug, Default)]
         struct RecordingRegistrar {
@@ -341,13 +423,13 @@ mod tests {
             unregister_count: AtomicUsize,
             // Hold the registered protocol so we can verify it was actually
             // passed in (the dispatcher in production stores it the same way).
-            stored_protocol: Mutex<Option<BlobsProtocol>>,
+            stored_protocol: Mutex<Option<BlobProtocolHandler>>,
         }
 
         impl ExternalBlobRegistrar for RecordingRegistrar {
             fn register_blob_protocol(
                 &self,
-                protocol: BlobsProtocol,
+                protocol: BlobProtocolHandler,
             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = BlobResult<()>> + Send + '_>>
             {
                 Box::pin(async move {

@@ -1,8 +1,8 @@
 pub(crate) mod error;
 pub mod receive;
 pub mod send;
-mod telemetry;
+pub(crate) mod telemetry;
 pub(crate) mod util;
 
 pub use error::BlobError;
-pub use send::{BlobServingStrategy, ExternalBlobRegistrar};
+pub use send::{BlobProtocolHandler, BlobServingStrategy, ExternalBlobRegistrar};

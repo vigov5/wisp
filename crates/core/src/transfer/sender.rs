@@ -12,6 +12,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{info, instrument};
 
 use crate::{
+    blobs::receive::BlobTransportProfile,
     blobs::send::{BlobService, BlobServingStrategy, PreparedStore},
     protocol::message::{DeviceType, INLINE_TEXT_MAX_BYTES, MessageKind},
     protocol::wire as protocol_wire,
@@ -183,6 +184,7 @@ pub struct Sender {
     identity: protocol_message::Identity,
     request: SendRequest,
     blob_strategy: BlobServingStrategy,
+    blob_transport_profile: BlobTransportProfile,
 }
 
 impl Sender {
@@ -197,6 +199,7 @@ impl Sender {
             session_id: format!("{:016x}", random::<u64>()),
             request,
             blob_strategy: BlobServingStrategy::Internal,
+            blob_transport_profile: BlobTransportProfile::default(),
         }
     }
 
@@ -205,6 +208,14 @@ impl Sender {
     /// the receiver-service endpoint to avoid relay duplicate-id).
     pub fn with_blob_strategy(mut self, strategy: BlobServingStrategy) -> Self {
         self.blob_strategy = strategy;
+        self
+    }
+
+    pub fn with_blob_transport_profile(
+        mut self,
+        blob_transport_profile: BlobTransportProfile,
+    ) -> Self {
+        self.blob_transport_profile = blob_transport_profile;
         self
     }
 
@@ -224,6 +235,7 @@ impl Sender {
             identity,
             request,
             blob_strategy,
+            blob_transport_profile,
         } = self;
 
         tokio::spawn(async move {
@@ -234,6 +246,7 @@ impl Sender {
                 request,
                 events: events.clone(),
                 blob_strategy,
+                blob_transport_profile,
                 conn_info_tx: Some(conn_info_tx),
             };
             let outcome = session.run(cancel_rx).await;
@@ -256,6 +269,7 @@ struct SenderSession {
     request: SendRequest,
     events: SenderEventSink,
     blob_strategy: BlobServingStrategy,
+    blob_transport_profile: BlobTransportProfile,
     conn_info_tx: Option<oneshot::Sender<ConnectionInfo>>,
 }
 
@@ -413,7 +427,9 @@ impl SenderSession {
 
         // --- Data Transfer ---
         let prepared = prepared.expect("file send path always prepares a blob store");
-        let blob_service = BlobService::new(self.endpoint.clone());
+        let blob_service = BlobService::new(self.endpoint.clone())
+            .with_transport_profile(self.blob_transport_profile)
+            .with_session_id(&self.session_id);
         let registration = blob_service
             .register_with_strategy(prepared, &self.blob_strategy)
             .await

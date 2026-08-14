@@ -113,7 +113,8 @@ impl ReceiverSession {
             device_type,
             out_dir,
             conflict_policy,
-        ));
+        ))
+        .with_blob_transport_profile(crate::quic_keepalive::blob_transport_profile());
         let start = session.start(endpoint, connection);
         let CoreReceiverStart {
             mut events,

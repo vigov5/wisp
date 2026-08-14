@@ -6,7 +6,8 @@
 //! relay slot.  That single endpoint runs a single `iroh::protocol::Router`
 //! that multiplexes the two ALPNs we speak — `wisp_core::protocol::ALPN`
 //! (handshake / control) and `iroh_blobs::ALPN` (data).  When a send session
-//! starts it prepares a `BlobsProtocol` and registers it here; the receiver's
+//! starts it prepares a telemetry-aware blob protocol handler and registers it
+//! here; the receiver's
 //! router calls into this dispatcher whenever the peer dials back over the
 //! blobs ALPN.  When the send session ends, it clears the slot.
 
@@ -15,19 +16,18 @@ use std::sync::{Arc, OnceLock};
 
 use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler};
-use iroh_blobs::BlobsProtocol;
 use std::future::Future;
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
-use wisp_core::blobs::{BlobError, ExternalBlobRegistrar};
+use wisp_core::blobs::{BlobError, BlobProtocolHandler, ExternalBlobRegistrar};
 
 /// Singleton that wires the receiver-service `Router` to the current sender's
-/// `BlobsProtocol`.  At most one sender is active per process today, matching
+/// blob protocol handler. At most one sender is active per process today, matching
 /// the UI (one Send screen at a time).
 #[derive(Debug, Clone)]
 pub struct BlobDispatcher {
-    active: Arc<RwLock<Option<BlobsProtocol>>>,
+    active: Arc<RwLock<Option<BlobProtocolHandler>>>,
 }
 
 impl BlobDispatcher {
@@ -43,13 +43,13 @@ impl BlobDispatcher {
     }
 }
 
-/// Sender-side wiring: install the prepared `BlobsProtocol` before writing
+/// Sender-side wiring: install the prepared blob handler before writing
 /// the `BlobTicket` to the peer; remove it once the transfer completes (or
 /// fails).  See [`wisp_core::blobs::ExternalBlobRegistrar`] for the contract.
 impl ExternalBlobRegistrar for BlobDispatcher {
     fn register_blob_protocol(
         &self,
-        protocol: BlobsProtocol,
+        protocol: BlobProtocolHandler,
     ) -> Pin<Box<dyn Future<Output = Result<(), BlobError>> + Send + '_>> {
         Box::pin(async move {
             let mut guard = self.active.write().await;

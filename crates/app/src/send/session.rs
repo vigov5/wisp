@@ -254,7 +254,8 @@ impl SendSession {
                 inline_text: self.draft.inline_text().map(str::to_owned),
             },
         )
-        .with_blob_strategy(blob_strategy);
+        .with_blob_strategy(blob_strategy)
+        .with_blob_transport_profile(crate::quic_keepalive::blob_transport_profile());
 
         let sender_run = sender.run_with_events();
         let (mut core_events, cancel_tx, outcome_rx, conn_info_rx) = sender_run.into_parts();

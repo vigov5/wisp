@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use iroh::endpoint::{QuicTransportConfig, VarInt};
+use wisp_core::blobs::receive::BlobTransportProfile;
 
 /// Per-stream flow-control receive window advertised by this endpoint.
 ///
@@ -21,6 +22,15 @@ const STREAM_RECEIVE_WINDOW_BYTES: u32 = 8 * 1024 * 1024;
 
 #[cfg(not(target_os = "android"))]
 const STREAM_RECEIVE_WINDOW_BYTES: u32 = 16 * 1024 * 1024;
+
+pub(crate) fn blob_transport_profile() -> BlobTransportProfile {
+    BlobTransportProfile::new(
+        u64::from(STREAM_RECEIVE_WINDOW_BYTES),
+        u64::from(VarInt::MAX),
+        8u64 * u64::from(STREAM_RECEIVE_WINDOW_BYTES),
+        "cubic",
+    )
+}
 
 /// Tuned QUIC transport config for drift: keepalive (Android-friendly) plus the
 /// throughput knobs that lift the single-stream ceiling on high-latency paths.
@@ -70,7 +80,7 @@ pub(crate) fn build_transport_config() -> QuicTransportConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::build_transport_config;
+    use super::{blob_transport_profile, build_transport_config};
 
     #[test]
     fn build_transport_config_runs_without_panic() {
@@ -79,5 +89,6 @@ mod tests {
         // expose getters on QuicTransportConfig — but a compile-and-run check
         // guards against API drift on iroh upgrades.
         let _ = build_transport_config();
+        let _ = blob_transport_profile();
     }
 }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_lite::StreamExt;
-use iroh::endpoint::{ConnectOptions, ConnectionInfo, MtuDiscoveryConfig, QuicTransportConfig};
+use iroh::endpoint::{ConnectOptions, MtuDiscoveryConfig, QuicTransportConfig};
 use iroh::{Endpoint, EndpointAddr};
 use iroh_blobs::{
     ALPN as BLOBS_ALPN, api::remote::GetProgressItem, store::fs::FsStore, ticket::BlobTicket,
@@ -16,9 +16,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, trace};
 
 use super::error::{BlobError, BlobTextError, Result};
-use super::telemetry::{
-    BlobTransferTelemetry, TELEMETRY_SAMPLE_INTERVAL, TransferEnd, is_enabled as telemetry_enabled,
-};
+use super::telemetry::{BlobTransferTelemetry, TransferEnd, is_enabled as telemetry_enabled};
 use crate::lan::in_usb_tunnel_subnet;
 
 /// QUIC MTU-discovery ceiling (max UDP payload, bytes) for the Android↔Android
@@ -31,6 +29,64 @@ use crate::lan::in_usb_tunnel_subnet;
 /// before. Keep this at or below that TUN MTU minus IPv4+UDP overhead (28 bytes)
 /// so the raised TUN MTU is actually usable end-to-end.
 const AOA_MTU_DISCOVERY_UPPER_BOUND: u16 = 7_900;
+
+// Defaults from noq 0.16's `TransportConfig`. The AOA per-dial override starts
+// from `QuicTransportConfig::builder()`, so these are its actual flow-control
+// values unless that override is explicitly changed.
+const NOQ_DEFAULT_STREAM_RECEIVE_WINDOW_BYTES: u64 = 1_250_000;
+const NOQ_DEFAULT_SEND_WINDOW_BYTES: u64 = 10_000_000;
+
+/// Flow-control and congestion settings applied to blob QUIC connections.
+///
+/// iroh does not currently expose getters for `QuicTransportConfig`, so the
+/// application passes the values alongside the config at construction time.
+/// Unknown profiles remain explicit rather than emitting guessed numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlobTransportProfile {
+    pub(super) known: bool,
+    pub(super) stream_receive_window_bytes: u64,
+    pub(super) connection_receive_window_bytes: u64,
+    pub(super) send_window_bytes: u64,
+    pub(super) congestion_controller: &'static str,
+}
+
+impl BlobTransportProfile {
+    pub const fn new(
+        stream_receive_window_bytes: u64,
+        connection_receive_window_bytes: u64,
+        send_window_bytes: u64,
+        congestion_controller: &'static str,
+    ) -> Self {
+        Self {
+            known: true,
+            stream_receive_window_bytes,
+            connection_receive_window_bytes,
+            send_window_bytes,
+            congestion_controller,
+        }
+    }
+
+    fn noq_default() -> Self {
+        Self::new(
+            NOQ_DEFAULT_STREAM_RECEIVE_WINDOW_BYTES,
+            u64::from(iroh::endpoint::VarInt::MAX),
+            NOQ_DEFAULT_SEND_WINDOW_BYTES,
+            "cubic",
+        )
+    }
+}
+
+impl Default for BlobTransportProfile {
+    fn default() -> Self {
+        Self {
+            known: false,
+            stream_receive_window_bytes: 0,
+            connection_receive_window_bytes: 0,
+            send_window_bytes: 0,
+            congestion_controller: "unknown",
+        }
+    }
+}
 
 /// Maximum rate at which blob progress crosses into the transfer/application
 /// layers. `iroh-blobs` reports progress at BAO-content granularity (16 KiB for
@@ -84,33 +140,30 @@ fn handle_download_item(
     progress: &mut ProgressCoalescer,
     update_tx: &mpsc::UnboundedSender<BlobDownloadUpdate>,
     ticket_context: &str,
-    telemetry: Option<(&mut BlobTransferTelemetry, &ConnectionInfo)>,
-) -> ControlFlow<Result<()>> {
+    telemetry: Option<&BlobTransferTelemetry>,
+) -> ControlFlow<DownloadTerminal> {
     let now = Instant::now();
     match item {
         Some(GetProgressItem::Progress(offset)) => {
-            if let Some((telemetry, _)) = telemetry {
-                telemetry.observe_progress(now, offset);
+            if let Some(telemetry) = telemetry {
+                telemetry.observe_progress(offset);
             }
             if let Some(bytes_received) = progress.observe(now, offset) {
                 let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
             }
             ControlFlow::Continue(())
         }
-        Some(GetProgressItem::Done(_)) | None => {
-            if let Some((telemetry, connection)) = telemetry {
-                telemetry.finish(now, connection, TransferEnd::Complete);
-            }
+        Some(GetProgressItem::Done(_)) => {
             if let Some(bytes_received) = progress.flush_pending(now) {
                 let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
             }
             let _ = update_tx.send(BlobDownloadUpdate::Done);
-            ControlFlow::Break(Ok(()))
+            ControlFlow::Break(DownloadTerminal {
+                outcome: TransferEnd::Complete,
+                result: Ok(()),
+            })
         }
         Some(GetProgressItem::Error(err)) => {
-            if let Some((telemetry, connection)) = telemetry {
-                telemetry.finish(now, connection, TransferEnd::Failed);
-            }
             if let Some(bytes_received) = progress.flush_pending(now) {
                 let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
             }
@@ -121,12 +174,40 @@ fn handle_download_item(
                     BlobTextError::new(message.clone()),
                 ),
             });
-            ControlFlow::Break(Err(BlobError::fetch(
-                ticket_context.to_owned(),
-                BlobTextError::new(message),
-            )))
+            ControlFlow::Break(DownloadTerminal {
+                outcome: TransferEnd::Failed,
+                result: Err(BlobError::fetch(
+                    ticket_context.to_owned(),
+                    BlobTextError::new(message),
+                )),
+            })
+        }
+        None => {
+            if let Some(bytes_received) = progress.flush_pending(now) {
+                let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
+            }
+            let message = "blob fetch stream ended before completion".to_owned();
+            let _ = update_tx.send(BlobDownloadUpdate::Failed {
+                error: BlobError::fetch(
+                    ticket_context.to_owned(),
+                    BlobTextError::new(message.clone()),
+                ),
+            });
+            ControlFlow::Break(DownloadTerminal {
+                outcome: TransferEnd::Failed,
+                result: Err(BlobError::fetch(
+                    ticket_context.to_owned(),
+                    BlobTextError::new(message),
+                )),
+            })
         }
     }
+}
+
+#[derive(Debug)]
+struct DownloadTerminal {
+    outcome: TransferEnd,
+    result: Result<()>,
 }
 
 /// Chooses a per-path QUIC transport config for the receiver's blob dial.
@@ -143,7 +224,7 @@ fn handle_download_item(
 /// already far from limiting), so we raise the MTU-discovery ceiling and keep
 /// everything else lean. Keepalive mirrors the global config so the cable path
 /// behaves identically otherwise.
-fn blob_connect_options(addr: &EndpointAddr) -> Option<ConnectOptions> {
+fn blob_connect_options(addr: &EndpointAddr) -> Option<(ConnectOptions, BlobTransportProfile)> {
     let is_aoa_tunnel = addr.ip_addrs().any(|sa| match sa {
         SocketAddr::V4(v4) => in_usb_tunnel_subnet(*v4.ip()),
         SocketAddr::V6(_) => false,
@@ -163,7 +244,10 @@ fn blob_connect_options(addr: &EndpointAddr) -> Option<ConnectOptions> {
         .mtu_discovery_config(Some(mtu))
         .build();
 
-    Some(ConnectOptions::new().with_transport_config(transport))
+    Some((
+        ConnectOptions::new().with_transport_config(transport),
+        BlobTransportProfile::noq_default(),
+    ))
 }
 
 #[derive(Debug)]
@@ -225,6 +309,8 @@ pub trait BlobDownloadStrategy: Send + Sync + 'static {
         endpoint: Endpoint,
         store: Arc<FsStore>,
         ticket: BlobTicket,
+        transport_profile: BlobTransportProfile,
+        benchmark_run_id: Option<u64>,
         update_tx: mpsc::UnboundedSender<BlobDownloadUpdate>,
     ) -> JoinHandle<Result<()>>;
 }
@@ -238,6 +324,8 @@ impl BlobDownloadStrategy for SequentialBlobDownload {
         endpoint: Endpoint,
         store: Arc<FsStore>,
         ticket: BlobTicket,
+        transport_profile: BlobTransportProfile,
+        benchmark_run_id: Option<u64>,
         update_tx: mpsc::UnboundedSender<BlobDownloadUpdate>,
     ) -> JoinHandle<Result<()>> {
         tokio::spawn(async move {
@@ -246,8 +334,8 @@ impl BlobDownloadStrategy for SequentialBlobDownload {
             // Per-path dial: relay/Wi-Fi/LAN inherit the endpoint's global
             // transport config (Tier 1 window + CUBIC); the AOA USB tunnel gets a
             // raised MTU-discovery ceiling instead. See `blob_connect_options`.
-            let connection = match blob_connect_options(&addr) {
-                Some(opts) => {
+            let (connection, transport_profile) = match blob_connect_options(&addr) {
+                Some((opts, aoa_profile)) => {
                     debug!(
                         ?addr,
                         "blob dial: AOA USB tunnel path (raised MTU discovery)"
@@ -256,55 +344,48 @@ impl BlobDownloadStrategy for SequentialBlobDownload {
                         .connect_with_opts(addr, BLOBS_ALPN, opts)
                         .await
                         .map_err(|source| BlobError::connect(ticket_context.clone(), source))?;
-                    connecting
-                        .await
-                        .map_err(|source| BlobError::connect(ticket_context.clone(), source))?
+                    (
+                        connecting
+                            .await
+                            .map_err(|source| BlobError::connect(ticket_context.clone(), source))?,
+                        aoa_profile,
+                    )
                 }
-                None => endpoint
-                    .connect(addr, BLOBS_ALPN)
-                    .await
-                    .map_err(|source| BlobError::connect(ticket_context.clone(), source))?,
+                None => (
+                    endpoint
+                        .connect(addr, BLOBS_ALPN)
+                        .await
+                        .map_err(|source| BlobError::connect(ticket_context.clone(), source))?,
+                    transport_profile,
+                ),
             };
 
-            // Preserve the original hot loop when telemetry is disabled: no
-            // timer, `select!`, path-stat read, or connection-info handle.
-            let connection_info = telemetry_enabled().then(|| connection.to_info());
+            // Telemetry is fully absent from the hot path when its tracing
+            // target is disabled. When enabled, a separate sampler owns the
+            // timer and path-stat reads; this loop still awaits `next()` to
+            // completion and only publishes a monotonic atomic byte counter.
+            let mut telemetry = telemetry_enabled().then(|| {
+                BlobTransferTelemetry::start(
+                    Instant::now(),
+                    connection.to_info(),
+                    transport_profile,
+                    benchmark_run_id,
+                )
+            });
             let mut stream = store.remote().fetch(connection, ticket).stream();
             let mut progress = ProgressCoalescer::new(PROGRESS_EMIT_INTERVAL);
-            let Some(connection_info) = connection_info else {
-                loop {
-                    if let ControlFlow::Break(result) = handle_download_item(
-                        stream.next().await,
-                        &mut progress,
-                        &update_tx,
-                        &ticket_context,
-                        None,
-                    ) {
-                        return result;
-                    }
-                }
-            };
-
-            let mut telemetry = BlobTransferTelemetry::new(Instant::now());
-            let mut interval = tokio::time::interval(TELEMETRY_SAMPLE_INTERVAL);
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            interval.reset();
             loop {
-                let item = tokio::select! {
-                    item = stream.next() => item,
-                    _ = interval.tick() => {
-                        telemetry.emit_sample(Instant::now(), &connection_info);
-                        continue;
-                    }
-                };
-                if let ControlFlow::Break(result) = handle_download_item(
-                    item,
+                if let ControlFlow::Break(terminal) = handle_download_item(
+                    stream.next().await,
                     &mut progress,
                     &update_tx,
                     &ticket_context,
-                    Some((&mut telemetry, &connection_info)),
+                    telemetry.as_ref(),
                 ) {
-                    break result;
+                    if let Some(telemetry) = telemetry.as_mut() {
+                        telemetry.finish(terminal.outcome).await;
+                    }
+                    break terminal.result;
                 }
             }
         })
@@ -315,6 +396,8 @@ impl BlobDownloadStrategy for SequentialBlobDownload {
 pub struct BlobReceiver<S = SequentialBlobDownload> {
     endpoint: Endpoint,
     strategy: S,
+    transport_profile: BlobTransportProfile,
+    benchmark_run_id: Option<u64>,
 }
 
 impl BlobReceiver<SequentialBlobDownload> {
@@ -322,6 +405,8 @@ impl BlobReceiver<SequentialBlobDownload> {
         Self {
             endpoint,
             strategy: SequentialBlobDownload,
+            transport_profile: BlobTransportProfile::default(),
+            benchmark_run_id: None,
         }
     }
 }
@@ -331,7 +416,22 @@ where
     S: BlobDownloadStrategy,
 {
     pub fn with_strategy(endpoint: Endpoint, strategy: S) -> Self {
-        Self { endpoint, strategy }
+        Self {
+            endpoint,
+            strategy,
+            transport_profile: BlobTransportProfile::default(),
+            benchmark_run_id: None,
+        }
+    }
+
+    pub fn with_transport_profile(mut self, transport_profile: BlobTransportProfile) -> Self {
+        self.transport_profile = transport_profile;
+        self
+    }
+
+    pub fn with_benchmark_run_id(mut self, benchmark_run_id: Option<u64>) -> Self {
+        self.benchmark_run_id = benchmark_run_id;
+        self
     }
 
     pub async fn start(
@@ -356,9 +456,14 @@ where
                 .map_err(|source| BlobError::store_load(root_dir.clone(), source))?,
         );
         let (update_tx, update_rx) = mpsc::unbounded_channel();
-        let task = self
-            .strategy
-            .spawn(self.endpoint.clone(), store.clone(), ticket, update_tx);
+        let task = self.strategy.spawn(
+            self.endpoint.clone(),
+            store.clone(),
+            ticket,
+            self.transport_profile,
+            self.benchmark_run_id,
+            update_tx,
+        );
 
         trace!(root_dir = %root_dir.display(), "started blob download session");
 
@@ -375,11 +480,16 @@ where
 #[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
+    use std::ops::ControlFlow;
     use std::time::{Duration, Instant};
 
     use iroh::{EndpointAddr, SecretKey, TransportAddr};
+    use tokio::sync::mpsc;
 
-    use super::{ProgressCoalescer, blob_connect_options};
+    use super::{
+        BlobDownloadUpdate, ProgressCoalescer, TransferEnd, blob_connect_options,
+        handle_download_item,
+    };
 
     fn addr_with(ip: &str) -> EndpointAddr {
         let id = SecretKey::from_bytes(&[7u8; 32]).public();
@@ -391,8 +501,18 @@ mod tests {
     fn aoa_tunnel_addr_gets_per_path_override() {
         // Any address inside the AOA point-to-point /30 (10.42.0.0/30) selects
         // the tunnel-specific transport config (raised MTU-discovery ceiling).
-        assert!(blob_connect_options(&addr_with("10.42.0.1:11204")).is_some());
-        assert!(blob_connect_options(&addr_with("10.42.0.2:11204")).is_some());
+        for addr in ["10.42.0.1:11204", "10.42.0.2:11204"] {
+            let (_, profile) = blob_connect_options(&addr_with(addr)).unwrap();
+            assert!(profile.known);
+            assert_eq!(
+                profile.stream_receive_window_bytes,
+                super::NOQ_DEFAULT_STREAM_RECEIVE_WINDOW_BYTES
+            );
+            assert_eq!(
+                profile.send_window_bytes,
+                super::NOQ_DEFAULT_SEND_WINDOW_BYTES
+            );
+        }
     }
 
     #[test]
@@ -439,5 +559,25 @@ mod tests {
             progress.flush_pending(start + Duration::from_millis(127)),
             None
         );
+    }
+
+    #[test]
+    fn premature_progress_stream_eof_is_a_failed_download() {
+        let (update_tx, mut update_rx) = mpsc::unbounded_channel();
+        let mut progress = ProgressCoalescer::new(Duration::from_millis(100));
+
+        let terminal =
+            match handle_download_item(None, &mut progress, &update_tx, "test ticket", None) {
+                ControlFlow::Break(terminal) => terminal,
+                ControlFlow::Continue(()) => panic!("EOF must terminate the download"),
+            };
+
+        assert_eq!(terminal.outcome, TransferEnd::Failed);
+        assert!(terminal.result.is_err());
+        assert!(matches!(
+            update_rx.try_recv(),
+            Ok(BlobDownloadUpdate::Failed { .. })
+        ));
+        assert!(update_rx.try_recv().is_err());
     }
 }

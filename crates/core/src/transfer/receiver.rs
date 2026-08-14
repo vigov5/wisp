@@ -22,7 +22,9 @@ use tracing::{info, instrument, warn};
 use crate::{
     blobs::receive::{
         BlobDownloadSession, BlobDownloadUpdate, BlobDownloadUpdateStream, BlobReceiver,
+        BlobTransportProfile,
     },
+    blobs::telemetry::benchmark_run_id,
     fs_plan::ConflictPolicy,
     protocol::message as protocol_message,
     protocol::message::INLINE_TEXT_HARD_MAX_BYTES,
@@ -160,6 +162,7 @@ pub struct ReceiverStart {
 #[derive(Debug)]
 pub struct ReceiverSession {
     request: ReceiverRequest,
+    blob_transport_profile: BlobTransportProfile,
 }
 
 #[derive(Debug, Clone)]
@@ -171,7 +174,18 @@ pub struct ExpectedTransferFile {
 
 impl ReceiverSession {
     pub fn new(request: ReceiverRequest) -> Self {
-        Self { request }
+        Self {
+            request,
+            blob_transport_profile: BlobTransportProfile::default(),
+        }
+    }
+
+    pub fn with_blob_transport_profile(
+        mut self,
+        blob_transport_profile: BlobTransportProfile,
+    ) -> Self {
+        self.blob_transport_profile = blob_transport_profile;
+        self
     }
 
     pub fn start(self, endpoint: Endpoint, connection: Connection) -> ReceiverStart
@@ -184,12 +198,14 @@ impl ReceiverSession {
         let (cancel_tx, cancel_rx) = watch::channel(false);
         let (outcome_tx, outcome_rx) = oneshot::channel();
         let request = self.request.clone();
+        let blob_transport_profile = self.blob_transport_profile;
 
         tokio::spawn(async move {
             let outcome = run_session(
                 endpoint,
                 connection,
                 request,
+                blob_transport_profile,
                 Some(event_tx),
                 offer_tx,
                 decision_rx,
@@ -217,6 +233,7 @@ async fn run_session(
     endpoint: Endpoint,
     connection: Connection,
     mut request: ReceiverRequest,
+    blob_transport_profile: BlobTransportProfile,
     event_tx: Option<mpsc::UnboundedSender<ReceiverEvent>>,
     offer_tx: oneshot::Sender<Result<ReceiverOffer>>,
     decision_rx: oneshot::Receiver<ReceiverDecision>,
@@ -520,7 +537,9 @@ async fn run_session(
             .ticket
             .parse()
             .map_err(|source| TransferError::other("parsing blob ticket", source))?;
-        let blob_receiver = BlobReceiver::new(endpoint.clone());
+        let blob_receiver = BlobReceiver::new(endpoint.clone())
+            .with_transport_profile(blob_transport_profile)
+            .with_benchmark_run_id(benchmark_run_id(&session_id));
         let mut blob_download = blob_receiver
             .start(record_dir.join("store"), blob_ticket.clone(), false)
             .await
