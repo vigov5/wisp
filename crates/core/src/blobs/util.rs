@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use iroh_blobs::{
     BlobFormat,
@@ -20,6 +21,13 @@ pub(super) struct ImportedFile {
     pub(super) transfer_path: String,
     pub(super) temp_tag: TempTag,
     pub(super) size_bytes: u64,
+}
+
+#[derive(Debug)]
+pub(super) struct ImportFilesResult {
+    pub(super) files: Vec<ImportedFile>,
+    pub(super) walk_metadata: Duration,
+    pub(super) import_hash: Duration,
 }
 
 #[instrument(skip_all, fields(input_path = %path.display()))]
@@ -103,11 +111,23 @@ fn absolute_input_path(path: PathBuf) -> Result<PathBuf, FsPlanError> {
 }
 
 #[instrument(skip(store), fields(input_path = %path.display()))]
+#[cfg(test)]
 pub(super) async fn import_files(store: &Store, path: PathBuf) -> BlobResult<Vec<ImportedFile>> {
+    Ok(import_files_with_timings(store, path).await?.files)
+}
+
+#[instrument(skip(store), fields(input_path = %path.display()))]
+pub(super) async fn import_files_with_timings(
+    store: &Store,
+    path: PathBuf,
+) -> BlobResult<ImportFilesResult> {
     let path_display = path.display().to_string();
+    let walk_started = Instant::now();
     let files =
         walk_files(path).map_err(|source| BlobError::import_files(path_display.clone(), source))?;
+    let walk_metadata = walk_started.elapsed();
 
+    let import_started = Instant::now();
     let mut imported = Vec::with_capacity(files.len());
     for (transfer_path, local_path) in files {
         trace!(
@@ -145,8 +165,13 @@ pub(super) async fn import_files(store: &Store, path: PathBuf) -> BlobResult<Vec
                 .len(),
         });
     }
+    let import_hash = import_started.elapsed();
     trace!(imported_count = imported.len(), "finished importing files");
-    Ok(imported)
+    Ok(ImportFilesResult {
+        files: imported,
+        walk_metadata,
+        import_hash,
+    })
 }
 
 #[cfg(test)]

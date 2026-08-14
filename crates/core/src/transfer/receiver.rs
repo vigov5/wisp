@@ -12,7 +12,7 @@ use iroh_blobs::{
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::fs;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -24,7 +24,9 @@ use crate::{
         BlobDownloadSession, BlobDownloadUpdate, BlobDownloadUpdateStream, BlobReceiver,
         BlobTransportProfile,
     },
-    blobs::telemetry::benchmark_run_id,
+    blobs::telemetry::{
+        PhaseOutcome, TelemetryRole, TransferPhase as TelemetryPhase, benchmark_run_id, emit_phase,
+    },
     fs_plan::ConflictPolicy,
     protocol::message as protocol_message,
     protocol::message::INLINE_TEXT_HARD_MAX_BYTES,
@@ -249,21 +251,44 @@ async fn run_session(
     );
 
     // --- Phase 1: Handshake ---
-    let (mut control_send, mut control_recv, peer_hello, offer) =
-        match do_handshake(&endpoint, &request, &connection, &event_tx, &mut cancel_rx).await? {
-            HandshakeResult::Ok(s, r, h, o) => (s, r, h, o),
-            HandshakeResult::Cancelled(outcome) => {
-                let _ = offer_tx.send(Err(TransferError::other(
-                    "cancelled during handshake",
-                    std::io::Error::other("cancelled during handshake"),
-                )));
-                // Close now so a sender still blocked awaiting our decision (or
-                // mid-offer) sees the disconnect in ~1 RTT rather than waiting
-                // out its 130s decision / QUIC idle timeout.
-                connection.close(0u32.into(), b"cancelled during handshake");
-                return Ok(outcome);
-            }
-        };
+    let handshake_started = Instant::now();
+    let handshake_result =
+        do_handshake(&endpoint, &request, &connection, &event_tx, &mut cancel_rx).await;
+    let (mut control_send, mut control_recv, peer_hello, offer) = match handshake_result {
+        Ok(HandshakeResult::Ok(s, r, h, o)) => (s, r, h, o),
+        Ok(HandshakeResult::Cancelled(outcome)) => {
+            emit_phase(
+                TelemetryRole::Receiver,
+                TelemetryPhase::ControlHandshake,
+                None,
+                handshake_started.elapsed(),
+                PhaseOutcome::Cancelled,
+                0,
+                0,
+            );
+            let _ = offer_tx.send(Err(TransferError::other(
+                "cancelled during handshake",
+                std::io::Error::other("cancelled during handshake"),
+            )));
+            // Close now so a sender still blocked awaiting our decision (or
+            // mid-offer) sees the disconnect in ~1 RTT rather than waiting
+            // out its 130s decision / QUIC idle timeout.
+            connection.close(0u32.into(), b"cancelled during handshake");
+            return Ok(outcome);
+        }
+        Err(error) => {
+            emit_phase(
+                TelemetryRole::Receiver,
+                TelemetryPhase::ControlHandshake,
+                None,
+                handshake_started.elapsed(),
+                PhaseOutcome::Failed,
+                0,
+                0,
+            );
+            return Err(error);
+        }
+    };
 
     let session_id = peer_hello.session_id.clone();
     tracing::Span::current().record("session_id", &session_id);
@@ -278,6 +303,18 @@ async fn run_session(
         "received manifest"
     );
     let plan = TransferPlan::from_manifest(session_id.clone(), &offer.manifest)?;
+    let run_id = benchmark_run_id(&session_id);
+    let phase_file_count = plan.files.len();
+    let phase_bytes_total = plan.total_bytes;
+    emit_phase(
+        TelemetryRole::Receiver,
+        TelemetryPhase::ControlHandshake,
+        run_id,
+        handshake_started.elapsed(),
+        PhaseOutcome::Complete,
+        phase_bytes_total,
+        phase_file_count,
+    );
     let record_dir =
         local_record_dir(&request.out_dir, offer.collection_hash).map_err(TransferError::from)?;
 
@@ -370,12 +407,22 @@ async fn run_session(
             ));
         }
 
+        let decision_started = Instant::now();
         let decision = tokio::select! {
             res = decision_rx => res.map_err(|_| TransferError::channel_closed("waiting for receiver decision"))?,
             _ = wait_for_cancel(&mut cancel_rx) => return abort_session(&mut control_send, &session_id, protocol_message::CancelPhase::WaitingForDecision).await,
             _ = connection.closed() => return Err(TransferError::connection_closed("before receiver decision")),
             _ = tokio::time::sleep(Duration::from_secs(120)) => return Err(TransferError::timeout("waiting for receiver decision")),
         };
+        emit_phase(
+            TelemetryRole::Receiver,
+            TelemetryPhase::DecisionWait,
+            run_id,
+            decision_started.elapsed(),
+            PhaseOutcome::Complete,
+            phase_bytes_total,
+            phase_file_count,
+        );
 
         if decision == ReceiverDecision::Decline {
             let _ = send_receiver_decline(
@@ -440,12 +487,22 @@ async fn run_session(
     }
 
     // --- Phase 3: User Decision ---
+    let decision_started = Instant::now();
     let decision = tokio::select! {
         res = decision_rx => res.map_err(|_| TransferError::channel_closed("waiting for receiver decision"))?,
         _ = wait_for_cancel(&mut cancel_rx) => return abort_session(&mut control_send, &session_id, protocol_message::CancelPhase::WaitingForDecision).await,
         _ = connection.closed() => return Err(TransferError::connection_closed("before receiver decision")),
         _ = tokio::time::sleep(Duration::from_secs(120)) => return Err(TransferError::timeout("waiting for receiver decision")),
     };
+    emit_phase(
+        TelemetryRole::Receiver,
+        TelemetryPhase::DecisionWait,
+        run_id,
+        decision_started.elapsed(),
+        PhaseOutcome::Complete,
+        phase_bytes_total,
+        phase_file_count,
+    );
 
     if decision == ReceiverDecision::Decline {
         let _ = send_receiver_decline(
@@ -498,6 +555,7 @@ async fn run_session(
         .await
         .map_err(|source| TransferError::other("opening progress stream", source))?;
 
+    let fetch_store_started = Instant::now();
     let (_transfer_outcome, mut tracker) = if matches!(
         record.status,
         TransferStatus::DataComplete | TransferStatus::Finalizing | TransferStatus::Completed
@@ -519,6 +577,15 @@ async fn run_session(
         };
         let mut tracker = ProgressTracker::new(plan.clone());
         tracker.set_bytes_transferred(resume_from_bytes, std::time::Instant::now());
+        emit_phase(
+            TelemetryRole::Receiver,
+            TelemetryPhase::FetchStore,
+            run_id,
+            fetch_store_started.elapsed(),
+            PhaseOutcome::Skipped,
+            phase_bytes_total,
+            phase_file_count,
+        );
         (TransferOutcome::Completed, tracker)
     } else {
         let ticket_message = match tokio::select! {
@@ -539,11 +606,25 @@ async fn run_session(
             .map_err(|source| TransferError::other("parsing blob ticket", source))?;
         let blob_receiver = BlobReceiver::new(endpoint.clone())
             .with_transport_profile(blob_transport_profile)
-            .with_benchmark_run_id(benchmark_run_id(&session_id));
-        let mut blob_download = blob_receiver
+            .with_benchmark_run_id(run_id);
+        let mut blob_download = match blob_receiver
             .start(record_dir.join("store"), blob_ticket.clone(), false)
             .await
-            .map_err(|source| TransferError::other("starting blob download", source))?;
+        {
+            Ok(download) => download,
+            Err(source) => {
+                emit_phase(
+                    TelemetryRole::Receiver,
+                    TelemetryPhase::FetchStore,
+                    run_id,
+                    fetch_store_started.elapsed(),
+                    PhaseOutcome::Failed,
+                    phase_bytes_total,
+                    phase_file_count,
+                );
+                return Err(TransferError::other("starting blob download", source));
+            }
+        };
 
         let (outcome, tracker) = match do_transfer(
             &session_id,
@@ -571,6 +652,15 @@ async fn run_session(
                 }
                 blob_download.abort();
                 let _ = blob_download.shutdown().await;
+                emit_phase(
+                    TelemetryRole::Receiver,
+                    TelemetryPhase::FetchStore,
+                    run_id,
+                    fetch_store_started.elapsed(),
+                    PhaseOutcome::Failed,
+                    phase_bytes_total,
+                    phase_file_count,
+                );
                 return Err(error);
             }
         };
@@ -586,6 +676,15 @@ async fn run_session(
             .await;
             blob_download.abort();
             let _ = blob_download.shutdown().await;
+            emit_phase(
+                TelemetryRole::Receiver,
+                TelemetryPhase::FetchStore,
+                run_id,
+                fetch_store_started.elapsed(),
+                PhaseOutcome::Cancelled,
+                phase_bytes_total,
+                phase_file_count,
+            );
             return Ok(outcome);
         }
 
@@ -598,10 +697,20 @@ async fn run_session(
         )
         .await?;
         let _ = blob_download.shutdown().await;
+        emit_phase(
+            TelemetryRole::Receiver,
+            TelemetryPhase::FetchStore,
+            run_id,
+            fetch_store_started.elapsed(),
+            PhaseOutcome::Complete,
+            phase_bytes_total,
+            phase_file_count,
+        );
         (outcome, tracker)
     };
 
     // --- Phase 5: Export & Acknowledgement ---
+    let export_started = Instant::now();
     info!(%session_id, "exporting files to {}", request.out_dir.display());
     record.status = TransferStatus::Finalizing;
     save_transfer_record(&record, &record_dir, "saving record before export").await?;
@@ -639,9 +748,24 @@ async fn run_session(
     )
     .await;
 
-    let blob_store = FsStore::load(record_dir.join("store"))
-        .await
-        .map_err(|e| TransferError::other("loading blob store for export", e))?;
+    let blob_store = match FsStore::load(record_dir.join("store")).await {
+        Ok(store) => store,
+        Err(error) => {
+            emit_phase(
+                TelemetryRole::Receiver,
+                TelemetryPhase::Export,
+                run_id,
+                export_started.elapsed(),
+                PhaseOutcome::Failed,
+                phase_bytes_total,
+                phase_file_count,
+            );
+            return Err(TransferError::other(
+                "loading blob store for export",
+                error,
+            ));
+        }
+    };
 
     // Drive `export_downloaded_collection` to completion while keeping the
     // application-level wire busy with periodic Finalizing progress frames.
@@ -679,8 +803,28 @@ async fn run_session(
                 tracker.mark_completed(std::time::Instant::now());
                 tracker.snapshot(std::time::Instant::now())
             }
-            HeartbeatOutcome::Failed(error) => return Err(error),
+            HeartbeatOutcome::Failed(error) => {
+                emit_phase(
+                    TelemetryRole::Receiver,
+                    TelemetryPhase::Export,
+                    run_id,
+                    export_started.elapsed(),
+                    PhaseOutcome::Failed,
+                    phase_bytes_total,
+                    phase_file_count,
+                );
+                return Err(error);
+            }
             HeartbeatOutcome::Cancelled => {
+                emit_phase(
+                    TelemetryRole::Receiver,
+                    TelemetryPhase::Export,
+                    run_id,
+                    export_started.elapsed(),
+                    PhaseOutcome::Cancelled,
+                    phase_bytes_total,
+                    phase_file_count,
+                );
                 return abort_session(
                     &mut control_send,
                     &session_id,
@@ -692,8 +836,29 @@ async fn run_session(
     };
 
     record.status = TransferStatus::Completed;
-    save_transfer_record(&record, &record_dir, "saving final record").await?;
+    if let Err(error) = save_transfer_record(&record, &record_dir, "saving final record").await {
+        emit_phase(
+            TelemetryRole::Receiver,
+            TelemetryPhase::Export,
+            run_id,
+            export_started.elapsed(),
+            PhaseOutcome::Failed,
+            phase_bytes_total,
+            phase_file_count,
+        );
+        return Err(error);
+    }
+    emit_phase(
+        TelemetryRole::Receiver,
+        TelemetryPhase::Export,
+        run_id,
+        export_started.elapsed(),
+        PhaseOutcome::Complete,
+        phase_bytes_total,
+        phase_file_count,
+    );
 
+    let final_ack_started = Instant::now();
     let _ = protocol_wire::write_receiver_message(
         &mut progress_send,
         &protocol_message::ReceiverMessage::TransferCompleted(
@@ -718,6 +883,15 @@ async fn run_session(
     // Final wait for Sender to acknowledge our result
     await_final_sender_ack(&mut control_recv, &session_id).await;
     finish_control_stream(&mut control_send).await;
+    emit_phase(
+        TelemetryRole::Receiver,
+        TelemetryPhase::FinalAck,
+        run_id,
+        final_ack_started.elapsed(),
+        PhaseOutcome::Complete,
+        phase_bytes_total,
+        phase_file_count,
+    );
     emit_receiver_event(
         &event_tx,
         ReceiverEvent::TransferCompleted {

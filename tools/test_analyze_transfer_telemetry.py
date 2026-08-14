@@ -147,6 +147,28 @@ def provider_summary(transfer_id, *, benchmark_run_id=42):
     )
 
 
+def phase_event(
+    benchmark_run_id,
+    phase,
+    elapsed_ms,
+    *,
+    role="sender",
+    outcome="complete",
+):
+    return event(
+        "blob_phase",
+        0,
+        role=role,
+        benchmark_run_id_available=True,
+        benchmark_run_id=benchmark_run_id,
+        phase=phase,
+        outcome=outcome,
+        elapsed_ms=elapsed_ms,
+        bytes_total=1_000,
+        file_count=1,
+    )
+
+
 class TelemetryAnalysisTests(unittest.TestCase):
     def test_percentile_interpolates_small_samples(self):
         values = [100, 200, 300, 400]
@@ -357,6 +379,35 @@ class TelemetryAnalysisTests(unittest.TestCase):
         self.assertEqual(len(report["provider_runs"]), 1)
         self.assertEqual(provider["cwnd_p50_bytes"], 2_000_000.0)
         self.assertEqual(provider["lost_packets_total"], 2)
+
+    def test_phase_timings_join_receiver_by_anonymous_run_id(self):
+        run_fields = {
+            "benchmark_run_id_available": True,
+            "benchmark_run_id": 42,
+        }
+        lines = [
+            sample(10, 1_000, 1_000, sample_ms=1_000, **run_fields),
+            summary(10, **run_fields),
+            phase_event(42, "prepare_total", 350),
+            phase_event(42, "fetch_store", 1_250, role="receiver"),
+            phase_event(42, "export", 125, role="receiver"),
+        ]
+        parsed = telemetry.parse_stream(io.StringIO("\n".join(lines) + "\n"))
+        report = telemetry.build_report(parsed)
+        run = report["runs"][0]
+
+        self.assertEqual(report["schema_version"], 3)
+        self.assertEqual(run["phase_timing_count"], 3)
+        self.assertEqual(run["phase_timings_ms"]["sender.prepare_total"], 350)
+        self.assertEqual(run["phase_timings_ms"]["receiver.fetch_store"], 1_250)
+        self.assertEqual(run["phase_outcomes"]["receiver.export"], "complete")
+
+    def test_unknown_phase_label_is_rejected(self):
+        parsed = telemetry.parse_stream(
+            io.StringIO(phase_event(42, "\x1b[31mhostile", 1) + "\n")
+        )
+        self.assertEqual(parsed.phase_count, 0)
+        self.assertEqual(parsed.malformed_telemetry_lines, 1)
 
     def test_parser_rejects_unbounded_sample_growth(self):
         stream = io.StringIO(sample(1, 100, 250) + "\n" + sample(1, 200, 500) + "\n")

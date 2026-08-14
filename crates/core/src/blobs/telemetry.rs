@@ -42,6 +42,97 @@ pub(crate) fn benchmark_run_id(session_id: &str) -> Option<u64> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TelemetryRole {
+    Sender,
+    Receiver,
+}
+
+impl TelemetryRole {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Sender => "sender",
+            Self::Receiver => "receiver",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TransferPhase {
+    PrepareTotal,
+    WalkMetadata,
+    ImportHash,
+    CollectionStore,
+    Dial,
+    ControlHandshake,
+    DecisionWait,
+    BlobSetup,
+    FetchStore,
+    Export,
+    FinalAck,
+}
+
+impl TransferPhase {
+    fn label(self) -> &'static str {
+        match self {
+            Self::PrepareTotal => "prepare_total",
+            Self::WalkMetadata => "walk_metadata",
+            Self::ImportHash => "import_hash",
+            Self::CollectionStore => "collection_store",
+            Self::Dial => "dial",
+            Self::ControlHandshake => "control_handshake",
+            Self::DecisionWait => "decision_wait",
+            Self::BlobSetup => "blob_setup",
+            Self::FetchStore => "fetch_store",
+            Self::Export => "export",
+            Self::FinalAck => "final_ack",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PhaseOutcome {
+    Complete,
+    Failed,
+    Cancelled,
+    Skipped,
+}
+
+impl PhaseOutcome {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Complete => "complete",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Skipped => "skipped",
+        }
+    }
+}
+
+pub(crate) fn emit_phase(
+    role: TelemetryRole,
+    phase: TransferPhase,
+    run_id: Option<u64>,
+    elapsed: Duration,
+    outcome: PhaseOutcome,
+    bytes_total: u64,
+    file_count: usize,
+) {
+    debug!(
+        target: TELEMETRY_TARGET,
+        event = "blob_phase",
+        role = role.label(),
+        benchmark_run_id_available = run_id.is_some(),
+        benchmark_run_id = run_id.unwrap_or(0),
+        phase = phase.label(),
+        outcome = outcome.label(),
+        elapsed_ms = duration_millis(elapsed),
+        bytes_total,
+        file_count = u64::try_from(file_count).unwrap_or(u64::MAX),
+        "blob transfer phase timing"
+    );
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TransferEnd {
     Complete,
     Failed,

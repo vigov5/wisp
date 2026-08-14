@@ -18,6 +18,23 @@ TELEMETRY_TARGET = "wisp_transfer_telemetry"
 KNOWN_PATHS = frozenset({"aoa", "direct", "relay", "custom", "unknown"})
 KNOWN_CONGESTION_CONTROLLERS = frozenset({"cubic", "bbr", "unknown"})
 KNOWN_BUILD_PROFILES = frozenset({"debug", "release", "unknown"})
+KNOWN_PHASE_ROLES = frozenset({"sender", "receiver"})
+KNOWN_PHASES = frozenset(
+    {
+        "prepare_total",
+        "walk_metadata",
+        "import_hash",
+        "collection_store",
+        "dial",
+        "control_handshake",
+        "decision_wait",
+        "blob_setup",
+        "fetch_store",
+        "export",
+        "final_ack",
+    }
+)
+KNOWN_PHASE_OUTCOMES = frozenset({"complete", "failed", "cancelled", "skipped"})
 DEFAULT_MAX_INPUT_MIB = 512
 DEFAULT_MAX_LINE_CHARS = 1024 * 1024
 DEFAULT_MAX_SAMPLES = 1_000_000
@@ -113,6 +130,17 @@ class ProviderSummary:
     path: str
 
 
+@dataclass(frozen=True)
+class PhaseEvent:
+    role: str
+    benchmark_run_id: int | None
+    phase: str
+    outcome: str
+    elapsed_ms: int
+    bytes_total: int
+    file_count: int
+
+
 @dataclass
 class TransferEvents:
     samples: list[Sample] = field(default_factory=list)
@@ -133,9 +161,11 @@ class ProviderEvents:
 class ParsedTelemetry:
     transfers: dict[tuple[int, int], TransferEvents] = field(default_factory=dict)
     providers: dict[tuple[int, int], ProviderEvents] = field(default_factory=dict)
+    phases: list[tuple[int, PhaseEvent]] = field(default_factory=list)
     skipped_lines: int = 0
     malformed_telemetry_lines: int = 0
     sample_count: int = 0
+    phase_count: int = 0
 
 
 def _event_group(
@@ -414,6 +444,33 @@ def _parse_provider_summary(
     )
 
 
+def _parse_phase(fields: dict[str, object]) -> PhaseEvent | None:
+    role = _known_label(fields.get("role"), KNOWN_PHASE_ROLES)
+    phase = _known_label(fields.get("phase"), KNOWN_PHASES)
+    outcome = _known_label(fields.get("outcome"), KNOWN_PHASE_OUTCOMES)
+    elapsed_ms = _non_negative_int(fields.get("elapsed_ms"))
+    bytes_total = _non_negative_int(fields.get("bytes_total"))
+    file_count = _non_negative_int(fields.get("file_count"))
+    if (
+        role == "unknown"
+        or phase == "unknown"
+        or outcome == "unknown"
+        or elapsed_ms is None
+        or bytes_total is None
+        or file_count is None
+    ):
+        return None
+    return PhaseEvent(
+        role=role,
+        benchmark_run_id=_benchmark_run_id(fields),
+        phase=phase,
+        outcome=outcome,
+        elapsed_ms=elapsed_ms,
+        bytes_total=bytes_total,
+        file_count=file_count,
+    )
+
+
 def parse_stream(
     stream: TextIO,
     parsed: ParsedTelemetry | None = None,
@@ -465,7 +522,16 @@ def parse_stream(
 
         event = fields.get("event")
         role = fields.get("role")
-        if event == "blob_config":
+        if event == "blob_phase":
+            phase = _parse_phase(fields)
+            if phase is None:
+                result.malformed_telemetry_lines += 1
+                continue
+            if result.sample_count + result.phase_count >= max_samples:
+                raise AnalysisError(f"telemetry event limit exceeded ({max_samples:,})")
+            result.phases.append((source_id, phase))
+            result.phase_count += 1
+        elif event == "blob_config":
             config = _parse_config(fields, role) if role in {"receiver", "provider"} else None
             if config is None:
                 result.malformed_telemetry_lines += 1
@@ -487,8 +553,8 @@ def parse_stream(
             if sample is None:
                 result.malformed_telemetry_lines += 1
                 continue
-            if result.sample_count >= max_samples:
-                raise AnalysisError(f"sample limit exceeded ({max_samples:,})")
+            if result.sample_count + result.phase_count >= max_samples:
+                raise AnalysisError(f"telemetry event limit exceeded ({max_samples:,})")
             transfer_id, value = sample
             key = (source_id, transfer_id)
             events = _event_group(result, role, key, max_transfers)
@@ -893,6 +959,24 @@ def build_report(parsed: ParsedTelemetry) -> dict[str, object]:
         for (source_id, transfer_id), events in sorted(parsed.providers.items())
         if events.samples
     ]
+    phase_rows = [
+        {
+            "source_id": source_id,
+            "role": phase.role,
+            "benchmark_run_id": phase.benchmark_run_id,
+            "phase": phase.phase,
+            "outcome": phase.outcome,
+            "elapsed_ms": phase.elapsed_ms,
+            "bytes_total": phase.bytes_total,
+            "file_count": phase.file_count,
+        }
+        for source_id, phase in parsed.phases
+    ]
+    phases_by_run_id: dict[int, list[dict[str, object]]] = {}
+    for phase in phase_rows:
+        run_id = phase["benchmark_run_id"]
+        if isinstance(run_id, int):
+            phases_by_run_id.setdefault(run_id, []).append(phase)
     providers_by_run_id: dict[int, list[dict[str, object]]] = {}
     for provider in provider_runs:
         run_id = provider["benchmark_run_id"]
@@ -903,6 +987,19 @@ def build_report(parsed: ParsedTelemetry) -> dict[str, object]:
         matches = providers_by_run_id.get(run_id, []) if isinstance(run_id, int) else []
         run["provider_match_count"] = len(matches)
         run["provider"] = matches[0] if len(matches) == 1 else None
+        phase_matches = (
+            phases_by_run_id.get(run_id, []) if isinstance(run_id, int) else []
+        )
+        run["phase_timing_count"] = len(phase_matches)
+        run["phases"] = phase_matches
+        run["phase_timings_ms"] = {
+            f"{phase['role']}.{phase['phase']}": phase["elapsed_ms"]
+            for phase in phase_matches
+        }
+        run["phase_outcomes"] = {
+            f"{phase['role']}.{phase['phase']}": phase["outcome"]
+            for phase in phase_matches
+        }
 
     all_speeds = [
         float(speed)
@@ -936,11 +1033,12 @@ def build_report(parsed: ParsedTelemetry) -> dict[str, object]:
         ),
     }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "skipped_lines": parsed.skipped_lines,
         "malformed_telemetry_lines": parsed.malformed_telemetry_lines,
         "runs": runs,
         "provider_runs": provider_runs,
+        "phase_events": phase_rows,
         "aggregate": aggregate,
     }
 
@@ -1018,6 +1116,14 @@ def print_human_report(report: dict[str, object]) -> None:
             f"{cv if cv is not None else 0:>5.2f}  "
             f"{int(run['stall_count']):>6}"
         )
+        timings = run["phase_timings_ms"]
+        assert isinstance(timings, dict)
+        if timings:
+            rendered = ", ".join(
+                f"{name}={int(elapsed_ms)}ms"
+                for name, elapsed_ms in sorted(timings.items())
+            )
+            print(f"     phases: {rendered}")
     aggregate = report["aggregate"]
     assert isinstance(aggregate, dict)
     print()

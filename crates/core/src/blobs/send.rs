@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use super::error::{BlobError, BlobTextError, Result};
@@ -11,7 +12,7 @@ use super::receive::BlobTransportProfile;
 use super::telemetry::{
     BlobProviderTelemetry, TransferEnd, benchmark_run_id, is_enabled as telemetry_enabled,
 };
-use super::util::import_files;
+use super::util::import_files_with_timings;
 use iroh::{
     Endpoint,
     endpoint::Connection,
@@ -141,6 +142,14 @@ pub(crate) struct PreparedStore {
     store: FsStore,
     collection_tag: TempTag,
     files: Vec<PreparedFile>,
+    timings: PrepareTimings,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct PrepareTimings {
+    pub(crate) walk_metadata: Duration,
+    pub(crate) import_hash: Duration,
+    pub(crate) collection_store: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -158,15 +167,20 @@ impl PreparedStore {
         let mut collection = Collection::default();
         let mut seen_transfer_paths = HashSet::new();
         let mut files_out = Vec::new();
+        let mut timings = PrepareTimings::default();
         for path in files {
             trace!(input_path = %path.display(), "processing import input path");
-            let imported = import_files(&store, path.clone()).await.map_err(|source| {
-                BlobError::import_files(
-                    path.display().to_string(),
-                    BlobTextError::new(format!("{source:#}")),
-                )
-            })?;
-            for file in imported {
+            let imported = import_files_with_timings(&store, path.clone())
+                .await
+                .map_err(|source| {
+                    BlobError::import_files(
+                        path.display().to_string(),
+                        BlobTextError::new(format!("{source:#}")),
+                    )
+                })?;
+            timings.walk_metadata = timings.walk_metadata.saturating_add(imported.walk_metadata);
+            timings.import_hash = timings.import_hash.saturating_add(imported.import_hash);
+            for file in imported.files {
                 let transfer_path = file.transfer_path.clone();
                 if !seen_transfer_paths.insert(transfer_path.clone()) {
                     return Err(BlobError::duplicate_transfer_path(transfer_path));
@@ -181,10 +195,12 @@ impl PreparedStore {
 
         files_out.sort_by(|left, right| left.path.cmp(&right.path));
 
+        let collection_store_started = Instant::now();
         let collection_tag = collection
             .store(store.as_ref())
             .await
             .map_err(|source| BlobError::store_collection(source))?;
+        timings.collection_store = collection_store_started.elapsed();
         trace!(
             collection_hash = %collection_tag.hash(),
             item_count = seen_transfer_paths.len(),
@@ -195,6 +211,7 @@ impl PreparedStore {
             store,
             collection_tag,
             files: files_out,
+            timings,
         })
     }
 
@@ -208,6 +225,10 @@ impl PreparedStore {
 
     pub(crate) fn collection_hash(&self) -> iroh_blobs::Hash {
         self.collection_tag.hash()
+    }
+
+    pub(crate) fn timings(&self) -> PrepareTimings {
+        self.timings
     }
 
     pub(crate) fn manifest(&self) -> crate::protocol::message::TransferManifest {

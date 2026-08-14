@@ -7,13 +7,16 @@ use iroh::{
 use rand::random;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, oneshot, watch};
-use tokio::time::Duration;
+use tokio::time::{Duration, Instant};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{info, instrument};
 
 use crate::{
     blobs::receive::BlobTransportProfile,
     blobs::send::{BlobService, BlobServingStrategy, PreparedStore},
+    blobs::telemetry::{
+        PhaseOutcome, TelemetryRole, TransferPhase as TelemetryPhase, benchmark_run_id, emit_phase,
+    },
     protocol::message::{DeviceType, INLINE_TEXT_MAX_BYTES, MessageKind},
     protocol::wire as protocol_wire,
     protocol::{ALPN, ProtocolError},
@@ -276,6 +279,8 @@ struct SenderSession {
 impl SenderSession {
     #[instrument(skip_all, fields(session_id = %self.session_id, peer = %self.request.peer_endpoint_id))]
     async fn run(mut self, mut cancel_rx: watch::Receiver<bool>) -> Result<TransferOutcome> {
+        let run_id = benchmark_run_id(&self.session_id);
+        let prepare_started = Instant::now();
         let scratch = ScratchDir::new("wisp-send", &self.session_id).await?;
 
         // Decide how the payload travels.  Short text rides inline on the
@@ -330,6 +335,52 @@ impl SenderSession {
                 }
             };
 
+        let phase_file_count = prepared_plan.files.len();
+        let phase_bytes_total = prepared_plan.total_bytes;
+        if let Some(prepared) = prepared.as_ref() {
+            let timings = prepared.timings();
+            emit_phase(
+                TelemetryRole::Sender,
+                TelemetryPhase::WalkMetadata,
+                run_id,
+                timings.walk_metadata,
+                PhaseOutcome::Complete,
+                phase_bytes_total,
+                phase_file_count,
+            );
+            emit_phase(
+                TelemetryRole::Sender,
+                TelemetryPhase::ImportHash,
+                run_id,
+                timings.import_hash,
+                PhaseOutcome::Complete,
+                phase_bytes_total,
+                phase_file_count,
+            );
+            emit_phase(
+                TelemetryRole::Sender,
+                TelemetryPhase::CollectionStore,
+                run_id,
+                timings.collection_store,
+                PhaseOutcome::Complete,
+                phase_bytes_total,
+                phase_file_count,
+            );
+        }
+        emit_phase(
+            TelemetryRole::Sender,
+            TelemetryPhase::PrepareTotal,
+            run_id,
+            prepare_started.elapsed(),
+            if prepared.is_some() {
+                PhaseOutcome::Complete
+            } else {
+                PhaseOutcome::Skipped
+            },
+            phase_bytes_total,
+            phase_file_count,
+        );
+
         info!(
             session_id = %self.session_id,
             collection_hash = %collection_hash,
@@ -344,14 +395,47 @@ impl SenderSession {
             peer_endpoint_id: self.request.peer_endpoint_id,
             prepared_plan: prepared_plan.clone(),
         });
-        let connection = match self.connect_with_retry(&mut cancel_rx).await? {
-            Some(conn) => conn,
+        let dial_started = Instant::now();
+        let connection = match self.connect_with_retry(&mut cancel_rx).await {
+            Ok(Some(conn)) => {
+                emit_phase(
+                    TelemetryRole::Sender,
+                    TelemetryPhase::Dial,
+                    run_id,
+                    dial_started.elapsed(),
+                    PhaseOutcome::Complete,
+                    phase_bytes_total,
+                    phase_file_count,
+                );
+                conn
+            }
             // Cancelled while dialing — no connection was ever opened.
-            None => {
+            Ok(None) => {
+                emit_phase(
+                    TelemetryRole::Sender,
+                    TelemetryPhase::Dial,
+                    run_id,
+                    dial_started.elapsed(),
+                    PhaseOutcome::Cancelled,
+                    phase_bytes_total,
+                    phase_file_count,
+                );
                 return Ok(TransferOutcome::local_cancel(
                     protocol_message::TransferRole::Sender,
                     protocol_message::CancelPhase::WaitingForDecision,
                 ));
+            }
+            Err(error) => {
+                emit_phase(
+                    TelemetryRole::Sender,
+                    TelemetryPhase::Dial,
+                    run_id,
+                    dial_started.elapsed(),
+                    PhaseOutcome::Failed,
+                    phase_bytes_total,
+                    phase_file_count,
+                );
+                return Err(error);
             }
         };
 
@@ -427,6 +511,7 @@ impl SenderSession {
 
         // --- Data Transfer ---
         let prepared = prepared.expect("file send path always prepares a blob store");
+        let blob_setup_started = Instant::now();
         let blob_service = BlobService::new(self.endpoint.clone())
             .with_transport_profile(self.blob_transport_profile)
             .with_session_id(&self.session_id);
@@ -445,6 +530,15 @@ impl SenderSession {
             }),
         )
         .await?;
+        emit_phase(
+            TelemetryRole::Sender,
+            TelemetryPhase::BlobSetup,
+            run_id,
+            blob_setup_started.elapsed(),
+            PhaseOutcome::Complete,
+            phase_bytes_total,
+            phase_file_count,
+        );
 
         // Wait for the receiver to open its progress stream — but stay responsive
         // to a user cancel and a peer disconnect. A conforming receiver opens (and
@@ -714,10 +808,14 @@ async fn do_handshake(
     events: &SenderEventSink,
     prepared_plan: TransferPlan,
 ) -> Result<HandshakeResult> {
+    let run_id = benchmark_run_id(session_id);
+    let phase_file_count = manifest.count();
+    let phase_bytes_total = manifest.total_size();
     // Phase 1 — the machine handshake.  Open the stream, exchange hellos, and
     // put the offer on the wire under a tight timeout; the receiver isn't
     // waiting on a human yet.
-    let (mut send, mut recv, mut handler) = tokio::select! {
+    let control_started = Instant::now();
+    let offer_phase_result = tokio::select! {
         res = async {
             let (mut send, mut recv) = connection
                 .open_bi()
@@ -738,14 +836,60 @@ async fn do_handshake(
             .await?;
 
             Ok::<_, TransferError>((send, recv, handler))
-        } => res?,
+        } => res,
         _ = wait_for_cancel(cancel_rx) => {
+            emit_phase(
+                TelemetryRole::Sender,
+                TelemetryPhase::ControlHandshake,
+                run_id,
+                control_started.elapsed(),
+                PhaseOutcome::Cancelled,
+                phase_bytes_total,
+                phase_file_count,
+            );
             return Ok(HandshakeResult::Cancelled(TransferOutcome::local_cancel(
                 protocol_message::TransferRole::Sender,
                 protocol_message::CancelPhase::WaitingForDecision,
             )));
         }
-        _ = tokio::time::sleep(HANDSHAKE_TIMEOUT) => return Err(TransferError::timeout("handshake")),
+        _ = tokio::time::sleep(HANDSHAKE_TIMEOUT) => {
+            emit_phase(
+                TelemetryRole::Sender,
+                TelemetryPhase::ControlHandshake,
+                run_id,
+                control_started.elapsed(),
+                PhaseOutcome::Failed,
+                phase_bytes_total,
+                phase_file_count,
+            );
+            return Err(TransferError::timeout("handshake"));
+        },
+    };
+    let (mut send, mut recv, mut handler) = match offer_phase_result {
+        Ok(value) => {
+            emit_phase(
+                TelemetryRole::Sender,
+                TelemetryPhase::ControlHandshake,
+                run_id,
+                control_started.elapsed(),
+                PhaseOutcome::Complete,
+                phase_bytes_total,
+                phase_file_count,
+            );
+            value
+        }
+        Err(error) => {
+            emit_phase(
+                TelemetryRole::Sender,
+                TelemetryPhase::ControlHandshake,
+                run_id,
+                control_started.elapsed(),
+                PhaseOutcome::Failed,
+                phase_bytes_total,
+                phase_file_count,
+            );
+            return Err(error);
+        }
     };
 
     // Phase 2 — wait for the receiver's accept/decline.  A human is in this
@@ -754,10 +898,35 @@ async fn do_handshake(
     // short handshake timeout was what auto-closed the share before the user
     // could tap.  The connection stays alive via QUIC keepalive; cancel and a
     // dropped connection still short-circuit the wait.
+    let decision_started = Instant::now();
     tokio::select! {
         res = handler.await_decision(&mut recv) => {
-            let outcome = res?;
-            Ok(HandshakeResult::Ok(send, recv, outcome))
+            match res {
+                Ok(outcome) => {
+                    emit_phase(
+                        TelemetryRole::Sender,
+                        TelemetryPhase::DecisionWait,
+                        run_id,
+                        decision_started.elapsed(),
+                        PhaseOutcome::Complete,
+                        phase_bytes_total,
+                        phase_file_count,
+                    );
+                    Ok(HandshakeResult::Ok(send, recv, outcome))
+                }
+                Err(error) => {
+                    emit_phase(
+                        TelemetryRole::Sender,
+                        TelemetryPhase::DecisionWait,
+                        run_id,
+                        decision_started.elapsed(),
+                        PhaseOutcome::Failed,
+                        phase_bytes_total,
+                        phase_file_count,
+                    );
+                    Err(error.into())
+                }
+            }
         }
         _ = wait_for_cancel(cancel_rx) => {
             // Best-effort tell the receiver on the control stream it's already
@@ -775,6 +944,15 @@ async fn do_handshake(
             )
             .await;
             finish_control_stream(&mut send).await;
+            emit_phase(
+                TelemetryRole::Sender,
+                TelemetryPhase::DecisionWait,
+                run_id,
+                decision_started.elapsed(),
+                PhaseOutcome::Cancelled,
+                phase_bytes_total,
+                phase_file_count,
+            );
             Ok(HandshakeResult::Cancelled(
                 TransferOutcome::local_cancel(
                     protocol_message::TransferRole::Sender,
@@ -782,8 +960,28 @@ async fn do_handshake(
                 ),
             ))
         }
-        _ = connection.closed() => Err(TransferError::connection_closed("before receiver decision")),
+        _ = connection.closed() => {
+            emit_phase(
+                TelemetryRole::Sender,
+                TelemetryPhase::DecisionWait,
+                run_id,
+                decision_started.elapsed(),
+                PhaseOutcome::Failed,
+                phase_bytes_total,
+                phase_file_count,
+            );
+            Err(TransferError::connection_closed("before receiver decision"))
+        },
         _ = tokio::time::sleep(DECISION_WAIT) => {
+            emit_phase(
+                TelemetryRole::Sender,
+                TelemetryPhase::DecisionWait,
+                run_id,
+                decision_started.elapsed(),
+                PhaseOutcome::Failed,
+                phase_bytes_total,
+                phase_file_count,
+            );
             Err(TransferError::timeout("waiting for receiver decision"))
         }
     }
