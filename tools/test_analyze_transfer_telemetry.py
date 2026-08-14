@@ -42,6 +42,7 @@ def sample(
     benchmark_run_id=0,
     application_path=None,
     udp_rx_bytes_delta=None,
+    path_counter_discontinuity=False,
 ):
     if bytes_delta is None:
         bytes_delta = rate * sample_ms // 1_000
@@ -65,6 +66,7 @@ def sample(
         path=path,
         application_path=application_path or path,
         path_stats_available=True,
+        path_counter_discontinuity=path_counter_discontinuity,
         rtt_us=rtt_us,
         local_cwnd_bytes=1_000_000,
         udp_rx_bytes_delta=udp_rx_bytes_delta,
@@ -98,14 +100,23 @@ def summary(transfer_id, **overrides):
 def config(transfer_id, role="receiver", **overrides):
     fields = {
         "config_known": True,
-        "stream_receive_window_bytes": 1_000_000,
-        "connection_receive_window_bytes": (1 << 62) - 1,
+        "config_source": "configured",
         "send_window_bytes": 8_000_000,
         "congestion_controller": "cubic",
         "build_profile": "release",
         "sample_interval_ms": 250,
         "stall_threshold_ms": 500,
     }
+    if role == "provider":
+        fields.update(
+            local_stream_receive_window_bytes=1_000_000,
+            local_connection_receive_window_bytes=(1 << 62) - 1,
+        )
+    else:
+        fields.update(
+            stream_receive_window_bytes=1_000_000,
+            connection_receive_window_bytes=(1 << 62) - 1,
+        )
     fields.update(overrides)
     return event("blob_config", transfer_id, role=role, **fields)
 
@@ -120,6 +131,7 @@ def provider_sample(
     lost_packets_delta=2,
     lost_bytes_delta=2_400,
     congestion_events_delta=1,
+    path_counter_discontinuity=False,
 ):
     return event(
         "blob_sample",
@@ -132,6 +144,7 @@ def provider_sample(
         terminal_sample=False,
         path="direct",
         path_stats_available=True,
+        path_counter_discontinuity=path_counter_discontinuity,
         rtt_us=rtt_us,
         cwnd_bytes=2_000_000,
         udp_tx_bytes_delta=250_000,
@@ -152,6 +165,7 @@ def provider_summary(
     lost_packets_total=2,
     lost_bytes_total=2_400,
     congestion_events_total=1,
+    path_counter_discontinuity_count=0,
 ):
     return event(
         "blob_summary",
@@ -165,6 +179,7 @@ def provider_summary(
         lost_packets_total=lost_packets_total,
         lost_bytes_total=lost_bytes_total,
         congestion_events_total=congestion_events_total,
+        path_counter_discontinuity_count=path_counter_discontinuity_count,
         path="direct",
     )
 
@@ -440,6 +455,89 @@ class TelemetryAnalysisTests(unittest.TestCase):
         self.assertEqual(run["transport_active_loss_recovery_count"], 0)
         self.assertEqual(run["transport_active_delivery_gap_count"], 1)
 
+    def test_provider_counter_discontinuity_keeps_active_stall_unknown(self):
+        run_fields = {
+            "benchmark_run_id_available": True,
+            "benchmark_run_id": 42,
+        }
+        receiver_lines = [
+            sample(20, 100_000, 250, **run_fields),
+            sample(
+                20,
+                0,
+                750,
+                sample_ms=500,
+                stalled_for_ms=500,
+                udp_rx_bytes_delta=500_000,
+                **run_fields,
+            ),
+            sample(20, 100_000, 1_000, **run_fields),
+            summary(20, elapsed_ms=1_000, stall_count=1, **run_fields),
+        ]
+        parsed = telemetry.parse_stream(
+            io.StringIO("\n".join(receiver_lines) + "\n"), source_id=0
+        )
+        provider_lines = [
+            provider_sample(
+                21,
+                sample_ms=500,
+                elapsed_ms=750,
+                lost_packets_delta=0,
+                lost_bytes_delta=0,
+                congestion_events_delta=0,
+                path_counter_discontinuity=True,
+            ),
+            provider_summary(
+                21,
+                elapsed_ms=1_000,
+                lost_packets_total=0,
+                lost_bytes_total=0,
+                congestion_events_total=0,
+                path_counter_discontinuity_count=1,
+            ),
+        ]
+        telemetry.parse_stream(
+            io.StringIO("\n".join(provider_lines) + "\n"),
+            parsed,
+            source_id=1,
+        )
+
+        report = telemetry.build_report(parsed)
+        run = report["runs"][0]
+        episode = run["stall_episodes"][0]
+        self.assertEqual(run["transport_active_delivery_gap_count"], 0)
+        self.assertEqual(run["unclassified_stall_count"], 1)
+        self.assertEqual(episode["kind"], "unknown")
+        self.assertTrue(episode["provider_path_counter_discontinuity"])
+        self.assertEqual(
+            report["provider_runs"][0]["path_counter_discontinuity_count"], 1
+        )
+
+    def test_receiver_counter_discontinuity_keeps_stall_unknown(self):
+        lines = [
+            sample(22, 100_000, 250),
+            sample(
+                22,
+                0,
+                750,
+                sample_ms=500,
+                stalled_for_ms=500,
+                udp_rx_bytes_delta=0,
+                path_counter_discontinuity=True,
+            ),
+            sample(22, 100_000, 1_000),
+            summary(22, elapsed_ms=1_000, stall_count=1),
+        ]
+        run = telemetry.build_report(
+            telemetry.parse_stream(io.StringIO("\n".join(lines) + "\n"))
+        )["runs"][0]
+
+        episode = run["stall_episodes"][0]
+        self.assertEqual(episode["kind"], "unknown")
+        self.assertTrue(episode["receiver_path_counter_discontinuity"])
+        self.assertEqual(run["path_counter_discontinuity_count"], 1)
+        self.assertEqual(run["transport_idle_stall_count"], 0)
+
     def test_stall_episode_details_are_bounded(self):
         lines = []
         elapsed_ms = 0
@@ -541,6 +639,7 @@ class TelemetryAnalysisTests(unittest.TestCase):
                 bytes_delta=50,
                 path="direct",
                 application_path="relay",
+                path_counter_discontinuity=True,
             ),
             sample(5, 200, 1_500, sample_ms=500, bytes_delta=100, path="direct"),
             summary(5, path="direct"),
@@ -551,6 +650,7 @@ class TelemetryAnalysisTests(unittest.TestCase):
         self.assertEqual(run["relay_bytes_ratio"], 0.5)
         self.assertEqual(run["direct_bytes_ratio"], 0.5)
         self.assertEqual(run["path_migration_count"], 1)
+        self.assertEqual(run["path_counter_discontinuity_count"], 1)
         self.assertEqual(run["time_to_direct_ms"], 1_000)
 
     def test_config_enables_bdp_to_stream_window_diagnostic(self):
@@ -570,9 +670,35 @@ class TelemetryAnalysisTests(unittest.TestCase):
         run = telemetry.build_report(parsed)["runs"][0]
 
         self.assertTrue(run["window_config_known"])
+        self.assertEqual(run["config_source"], "configured")
         self.assertEqual(run["stream_receive_window_bytes"], 1_000_000)
         self.assertAlmostEqual(run["bdp_window_ratio_p50"], 0.8)
         self.assertEqual(run["congestion_controller"], "cubic")
+
+    def test_assumed_upstream_config_is_not_used_for_bdp(self):
+        lines = [
+            config(
+                18,
+                config_known=False,
+                config_source="assumed_upstream_default",
+            ),
+            sample(
+                18,
+                8_000_000,
+                1_000,
+                sample_ms=1_000,
+                bytes_delta=8_000_000,
+                rtt_us=100_000,
+            ),
+            summary(18),
+        ]
+        run = telemetry.build_report(
+            telemetry.parse_stream(io.StringIO("\n".join(lines) + "\n"))
+        )["runs"][0]
+
+        self.assertEqual(run["config_source"], "assumed_upstream_default")
+        self.assertFalse(run["window_config_known"])
+        self.assertIsNone(run["bdp_window_ratio_p50"])
 
     def test_bdp_and_rtt_inflation_use_time_aligned_windows(self):
         lines = [
@@ -633,6 +759,30 @@ class TelemetryAnalysisTests(unittest.TestCase):
         self.assertEqual(len(report["provider_runs"]), 1)
         self.assertEqual(provider["cwnd_p50_bytes"], 2_000_000.0)
         self.assertEqual(provider["lost_packets_total"], 2)
+        self.assertEqual(provider["config_source"], "configured")
+        self.assertEqual(provider["local_stream_receive_window_bytes"], 1_000_000)
+
+    def test_legacy_provider_window_names_remain_parseable(self):
+        config_payload = json.loads(config(19, role="provider"))
+        fields = config_payload["fields"]
+        fields["stream_receive_window_bytes"] = fields.pop(
+            "local_stream_receive_window_bytes"
+        )
+        fields["connection_receive_window_bytes"] = fields.pop(
+            "local_connection_receive_window_bytes"
+        )
+        del fields["config_source"]
+        lines = [
+            json.dumps(config_payload),
+            provider_sample(19),
+            provider_summary(19),
+        ]
+        provider = telemetry.build_report(
+            telemetry.parse_stream(io.StringIO("\n".join(lines) + "\n"))
+        )["provider_runs"][0]
+
+        self.assertEqual(provider["config_source"], "configured")
+        self.assertEqual(provider["local_stream_receive_window_bytes"], 1_000_000)
 
     def test_provider_only_report_joins_mobile_phase_without_receiver_metrics(self):
         run_fields = {
@@ -685,7 +835,7 @@ class TelemetryAnalysisTests(unittest.TestCase):
         report = telemetry.build_report(parsed)
         run = report["runs"][0]
 
-        self.assertEqual(report["schema_version"], 4)
+        self.assertEqual(report["schema_version"], 5)
         self.assertEqual(run["phase_timing_count"], 3)
         self.assertEqual(run["phase_timings_ms"]["sender.prepare_total"], 350)
         self.assertEqual(run["phase_timings_ms"]["receiver.fetch_store"], 1_250)

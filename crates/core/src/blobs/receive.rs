@@ -30,9 +30,9 @@ use crate::lan::in_usb_tunnel_subnet;
 /// so the raised TUN MTU is actually usable end-to-end.
 const AOA_MTU_DISCOVERY_UPPER_BOUND: u16 = 7_900;
 
-// Defaults from noq 0.16's `TransportConfig`. The AOA per-dial override starts
-// from `QuicTransportConfig::builder()`, so these are its actual flow-control
-// values unless that override is explicitly changed.
+// Defaults from the resolved noq-proto 0.16 `TransportConfig` used by noq 0.17.
+// The AOA per-dial override starts from `QuicTransportConfig::builder()`, so
+// these are its expected flow-control values unless that override changes.
 const NOQ_DEFAULT_STREAM_RECEIVE_WINDOW_BYTES: u64 = 1_250_000;
 const NOQ_DEFAULT_SEND_WINDOW_BYTES: u64 = 10_000_000;
 
@@ -44,6 +44,7 @@ const NOQ_DEFAULT_SEND_WINDOW_BYTES: u64 = 10_000_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlobTransportProfile {
     pub(super) known: bool,
+    pub(super) config_source: &'static str,
     pub(super) stream_receive_window_bytes: u64,
     pub(super) connection_receive_window_bytes: u64,
     pub(super) send_window_bytes: u64,
@@ -59,6 +60,7 @@ impl BlobTransportProfile {
     ) -> Self {
         Self {
             known: true,
+            config_source: "configured",
             stream_receive_window_bytes,
             connection_receive_window_bytes,
             send_window_bytes,
@@ -67,12 +69,17 @@ impl BlobTransportProfile {
     }
 
     fn noq_default() -> Self {
-        Self::new(
-            NOQ_DEFAULT_STREAM_RECEIVE_WINDOW_BYTES,
-            u64::from(iroh::endpoint::VarInt::MAX),
-            NOQ_DEFAULT_SEND_WINDOW_BYTES,
-            "cubic",
-        )
+        Self {
+            // These values match the pinned noq version but are not readable
+            // from the built transport config. Keep them visible for diagnosis
+            // without presenting a copied upstream default as measured truth.
+            known: false,
+            config_source: "assumed_upstream_default",
+            stream_receive_window_bytes: NOQ_DEFAULT_STREAM_RECEIVE_WINDOW_BYTES,
+            connection_receive_window_bytes: u64::from(iroh::endpoint::VarInt::MAX),
+            send_window_bytes: NOQ_DEFAULT_SEND_WINDOW_BYTES,
+            congestion_controller: "cubic",
+        }
     }
 }
 
@@ -80,6 +87,7 @@ impl Default for BlobTransportProfile {
     fn default() -> Self {
         Self {
             known: false,
+            config_source: "unknown",
             stream_receive_window_bytes: 0,
             connection_receive_window_bytes: 0,
             send_window_bytes: 0,
@@ -503,7 +511,8 @@ mod tests {
         // the tunnel-specific transport config (raised MTU-discovery ceiling).
         for addr in ["10.42.0.1:11204", "10.42.0.2:11204"] {
             let (_, profile) = blob_connect_options(&addr_with(addr)).unwrap();
-            assert!(profile.known);
+            assert!(!profile.known);
+            assert_eq!(profile.config_source, "assumed_upstream_default");
             assert_eq!(
                 profile.stream_receive_window_bytes,
                 super::NOQ_DEFAULT_STREAM_RECEIVE_WINDOW_BYTES

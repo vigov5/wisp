@@ -299,6 +299,8 @@ async fn run_sampler(
     let mut path_watcher = connection.paths();
     let mut path_watch_connected = true;
 
+    // n0-watcher 0.6.1 documents `Watcher::updated()` as cancel-safe, so the
+    // select loop cannot consume and lose a path update when another branch wins.
     loop {
         tokio::select! {
             biased;
@@ -388,6 +390,8 @@ async fn run_provider_sampler(
     let mut path_watcher = connection.paths();
     let mut path_watch_connected = true;
 
+    // See the cancel-safety note in the receiver sampler above. This watcher
+    // has the same n0-watcher 0.6.1 contract.
     loop {
         tokio::select! {
             biased;
@@ -426,6 +430,7 @@ struct ProviderTelemetryRecorder {
     lost_packets_total: u64,
     lost_bytes_total: u64,
     congestion_events_total: u64,
+    path_counter_discontinuity_count: u64,
 }
 
 impl ProviderTelemetryRecorder {
@@ -446,6 +451,7 @@ impl ProviderTelemetryRecorder {
             lost_packets_total: 0,
             lost_bytes_total: 0,
             congestion_events_total: 0,
+            path_counter_discontinuity_count: 0,
         }
     }
 
@@ -458,8 +464,11 @@ impl ProviderTelemetryRecorder {
             benchmark_run_id_available = self.benchmark_run_id.is_some(),
             benchmark_run_id = self.benchmark_run_id.unwrap_or(0),
             config_known = self.transport_profile.known,
-            stream_receive_window_bytes = self.transport_profile.stream_receive_window_bytes,
-            connection_receive_window_bytes = self
+            config_source = self.transport_profile.config_source,
+            local_stream_receive_window_bytes = self
+                .transport_profile
+                .stream_receive_window_bytes,
+            local_connection_receive_window_bytes = self
                 .transport_profile
                 .connection_receive_window_bytes,
             send_window_bytes = self.transport_profile.send_window_bytes,
@@ -475,7 +484,9 @@ impl ProviderTelemetryRecorder {
         let interval = now.saturating_duration_since(self.last_sample_at);
         let network = NetworkSnapshot::capture(connection);
         let delta = network.delta_from(self.previous_path);
-        self.previous_path = network.counters();
+        if let Some(counters) = network.counters() {
+            self.previous_path = Some(counters);
+        }
         self.last_sample_at = now;
         self.udp_tx_bytes_total = self.udp_tx_bytes_total.saturating_add(delta.udp_tx_bytes);
         self.lost_packets_total = self.lost_packets_total.saturating_add(delta.lost_packets);
@@ -483,6 +494,9 @@ impl ProviderTelemetryRecorder {
         self.congestion_events_total = self
             .congestion_events_total
             .saturating_add(delta.congestion_events);
+        self.path_counter_discontinuity_count = self
+            .path_counter_discontinuity_count
+            .saturating_add(u64::from(delta.path_counter_discontinuity));
 
         debug!(
             target: TELEMETRY_TARGET,
@@ -496,6 +510,7 @@ impl ProviderTelemetryRecorder {
             terminal_sample,
             path = network.path_kind,
             path_stats_available = network.stats_available,
+            path_counter_discontinuity = delta.path_counter_discontinuity,
             rtt_us = duration_micros(network.rtt),
             cwnd_bytes = network.cwnd,
             udp_tx_bytes_delta = delta.udp_tx_bytes,
@@ -524,6 +539,7 @@ impl ProviderTelemetryRecorder {
             lost_packets_total = self.lost_packets_total,
             lost_bytes_total = self.lost_bytes_total,
             congestion_events_total = self.congestion_events_total,
+            path_counter_discontinuity_count = self.path_counter_discontinuity_count,
             path = network.path_kind,
             path_stats_available = network.stats_available,
             rtt_us = duration_micros(network.rtt),
@@ -569,6 +585,7 @@ impl TelemetryRecorder {
             benchmark_run_id_available = self.benchmark_run_id.is_some(),
             benchmark_run_id = self.benchmark_run_id.unwrap_or(0),
             config_known = self.transport_profile.known,
+            config_source = self.transport_profile.config_source,
             stream_receive_window_bytes = self.transport_profile.stream_receive_window_bytes,
             connection_receive_window_bytes = self
                 .transport_profile
@@ -591,7 +608,9 @@ impl TelemetryRecorder {
         let app = self.state.sample(now);
         let network = NetworkSnapshot::capture(connection);
         let delta = network.delta_from(self.previous_path);
-        self.previous_path = network.counters();
+        if let Some(counters) = network.counters() {
+            self.previous_path = Some(counters);
+        }
         // When the selected path changes, the bytes accumulated since the
         // preceding sample mostly belong to the old path. Attribute this one
         // boundary delta to that old path, then switch future deltas to the new
@@ -625,6 +644,7 @@ impl TelemetryRecorder {
             path = network.path_kind,
             application_path,
             path_stats_available = network.stats_available,
+            path_counter_discontinuity = delta.path_counter_discontinuity,
             rtt_us = duration_micros(network.rtt),
             // These congestion counters describe packets sent by this local
             // endpoint. On a blob receiver that is mostly ACK/control traffic,
@@ -925,10 +945,17 @@ impl NetworkSnapshot {
         let Some(current) = self.counters() else {
             return PathCountersDelta::default();
         };
-        let Some(previous) = previous.filter(|value| value.path_id == current.path_id) else {
+        let Some(previous) = previous else {
             return PathCountersDelta::default();
         };
+        if previous.path_id != current.path_id {
+            return PathCountersDelta {
+                path_counter_discontinuity: true,
+                ..PathCountersDelta::default()
+            };
+        }
         PathCountersDelta {
+            path_counter_discontinuity: false,
             udp_rx_bytes: current.udp_rx_bytes.saturating_sub(previous.udp_rx_bytes),
             udp_tx_bytes: current.udp_tx_bytes.saturating_sub(previous.udp_tx_bytes),
             lost_packets: current.lost_packets.saturating_sub(previous.lost_packets),
@@ -956,6 +983,7 @@ struct PathCounters {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct PathCountersDelta {
+    path_counter_discontinuity: bool,
     udp_rx_bytes: u64,
     udp_tx_bytes: u64,
     lost_packets: u64,
@@ -1144,7 +1172,7 @@ mod tests {
     }
 
     #[test]
-    fn path_counter_delta_resets_after_path_migration() {
+    fn path_counter_delta_flags_path_migration() {
         let base = NetworkSnapshot {
             path_kind: "direct",
             stats_available: true,
@@ -1171,6 +1199,7 @@ mod tests {
         assert_eq!(
             next.delta_from(base.counters()),
             PathCountersDelta {
+                path_counter_discontinuity: false,
                 udp_rx_bytes: 2_500,
                 udp_tx_bytes: 400,
                 lost_packets: 1,
@@ -1186,7 +1215,10 @@ mod tests {
         };
         assert_eq!(
             migrated.delta_from(next.counters()),
-            PathCountersDelta::default()
+            PathCountersDelta {
+                path_counter_discontinuity: true,
+                ..PathCountersDelta::default()
+            }
         );
     }
 }

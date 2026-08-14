@@ -18,6 +18,9 @@ TELEMETRY_TARGET = "wisp_transfer_telemetry"
 KNOWN_PATHS = frozenset({"aoa", "direct", "relay", "custom", "unknown"})
 KNOWN_CONGESTION_CONTROLLERS = frozenset({"cubic", "bbr", "unknown"})
 KNOWN_BUILD_PROFILES = frozenset({"debug", "release", "unknown"})
+KNOWN_CONFIG_SOURCES = frozenset(
+    {"measured", "configured", "assumed_upstream_default", "unknown"}
+)
 KNOWN_PHASE_ROLES = frozenset({"sender", "receiver"})
 KNOWN_PHASES = frozenset(
     {
@@ -71,6 +74,7 @@ class Sample:
     path: str
     application_path: str
     path_stats_available: bool
+    path_counter_discontinuity: bool
     rtt_us: int
     local_cwnd_bytes: int
     udp_rx_bytes_delta: int
@@ -100,6 +104,7 @@ class TransferSummary:
 @dataclass(frozen=True)
 class TransferConfig:
     known: bool
+    source: str
     stream_receive_window_bytes: int
     connection_receive_window_bytes: int
     send_window_bytes: int
@@ -116,6 +121,7 @@ class ProviderSample:
     terminal_sample: bool
     path: str
     path_stats_available: bool
+    path_counter_discontinuity: bool
     rtt_us: int
     cwnd_bytes: int
     udp_tx_bytes_delta: int
@@ -135,6 +141,7 @@ class ProviderSummary:
     lost_packets_total: int
     lost_bytes_total: int
     congestion_events_total: int
+    path_counter_discontinuity_count: int
     path: str
 
 
@@ -253,6 +260,9 @@ def _parse_sample(fields: dict[str, object]) -> tuple[int, Sample] | None:
     time_to_first_byte_ms = _non_negative_int(fields.get("time_to_first_byte_ms"))
     stalled_for_ms = _non_negative_int(fields.get("stalled_for_ms"))
     terminal_sample = _strict_bool(fields.get("terminal_sample"))
+    path_counter_discontinuity = _strict_bool(
+        fields.get("path_counter_discontinuity", False)
+    )
     rtt_us = _non_negative_int(fields.get("rtt_us"))
     local_cwnd_bytes = _non_negative_int(fields.get("local_cwnd_bytes"))
     udp_rx_bytes_delta = _non_negative_int(fields.get("udp_rx_bytes_delta"))
@@ -277,6 +287,7 @@ def _parse_sample(fields: dict[str, object]) -> tuple[int, Sample] | None:
         time_to_first_byte_ms,
         stalled_for_ms,
         terminal_sample,
+        path_counter_discontinuity,
         rtt_us,
         local_cwnd_bytes,
         udp_rx_bytes_delta,
@@ -301,6 +312,7 @@ def _parse_sample(fields: dict[str, object]) -> tuple[int, Sample] | None:
         path=_known_path(fields.get("path")),
         application_path=_known_path(fields.get("application_path")),
         path_stats_available=fields.get("path_stats_available") is True,
+        path_counter_discontinuity=path_counter_discontinuity,
         rtt_us=rtt_us,
         local_cwnd_bytes=local_cwnd_bytes,
         udp_rx_bytes_delta=udp_rx_bytes_delta,
@@ -366,9 +378,26 @@ def _parse_config(
         return None
     transfer_id = _non_negative_int(fields.get("transfer_id"))
     known = _strict_bool(fields.get("config_known"))
-    stream_window = _non_negative_int(fields.get("stream_receive_window_bytes"))
+    stream_window_field = (
+        "local_stream_receive_window_bytes"
+        if expected_role == "provider"
+        else "stream_receive_window_bytes"
+    )
+    connection_window_field = (
+        "local_connection_receive_window_bytes"
+        if expected_role == "provider"
+        else "connection_receive_window_bytes"
+    )
+    # Schema <= 4 used receiver-style names for provider-local windows. Accept
+    # those historical logs, but all newly emitted provider records are explicit.
+    stream_window = _non_negative_int(
+        fields.get(stream_window_field, fields.get("stream_receive_window_bytes"))
+    )
     connection_window = _non_negative_int(
-        fields.get("connection_receive_window_bytes")
+        fields.get(
+            connection_window_field,
+            fields.get("connection_receive_window_bytes"),
+        )
     )
     send_window = _non_negative_int(fields.get("send_window_bytes"))
     sample_interval_ms = _non_negative_int(fields.get("sample_interval_ms"))
@@ -383,8 +412,12 @@ def _parse_config(
         stall_threshold_ms,
     ):
         return None
+    source_value = fields.get("config_source")
+    if source_value is None:
+        source_value = "configured" if known else "unknown"
     return transfer_id, TransferConfig(
         known=known,
+        source=_known_label(source_value, KNOWN_CONFIG_SOURCES),
         stream_receive_window_bytes=stream_window,
         connection_receive_window_bytes=connection_window,
         send_window_bytes=send_window,
@@ -418,7 +451,14 @@ def _parse_provider_sample(
     )
     values = {name: _non_negative_int(fields.get(name)) for name in names}
     terminal_sample = _strict_bool(fields.get("terminal_sample"))
-    if terminal_sample is None or any(value is None for value in values.values()):
+    path_counter_discontinuity = _strict_bool(
+        fields.get("path_counter_discontinuity", False)
+    )
+    if (
+        terminal_sample is None
+        or path_counter_discontinuity is None
+        or any(value is None for value in values.values())
+    ):
         return None
     transfer_id = values.pop("transfer_id")
     assert transfer_id is not None
@@ -428,6 +468,7 @@ def _parse_provider_sample(
         terminal_sample=terminal_sample,
         path=_known_path(fields.get("path")),
         path_stats_available=fields.get("path_stats_available") is True,
+        path_counter_discontinuity=path_counter_discontinuity,
         rtt_us=values["rtt_us"],
         cwnd_bytes=values["cwnd_bytes"],
         udp_tx_bytes_delta=values["udp_tx_bytes_delta"],
@@ -452,8 +493,14 @@ def _parse_provider_summary(
         "lost_packets_total",
         "lost_bytes_total",
         "congestion_events_total",
+        "path_counter_discontinuity_count",
     )
-    values = {name: _non_negative_int(fields.get(name)) for name in names}
+    values = {
+        name: _non_negative_int(
+            fields.get(name, 0 if name == "path_counter_discontinuity_count" else None)
+        )
+        for name in names
+    }
     if any(value is None for value in values.values()):
         return None
     outcome = fields.get("outcome")
@@ -468,6 +515,9 @@ def _parse_provider_summary(
         lost_packets_total=values["lost_packets_total"],
         lost_bytes_total=values["lost_bytes_total"],
         congestion_events_total=values["congestion_events_total"],
+        path_counter_discontinuity_count=values[
+            "path_counter_discontinuity_count"
+        ],
         path=_known_path(fields.get("path")),
     )
 
@@ -688,6 +738,9 @@ def _classify_stall_episodes(
         duration_ms = max(sample.stalled_for_ms for sample in current)
         end_ms = max(sample.elapsed_ms for sample in current)
         network_samples = [sample for sample in current if sample.path_stats_available]
+        receiver_path_counter_discontinuity = any(
+            sample.path_counter_discontinuity for sample in current
+        )
         sampled_ms = sum(sample.sample_ms for sample in network_samples)
         udp_rx_bytes = sum(sample.udp_rx_bytes_delta for sample in network_samples)
         udp_rx_rate = (
@@ -716,17 +769,26 @@ def _classify_stall_episodes(
         provider_congestion_events = sum(
             sample.congestion_events_delta for sample in provider_overlap
         )
+        provider_path_counter_discontinuity = any(
+            sample.path_counter_discontinuity for sample in provider_overlap
+        )
         provider_loss_evidence_available = bool(provider_overlap)
 
-        if udp_rx_rate is None:
+        if receiver_path_counter_discontinuity:
+            kind = "unknown"
+        elif udp_rx_rate is None:
             kind = "unknown"
         elif udp_rx_rate >= UDP_ACTIVE_RATE_THRESHOLD_BYTES_PER_SEC:
-            kind = (
-                "transport_active_loss_recovery"
-                if provider_loss_evidence_available
-                and (provider_lost_packets > 0 or provider_lost_bytes > 0)
-                else "transport_active_delivery_gap"
-            )
+            if provider_loss_evidence_available and (
+                provider_lost_packets > 0 or provider_lost_bytes > 0
+            ):
+                kind = "transport_active_loss_recovery"
+            elif provider_path_counter_discontinuity:
+                # A zero delta at a path boundary means "not observable", not
+                # proof that no provider-side loss occurred in this episode.
+                kind = "unknown"
+            else:
+                kind = "transport_active_delivery_gap"
         else:
             kind = "transport_idle_stall"
         episode_count += 1
@@ -740,12 +802,18 @@ def _classify_stall_episodes(
                     "duration_ms": duration_ms,
                     "sample_count": len(current),
                     "network_sample_count": len(network_samples),
+                    "receiver_path_counter_discontinuity": (
+                        receiver_path_counter_discontinuity
+                    ),
                     "udp_rx_bytes": udp_rx_bytes if network_samples else None,
                     "udp_rx_average_bytes_per_sec": udp_rx_rate,
                     "provider_loss_evidence_available": (
                         provider_loss_evidence_available
                     ),
                     "provider_sample_count": len(provider_overlap),
+                    "provider_path_counter_discontinuity": (
+                        provider_path_counter_discontinuity
+                    ),
                     "provider_lost_packets": (
                         provider_lost_packets
                         if provider_loss_evidence_available
@@ -990,6 +1058,7 @@ def summarize_transfer(
     window_config_known = (
         config is not None
         and config.known
+        and config.source in {"measured", "configured"}
         and config.stream_receive_window_bytes > 0
     )
     bdp_window_ratios = (
@@ -1044,6 +1113,7 @@ def summarize_transfer(
         "throughput_windows_bytes_per_sec": speeds,
         "measurement_valid": measurement_valid,
         "window_config_known": window_config_known,
+        "config_source": config.source if config is not None else "unknown",
         "stream_receive_window_bytes": (
             config.stream_receive_window_bytes if config is not None else None
         ),
@@ -1100,6 +1170,9 @@ def summarize_transfer(
         "transport_idle_stall_count": transport_idle_stall_count,
         "unclassified_stall_count": unclassified_stall_count,
         "network_stats_coverage": stats_samples / len(events.samples),
+        "path_counter_discontinuity_count": sum(
+            sample.path_counter_discontinuity for sample in events.samples
+        ),
         "rtt_min_us": min_rtt_us,
         "rtt_p50_us": percentile(rtts, 0.50) if rtts else None,
         "rtt_p90_us": percentile(rtts, 0.90) if rtts else None,
@@ -1200,9 +1273,21 @@ def summarize_provider(
             if summary is not None
             else sum(sample.congestion_events_delta for sample in network_samples)
         ),
+        "path_counter_discontinuity_count": (
+            summary.path_counter_discontinuity_count
+            if summary is not None
+            else sum(sample.path_counter_discontinuity for sample in events.samples)
+        ),
         "path_mtu_min": min(mtus) if mtus else None,
         "path_mtu_max": max(mtus) if mtus else None,
         "config_known": config.known if config is not None else False,
+        "config_source": config.source if config is not None else "unknown",
+        "local_stream_receive_window_bytes": (
+            config.stream_receive_window_bytes if config is not None else None
+        ),
+        "local_connection_receive_window_bytes": (
+            config.connection_receive_window_bytes if config is not None else None
+        ),
         "send_window_bytes": config.send_window_bytes if config is not None else None,
         "congestion_controller": (
             config.congestion_controller if config is not None else "unknown"
@@ -1351,7 +1436,7 @@ def build_report(parsed: ParsedTelemetry) -> dict[str, object]:
         ),
     }
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "skipped_lines": parsed.skipped_lines,
         "malformed_telemetry_lines": parsed.malformed_telemetry_lines,
         "runs": runs,
@@ -1444,6 +1529,12 @@ def print_human_report(report: dict[str, object]) -> None:
                     f"transport-idle={int(run['transport_idle_stall_count'])}, "
                     f"unknown={int(run['unclassified_stall_count'])}"
                 )
+            if int(run["path_counter_discontinuity_count"]) > 0:
+                print(
+                    "     path counter discontinuities: "
+                    f"{int(run['path_counter_discontinuity_count'])}; "
+                    "network totals are lower bounds"
+                )
     else:
         print("Receiver throughput samples unavailable; stability metrics were not computed.")
 
@@ -1466,6 +1557,12 @@ def print_human_report(report: dict[str, object]) -> None:
                 f"{int(provider['lost_packets_total']):>4}   "
                 f"{int(provider['congestion_events_total']):>10}"
             )
+            if int(provider["path_counter_discontinuity_count"]) > 0:
+                print(
+                    "     path counter discontinuities: "
+                    f"{int(provider['path_counter_discontinuity_count'])}; "
+                    "network totals are lower bounds"
+                )
             _print_phase_timings(provider)
     aggregate = report["aggregate"]
     assert isinstance(aggregate, dict)
