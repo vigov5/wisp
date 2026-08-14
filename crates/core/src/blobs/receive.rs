@@ -146,7 +146,7 @@ fn handle_download_item(
     match item {
         Some(GetProgressItem::Progress(offset)) => {
             if let Some(telemetry) = telemetry {
-                telemetry.observe_progress(offset);
+                telemetry.observe_progress(now, offset);
             }
             if let Some(bytes_received) = progress.observe(now, offset) {
                 let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });

@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-/// Enables the anonymous transfer benchmark target for this process.
+/// Enables the pseudonymous transfer benchmark target for this process.
 ///
 /// The Flutter host calls this immediately after Rust initialization using its
 /// compile-time benchmark flag. Other debug targets remain on the normal log

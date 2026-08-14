@@ -24,21 +24,31 @@ const BUILD_PROFILE: &str = if cfg!(debug_assertions) {
     "release"
 };
 static NEXT_TRANSFER_ID: AtomicU64 = AtomicU64::new(1);
+const UNSET_PROGRESS_TIME_NANOS: u64 = u64::MAX;
+const RUN_ID_DERIVATION_CONTEXT: &str = "wisp telemetry correlation token v1";
 
 pub(super) fn is_enabled() -> bool {
     tracing::enabled!(target: TELEMETRY_TARGET, tracing::Level::DEBUG)
 }
 
 /// Sender-generated session IDs are 16 lowercase hexadecimal characters.
-/// Parsing them into a number gives both processes a shared anonymous run ID
-/// without logging peer-controlled arbitrary strings.
+///
+/// Deriving a domain-separated token lets both endpoints correlate opt-in
+/// telemetry without logging either the raw ID or a trivially reversible
+/// base-conversion of it. This is pseudonymization, not anonymization.
 pub(crate) fn benchmark_run_id(session_id: &str) -> Option<u64> {
-    (session_id.len() == 16
+    let valid = session_id.len() == 16
         && session_id
             .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
-    .then(|| u64::from_str_radix(session_id, 16).ok())
-    .flatten()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    valid.then(|| {
+        let digest = blake3::derive_key(RUN_ID_DERIVATION_CONTEXT, session_id.as_bytes());
+        u64::from_le_bytes(
+            digest[..8]
+                .try_into()
+                .expect("BLAKE3 output has eight bytes"),
+        )
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,23 +159,94 @@ impl TransferEnd {
 
 #[derive(Debug)]
 pub(super) struct BlobTransferTelemetry {
-    progress_bytes: Arc<AtomicU64>,
+    progress: Arc<PublishedProgress>,
     stop_tx: Option<oneshot::Sender<TransferEnd>>,
     sampler_task: Option<JoinHandle<()>>,
 }
 
+#[derive(Debug)]
+struct PublishedProgress {
+    started_at: Instant,
+    bytes: AtomicU64,
+    first_elapsed_nanos: AtomicU64,
+    latest_elapsed_nanos: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PublishedProgressSnapshot {
+    bytes: u64,
+    first_at: Instant,
+    latest_at: Instant,
+}
+
+impl PublishedProgress {
+    fn new(started_at: Instant) -> Self {
+        Self {
+            started_at,
+            bytes: AtomicU64::new(0),
+            first_elapsed_nanos: AtomicU64::new(UNSET_PROGRESS_TIME_NANOS),
+            latest_elapsed_nanos: AtomicU64::new(UNSET_PROGRESS_TIME_NANOS),
+        }
+    }
+
+    /// The blob download loop is the single writer. Publish timestamps before
+    /// the byte position so the sampler's acquire load observes a coherent
+    /// progress event without adding a lock or await to the hot path.
+    fn publish(&self, now: Instant, bytes_received: u64) {
+        if bytes_received <= self.bytes.load(Ordering::Relaxed) {
+            return;
+        }
+        let elapsed_nanos = duration_nanos(now.saturating_duration_since(self.started_at));
+        let _ = self.first_elapsed_nanos.compare_exchange(
+            UNSET_PROGRESS_TIME_NANOS,
+            elapsed_nanos,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        );
+        self.latest_elapsed_nanos
+            .store(elapsed_nanos, Ordering::Relaxed);
+        self.bytes.store(bytes_received, Ordering::Release);
+    }
+
+    fn snapshot(&self, fallback_now: Instant) -> PublishedProgressSnapshot {
+        let bytes = self.bytes.load(Ordering::Acquire);
+        let first_at = self.instant_from_elapsed(
+            self.first_elapsed_nanos.load(Ordering::Relaxed),
+            fallback_now,
+        );
+        let latest_at = self.instant_from_elapsed(
+            self.latest_elapsed_nanos.load(Ordering::Relaxed),
+            fallback_now,
+        );
+        PublishedProgressSnapshot {
+            bytes,
+            first_at,
+            latest_at: latest_at.max(first_at),
+        }
+    }
+
+    fn instant_from_elapsed(&self, elapsed_nanos: u64, fallback: Instant) -> Instant {
+        if elapsed_nanos == UNSET_PROGRESS_TIME_NANOS {
+            return fallback;
+        }
+        self.started_at
+            .checked_add(Duration::from_nanos(elapsed_nanos))
+            .unwrap_or(fallback)
+    }
+}
+
 impl BlobTransferTelemetry {
     pub(super) fn start(
-        now: Instant,
+        started_at: Instant,
         connection: ConnectionInfo,
         transport_profile: BlobTransportProfile,
         benchmark_run_id: Option<u64>,
     ) -> Self {
-        let progress_bytes = Arc::new(AtomicU64::new(0));
-        let sampler_progress = Arc::clone(&progress_bytes);
+        let progress = Arc::new(PublishedProgress::new(started_at));
+        let sampler_progress = Arc::clone(&progress);
         let (stop_tx, stop_rx) = oneshot::channel();
         let sampler_task = tokio::spawn(run_sampler(
-            now,
+            started_at,
             connection,
             transport_profile,
             benchmark_run_id,
@@ -173,7 +254,7 @@ impl BlobTransferTelemetry {
             stop_rx,
         ));
         Self {
-            progress_bytes,
+            progress,
             stop_tx: Some(stop_tx),
             sampler_task: Some(sampler_task),
         }
@@ -182,9 +263,8 @@ impl BlobTransferTelemetry {
     /// Publish only the latest monotonic byte position. The sampler owns all
     /// timing and network-stat work, so the raw download loop never waits for
     /// telemetry and never cancels `stream.next()` on a timer tick.
-    pub(super) fn observe_progress(&self, bytes_received: u64) {
-        self.progress_bytes
-            .fetch_max(bytes_received, Ordering::Release);
+    pub(super) fn observe_progress(&self, now: Instant, bytes_received: u64) {
+        self.progress.publish(now, bytes_received);
     }
 
     pub(super) async fn finish(&mut self, outcome: TransferEnd) {
@@ -204,7 +284,7 @@ async fn run_sampler(
     connection: ConnectionInfo,
     transport_profile: BlobTransportProfile,
     benchmark_run_id: Option<u64>,
-    progress_bytes: Arc<AtomicU64>,
+    progress: Arc<PublishedProgress>,
     mut stop_rx: oneshot::Receiver<TransferEnd>,
 ) {
     let mut recorder = TelemetryRecorder::new(now, transport_profile, benchmark_run_id);
@@ -224,10 +304,7 @@ async fn run_sampler(
             biased;
             outcome = &mut stop_rx => {
                 let now = Instant::now();
-                recorder.observe_progress(
-                    now,
-                    progress_bytes.load(Ordering::Acquire),
-                );
+                recorder.observe_progress(progress.snapshot(now));
                 recorder.emit_sample(now, &connection, true);
                 recorder.finish(
                     now,
@@ -238,20 +315,14 @@ async fn run_sampler(
             }
             _ = interval.tick() => {
                 let now = Instant::now();
-                recorder.observe_progress(
-                    now,
-                    progress_bytes.load(Ordering::Acquire),
-                );
+                recorder.observe_progress(progress.snapshot(now));
                 recorder.emit_sample(now, &connection, false);
             }
             path_update = path_watcher.updated(), if path_watch_connected => {
                 match path_update {
                     Ok(_) => {
                         let now = Instant::now();
-                        recorder.observe_progress(
-                            now,
-                            progress_bytes.load(Ordering::Acquire),
-                        );
+                        recorder.observe_progress(progress.snapshot(now));
                         recorder.emit_sample(now, &connection, false);
                     }
                     Err(_) => path_watch_connected = false,
@@ -511,8 +582,9 @@ impl TelemetryRecorder {
         );
     }
 
-    fn observe_progress(&mut self, now: Instant, bytes_received: u64) {
-        self.state.observe_progress(now, bytes_received);
+    fn observe_progress(&mut self, progress: PublishedProgressSnapshot) {
+        self.state
+            .observe_progress(progress.first_at, progress.latest_at, progress.bytes);
     }
 
     fn emit_sample(&mut self, now: Instant, connection: &ConnectionInfo, terminal_sample: bool) {
@@ -571,7 +643,7 @@ impl TelemetryRecorder {
     }
 
     fn finish(&mut self, now: Instant, connection: &ConnectionInfo, outcome: TransferEnd) {
-        let summary = self.state.finish(now);
+        let summary = self.state.finish(now, outcome);
         let network = NetworkSnapshot::capture(connection);
         debug!(
             target: TELEMETRY_TARGET,
@@ -631,14 +703,19 @@ impl TransferTelemetryState {
         }
     }
 
-    fn observe_progress(&mut self, now: Instant, bytes_received: u64) {
+    fn observe_progress(
+        &mut self,
+        first_progress_at: Instant,
+        latest_progress_at: Instant,
+        bytes_received: u64,
+    ) {
         if bytes_received <= self.latest_bytes {
             return;
         }
-        self.close_active_stall(now);
+        self.close_active_stall(latest_progress_at);
         self.latest_bytes = bytes_received;
-        self.first_progress_at.get_or_insert(now);
-        self.last_progress_at = Some(now);
+        self.first_progress_at.get_or_insert(first_progress_at);
+        self.last_progress_at = Some(latest_progress_at);
     }
 
     fn sample(&mut self, now: Instant) -> ApplicationSample {
@@ -675,24 +752,34 @@ impl TransferTelemetryState {
         sample
     }
 
-    fn finish(&mut self, now: Instant) -> TransferSummary {
+    fn finish(&mut self, now: Instant, outcome: TransferEnd) -> TransferSummary {
         let elapsed = now.saturating_duration_since(self.started_at);
         let time_to_first_byte = self
             .first_progress_at
             .map(|first| first.saturating_duration_since(self.started_at))
             .unwrap_or(Duration::ZERO);
-        let finalization_pause = self
+        let terminal_pause = self
             .last_progress_at
             .map(|last| now.saturating_duration_since(last))
             .unwrap_or(Duration::ZERO);
 
-        // A stall still active at the terminal event is the finalization tail,
-        // not a proven mid-transfer stall. It is reported separately and must
-        // not fail the steady-throughput gate.
-        if self.active_stall {
-            self.active_stall = false;
-            self.stall_count = self.stall_count.saturating_sub(1);
-        }
+        let finalization_pause = match outcome {
+            TransferEnd::Complete => {
+                // A stall still active at successful completion is the
+                // finalization tail, not a proven mid-transfer stall.
+                if self.active_stall {
+                    self.active_stall = false;
+                    self.stall_count = self.stall_count.saturating_sub(1);
+                }
+                terminal_pause
+            }
+            TransferEnd::Failed => {
+                // On failure, an active stall can be the failure itself. Keep
+                // it in the stall metrics instead of relabeling it finalization.
+                self.close_active_stall(now);
+                Duration::ZERO
+            }
+        };
         TransferSummary {
             elapsed,
             bytes_total: self.latest_bytes,
@@ -895,6 +982,10 @@ fn bytes_per_second(bytes: u64, elapsed: Duration) -> u64 {
     ((u128::from(bytes) * 1_000_000_000) / nanos).min(u128::from(u64::MAX)) as u64
 }
 
+fn duration_nanos(duration: Duration) -> u64 {
+    duration.as_nanos().min(u128::from(u64::MAX)) as u64
+}
+
 fn duration_millis(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
@@ -911,21 +1002,23 @@ mod tests {
     fn application_samples_use_fixed_interval_deltas() {
         let start = Instant::now();
         let mut state = TransferTelemetryState::new(start);
-        state.observe_progress(start + Duration::from_millis(100), 100);
+        let first_progress = start + Duration::from_millis(100);
+        state.observe_progress(first_progress, first_progress, 100);
 
         let first = state.sample(start + Duration::from_millis(250));
         assert_eq!(first.bytes_delta, 100);
         assert_eq!(first.bytes_per_sec, 400);
         assert_eq!(first.stalled_for, Duration::ZERO);
 
-        state.observe_progress(start + Duration::from_millis(300), 250);
+        let second_progress = start + Duration::from_millis(300);
+        state.observe_progress(first_progress, second_progress, 250);
         let second = state.sample(start + Duration::from_millis(500));
         assert_eq!(second.bytes_delta, 150);
         assert_eq!(second.bytes_per_sec, 600);
     }
 
     #[test]
-    fn blob_telemetry_assigns_anonymous_transfer_ids() {
+    fn blob_telemetry_assigns_distinct_process_local_transfer_ids() {
         let now = Instant::now();
         let first = TelemetryRecorder::new(now, BlobTransportProfile::default(), None);
         let second = TelemetryRecorder::new(now, BlobTransportProfile::default(), None);
@@ -934,10 +1027,14 @@ mod tests {
     }
 
     #[test]
-    fn benchmark_run_id_accepts_only_sender_generated_hex_ids() {
-        assert_eq!(
-            benchmark_run_id("0123456789abcdef"),
-            Some(0x0123_4567_89ab_cdef)
+    fn benchmark_run_id_derives_a_stable_non_reversible_token() {
+        let session_id = "0123456789abcdef";
+        let token = benchmark_run_id(session_id).expect("valid sender session ID");
+        assert_eq!(benchmark_run_id(session_id), Some(token));
+        assert_ne!(token, 0x0123_4567_89ab_cdef);
+        assert_ne!(
+            benchmark_run_id("fedcba9876543210"),
+            benchmark_run_id(session_id)
         );
         assert_eq!(benchmark_run_id("session-1"), None);
         assert_eq!(benchmark_run_id("0123456789abcde"), None);
@@ -956,7 +1053,7 @@ mod tests {
         assert_eq!(sample.stalled_for, Duration::ZERO);
         assert_eq!(state.stall_count, 0);
 
-        let summary = state.finish(start + Duration::from_secs(3));
+        let summary = state.finish(start + Duration::from_secs(3), TransferEnd::Complete);
         assert!(!summary.first_byte_seen);
         assert_eq!(summary.warmup, Duration::from_secs(3));
         assert_eq!(summary.stall_count, 0);
@@ -966,7 +1063,8 @@ mod tests {
     fn first_byte_timing_is_reported_separately_from_stalls() {
         let start = Instant::now();
         let mut state = TransferTelemetryState::new(start);
-        state.observe_progress(start + Duration::from_millis(750), 100);
+        let first_progress = start + Duration::from_millis(750);
+        state.observe_progress(first_progress, first_progress, 100);
 
         let first = state.sample(start + Duration::from_secs(1));
         assert!(first.warmup);
@@ -976,26 +1074,58 @@ mod tests {
     }
 
     #[test]
+    fn published_progress_preserves_hot_loop_timestamps_between_samples() {
+        let start = Instant::now();
+        let progress = PublishedProgress::new(start);
+        progress.publish(start + Duration::from_millis(25), 100);
+        progress.publish(start + Duration::from_millis(225), 250);
+
+        let snapshot = progress.snapshot(start + Duration::from_millis(250));
+        assert_eq!(snapshot.bytes, 250);
+        assert_eq!(snapshot.first_at, start + Duration::from_millis(25));
+        assert_eq!(snapshot.latest_at, start + Duration::from_millis(225));
+    }
+
+    #[test]
     fn terminal_pause_is_excluded_from_mid_transfer_stalls() {
         let start = Instant::now();
         let mut state = TransferTelemetryState::new(start);
-        state.observe_progress(start + Duration::from_millis(100), 100);
+        let first_progress = start + Duration::from_millis(100);
+        state.observe_progress(first_progress, first_progress, 100);
 
         let sample = state.sample(start + Duration::from_millis(600));
         assert_eq!(sample.stalled_for, Duration::from_millis(500));
         assert_eq!(state.stall_count, 1);
 
-        let summary = state.finish(start + Duration::from_millis(900));
+        let summary = state.finish(start + Duration::from_millis(900), TransferEnd::Complete);
         assert_eq!(summary.finalization_pause, Duration::from_millis(800));
         assert_eq!(summary.stall_count, 0);
         assert_eq!(summary.stall_total, Duration::ZERO);
     }
 
     #[test]
+    fn failed_terminal_preserves_the_active_failure_stall() {
+        let start = Instant::now();
+        let mut state = TransferTelemetryState::new(start);
+        let first_progress = start + Duration::from_millis(100);
+        state.observe_progress(first_progress, first_progress, 100);
+
+        let sample = state.sample(start + Duration::from_millis(600));
+        assert_eq!(sample.stalled_for, Duration::from_millis(500));
+
+        let summary = state.finish(start + Duration::from_millis(900), TransferEnd::Failed);
+        assert_eq!(summary.finalization_pause, Duration::ZERO);
+        assert_eq!(summary.stall_count, 1);
+        assert_eq!(summary.stall_total, Duration::from_millis(800));
+        assert_eq!(summary.longest_stall, Duration::from_millis(800));
+    }
+
+    #[test]
     fn stalls_are_counted_once_and_closed_when_progress_resumes() {
         let start = Instant::now();
         let mut state = TransferTelemetryState::new(start);
-        state.observe_progress(start + Duration::from_millis(100), 100);
+        let first_progress = start + Duration::from_millis(100);
+        state.observe_progress(first_progress, first_progress, 100);
 
         let sample = state.sample(start + Duration::from_millis(600));
         assert_eq!(sample.stalled_for, Duration::from_millis(500));
@@ -1005,8 +1135,9 @@ mod tests {
         assert_eq!(sample.stalled_for, Duration::from_millis(750));
         assert_eq!(state.stall_count, 1);
 
-        state.observe_progress(start + Duration::from_millis(900), 200);
-        let summary = state.finish(start + Duration::from_millis(1_000));
+        let resumed_progress = start + Duration::from_millis(900);
+        state.observe_progress(first_progress, resumed_progress, 200);
+        let summary = state.finish(start + Duration::from_millis(1_000), TransferEnd::Complete);
         assert_eq!(summary.stall_count, 1);
         assert_eq!(summary.stall_total, Duration::from_millis(800));
         assert_eq!(summary.longest_stall, Duration::from_millis(800));

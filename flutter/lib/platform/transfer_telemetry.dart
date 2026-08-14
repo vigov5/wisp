@@ -7,7 +7,7 @@ const bool transferTelemetryEnabled = bool.fromEnvironment(
 );
 
 const String _telemetryTarget = 'wisp_transfer_telemetry';
-final RegExp _anonymousSessionPattern = RegExp(r'^[0-9a-f]{16}$');
+final RegExp _telemetrySessionPattern = RegExp(r'^[0-9a-f]{16}$');
 final BigInt _maxU64 = BigInt.parse('18446744073709551615');
 
 enum MobileTransferTelemetryRole { sender, receiver }
@@ -53,7 +53,7 @@ String? encodeMobileTransferPhase({
   required BigInt bytesTotal,
   required int fileCount,
 }) {
-  if (!_anonymousSessionPattern.hasMatch(sessionId) ||
+  if (!_telemetrySessionPattern.hasMatch(sessionId) ||
       elapsed.isNegative ||
       bytesTotal.isNegative ||
       bytesTotal > _maxU64 ||

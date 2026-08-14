@@ -91,7 +91,7 @@ mod android_telemetry {
             };
 
             // Telemetry fields are bounded and exclude span context, so each
-            // anonymous JSON event remains below logcat's line limit.
+            // pseudonymous JSON event remains below logcat's line limit.
             unsafe {
                 __android_log_write(
                     ANDROID_LOG_DEBUG,
@@ -165,7 +165,7 @@ pub fn init_app() {
     // Ensures RUNTIME and static setup are touched when the Dart side initializes Rust.
 }
 
-/// Enables the anonymous transfer benchmark target for this process.
+/// Enables the pseudonymous transfer benchmark target for this process.
 ///
 /// The Flutter host calls this immediately after Rust initialization using its
 /// compile-time benchmark flag. Other debug targets remain on the normal log

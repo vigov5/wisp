@@ -20,7 +20,7 @@ void main() {
     );
   });
 
-  test('encodes anonymous mobile phase with full u64 counters', () {
+  test('encodes pseudonymous mobile phase with full u64 counters', () {
     final line = encodeMobileTransferPhase(
       role: MobileTransferTelemetryRole.receiver,
       phase: MobileTransferTelemetryPhase.backgroundSave,
@@ -44,7 +44,7 @@ void main() {
     expect(fields['file_count'], 3);
   });
 
-  test('rejects session IDs outside the anonymous benchmark format', () {
+  test('rejects session IDs outside the pseudonymous benchmark format', () {
     String? encode(String sessionId) => encodeMobileTransferPhase(
       role: MobileTransferTelemetryRole.sender,
       phase: MobileTransferTelemetryPhase.safReadCopy,
