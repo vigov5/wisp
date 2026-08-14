@@ -20,6 +20,7 @@ import '../theme/wisp_theme.dart';
 import '../features/settings/settings_providers.dart';
 import '../features/settings/application/controller.dart';
 import '../platform/android/keepalive_lifecycle_observer.dart';
+import '../platform/android/multicast_lock_channel.dart';
 import '../features/usb_cable/application/usb_cable_controller.dart';
 import '../platform/share_intent.dart';
 import '../platform/desktop_integration.dart';
@@ -293,6 +294,13 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
       debugPrint('[app] receiver discovery ${wanted ? 'enabled' : 'disabled'}');
     }
     unawaited(_receiverService.setDiscoverable(enabled: wanted));
+    // Android filters inbound multicast unless an app holds the Wi-Fi
+    // multicast lock, so without it this device can announce itself but never
+    // hear a peer's query or announcement — LAN discovery fails in both
+    // directions. Tied to foreground rather than to `wanted`, because browsing
+    // for other devices needs it just as much as answering queries does, and a
+    // user who turned off "discoverable" can still scan from the send screen.
+    unawaited(MulticastLock.setHeld(held: _isForeground));
   }
 
   @override
@@ -312,6 +320,7 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(_keepaliveObserver);
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_receiverService.setDiscoverable(enabled: false));
+    unawaited(MulticastLock.setHeld(held: false));
     super.dispose();
   }
 

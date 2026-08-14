@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -45,6 +46,8 @@ class MainActivity : FlutterFragmentActivity() {
         private const val KEEPALIVE_CHANNEL = "dev.vigov5.wisp/transfer_keepalive"
         private const val SHARE_CHANNEL = "dev.vigov5.wisp/share_intent"
         private const val USB_TETHER_CHANNEL = "dev.vigov5.wisp/usb_tether"
+        private const val MULTICAST_CHANNEL = "dev.vigov5.wisp/multicast_lock"
+        private const val MULTICAST_TAG = "WispMdns"
         private const val REQUEST_CODE_PICK_FILES = 2001
         private const val REQUEST_CODE_PICK_FOLDER = 2002
         private const val REQUEST_CODE_PICK_SAVE_FOLDER = 2003
@@ -76,6 +79,20 @@ class MainActivity : FlutterFragmentActivity() {
     private var initialSharedText: String? = null
     private var shareChannel: MethodChannel? = null
     private var usbAoa: UsbAoaChannel? = null
+
+    // Wi-Fi multicast lock, held while the app is foreground.
+    //
+    // Android's Wi-Fi driver filters inbound multicast when no app holds this
+    // lock, to save power. Sending is unaffected, which is what made the bug
+    // confusing: this device's mDNS announcements reached the desktop fine
+    // while it never saw the desktop's queries or announcements, so LAN
+    // discovery worked in neither direction. CHANGE_WIFI_MULTICAST_STATE was
+    // already declared in the manifest for this; nothing had ever taken the
+    // lock.
+    //
+    // Not reference counted: `setMulticastLockHeld` is idempotent so repeated
+    // lifecycle callbacks cannot leak or over-release it.
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -230,6 +247,19 @@ class MainActivity : FlutterFragmentActivity() {
             }
         }
 
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            MULTICAST_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "setHeld" -> {
+                    val held = call.argument<Boolean>("held") ?: false
+                    result.success(setMulticastLockHeld(held))
+                }
+                else -> result.notImplemented()
+            }
+        }
+
         // Direct phone-to-phone USB (AOA) host/accessory link.
         if (usbAoa == null) usbAoa = UsbAoaChannel(this)
         usbAoa?.configure(flutterEngine.dartExecutor.binaryMessenger)
@@ -370,6 +400,34 @@ class MainActivity : FlutterFragmentActivity() {
         } catch (_: Exception) {
             false
         }
+    }
+
+    /// Acquires or releases the Wi-Fi multicast lock. Idempotent: acquiring an
+    /// already-held lock, or releasing one that is not held, does nothing.
+    /// Returns whether the lock is held afterwards.
+    private fun setMulticastLockHeld(held: Boolean): Boolean {
+        if (held) {
+            if (multicastLock == null) {
+                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                multicastLock = wm.createMulticastLock(MULTICAST_TAG).apply {
+                    setReferenceCounted(false)
+                }
+            }
+            val lock = multicastLock ?: return false
+            if (!lock.isHeld) {
+                try {
+                    lock.acquire()
+                } catch (e: SecurityException) {
+                    // CHANGE_WIFI_MULTICAST_STATE missing or denied by policy.
+                    // LAN discovery degrades to short codes; nothing else breaks.
+                    Log.w(OPEN_TAG, "multicast lock acquire failed: ${e.message}")
+                    return false
+                }
+            }
+            return lock.isHeld
+        }
+        multicastLock?.let { if (it.isHeld) it.release() }
+        return false
     }
 
     private fun openTetherSettings(result: MethodChannel.Result) {
