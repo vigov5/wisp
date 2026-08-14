@@ -672,22 +672,49 @@ splitting the win. The spread tracks warm-up, not the arm. The first debug-build
 pair had looked like a clean 5.7x win, which is a good reminder of how easily a
 cold machine manufactures an effect.
 
-That result corrects the paragraph this section used to end with. The relay
-carried only ~16-20 KB per transfer, all in the pre-hole-punch window — iroh
-defaults relay to `TransportBias::backup()` (QUIC `PathStatus::Backup`,
-`src/socket/transports.rs:743`), so a healthy direct path really does keep it
-idle. **The 25.7% relay share in V16 is therefore not intentional striping.** It
-is evidence that the direct path on that Android run was degraded or never
-properly established, which moves the finding from D2 to D1.
-
 Two further readings from the same ten runs: `stream_data_blocked` was 0 in every
 one, so flow control was not the ceiling on this link; and the relay-on arm ran 4
-paths against the no-relay arm's 3 while matching its throughput, so extra paths
-by themselves are not what costs. Loopback is the weakest possible testbed for
-reordering — paths there differ by microseconds — so this rules out a large
-effect on a fast local link and nothing more. The A/B worth running next is
-phone-to-desktop over Wi-Fi, where setting the switch on the desktop receiver
-alone is enough to make the connection relay-free.
+paths against the no-relay arm's 3 while matching its throughput. Loopback is the
+weakest possible testbed for reordering — paths there differ by microseconds, and
+the relay never becomes competitive, carrying only ~16-20 KB per run.
+
+**On Wi-Fi the same A/B says the opposite, and it is the one to believe.** Phone
+to desktop, 273 MB, four alternating pairs, switch on the desktop receiver only
+(enough on its own — a dialer can only use the relay addresses the receiver
+advertises):
+
+| metric | relay on | no relay |
+| --- | --- | --- |
+| p50 median | 18.6 MiB/s | 21.0 MiB/s |
+| p10 median | 8.3 MiB/s | 16.8 MiB/s |
+| p10/p50 median | 45% | 79% |
+| CV median | 0.33 | 0.16 |
+| relay share of wire bytes | 16.1% | 0.0% |
+| passes the Gate-1 stability criteria | 0/4 | 4/4 |
+
+Median throughput barely moves; the tail doubles, and every pair points the same
+way. Splitting each relay-on run into deciles kills the "it is just hole-punching
+latency" explanation: relay share peaks at 43-68% *mid-transfer* in three of four
+runs and never reaches zero, with the final decile still at 6-7% and one run
+climbing to 19% at the end. iroh stripes payload over the relay alongside a live,
+selected direct path for the whole transfer — which contradicts its own
+documentation of relay as a backup transport "only used when no primary transport
+is available".
+
+So **the 25.7% relay share in V16 is real striping**, and it costs the tail
+rather than the median. The mechanism is the one this plan has been hunting: the
+relay path's higher RTT delays blocks, BAO only advances on a contiguous verified
+prefix, and the wait shows up as a transport-active delivery gap.
+
+An earlier revision of this section drew the opposite conclusion from the
+loopback null result and moved the finding from D2 to D1. That was wrong, and
+wrong for an instructive reason — the testbed could not exhibit the effect being
+tested for. D2 keeps its original scope.
+
+No local fix exists at iroh 0.97: `RelayMode::Disabled` cannot ship because it
+removes the fallback remote transfers depend on, and `transport_bias` cannot
+lower the relay below Backup because `TransportBias::backup()` is `pub(crate)`.
+This is an upstream issue and an argument for E4.
 Failing that, the hypothesis can only be tested observationally — correlating
 `active_path_count` and `relay_path_udp_bytes_delta` against throughput and
 delivery gaps across many runs — which is weaker evidence and must be labelled as

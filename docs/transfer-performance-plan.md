@@ -818,7 +818,7 @@ assumed.** Two levers were tried and both fail:
 
 Point 2 also explains the 25.7% relay share in a direct transfer: keeping the
 relay path alive alongside direct is intentional iroh behaviour, not a failure to
-upgrade the path.
+upgrade the path. The Wi-Fi A/B below measures what that costs.
 
 The third lever — a benchmark endpoint at `RelayMode::Disabled`, which removes
 relay paths at the source instead of asking iroh not to reopen them — **does
@@ -852,18 +852,59 @@ Three things the run does settle:
 - **Extra paths alone do not cost throughput.** The relay-on arm ran 4 paths to
   the no-relay arm's 3 and matched it once warm.
 
-That last point reverses the reading of the 25.7% relay share measured on
-Android. If a healthy direct path keeps the relay at a handshake-sized share,
-then a quarter of a transfer going over relay is not iroh striping by design —
-it means the direct path was degraded or never properly established on that run.
-**D2 is re-scoped**: the question is no longer "does multipath striping hurt"
-but "why did relay carry a quarter of a transfer that reported itself direct
-throughout", which belongs with D1.
+Loopback only rules out a large effect on a link where the direct path is so
+fast the relay is never competitive. It is the testbed least likely to show
+reordering costs, and it showed none.
 
-The loopback caveat matters both ways: paths there differ by microseconds, so it
-is the testbed least likely to show reordering costs. The remaining A/B worth
-running is phone-to-desktop over Wi-Fi, where `WISP_BENCH_NO_RELAY` on the
-desktop receiver is enough to make the whole connection relay-free.
+#### The Wi-Fi A/B answers it: multipath striping is real and it costs the tail
+
+Phone to desktop over Wi-Fi, 273 MB payload, `WISP_BENCH_NO_RELAY` on the
+desktop receiver (enough on its own — the dialer can only use relay addresses
+the receiver advertises), four alternating pairs, release build:
+
+| metric | relay on | no relay |
+| --- | --- | --- |
+| p50 median | 18.6 MiB/s | 21.0 MiB/s |
+| **p10 median** | **8.3 MiB/s** | **16.8 MiB/s** |
+| p10/p50 median | 45% | 79% |
+| CV median | 0.33 | 0.16 |
+| relay share of wire bytes | 16.1% | 0.0% |
+| stalls | 1 | 0 |
+| **passes the Gate-1 stability criteria** | **0/4** | **4/4** |
+
+Every pair pointed the same way on p10. Median throughput barely moves; what
+moves is the tail, and the tail is what the acceptance criteria measure.
+
+**The relay bytes are not a hole-punching startup cost.** Split each relay-on
+run into deciles: relay share peaks at 43-68% *mid-transfer* in three of four
+runs, and never falls to zero — the last decile still carries 6-7% over relay,
+and one run (A2) rises monotonically to 19% in its final decile. iroh is
+striping payload across the relay concurrently with a live, selected direct
+path, for the whole transfer.
+
+That contradicts iroh's own documentation, which says relay is a backup
+transport "only used when no primary transport is available"
+(`src/socket/transports.rs:743`, where relay is registered as
+`TransportBias::backup()`). Observed behaviour and documented intent disagree,
+and it is worth reporting upstream.
+
+The mechanism fits the shape being hunted: the relay path has a much higher RTT,
+so blocks arriving over it lag the direct path's; BAO verification only advances
+on a contiguous verified prefix, so a late relay-carried block holds up reported
+progress. That is the transport-active delivery gap, arriving on schedule.
+
+**There is no shippable fix at iroh 0.97.** `RelayMode::Disabled` is not an
+option in production — it removes the fallback that makes remote transfers work
+at all. The only public knob, `transport_bias`, cannot help either:
+`TransportBias::backup()` is `pub(crate)`, so an external caller can only build
+a `primary()`-based bias, and moving relay from Backup to Primary-with-a-penalty
+would raise its standing, not lower it. This becomes a strong argument for E4
+and an upstream issue, not a local patch.
+
+**D2 keeps its original scope** — the correction runs the other way. An earlier
+revision of this section read the loopback null result as evidence that relay
+striping was not real and re-scoped D2 toward D1. The Wi-Fi A/B shows that
+reading was wrong, and wrong because loopback could not exhibit the effect.
 
 - For many small files: A/B concurrency 1/2/4/8 with a bounded queue and a memory
   limit.

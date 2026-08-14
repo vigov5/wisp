@@ -35,15 +35,14 @@ const BENCH_NO_RELAY_ENV: &str = "WISP_BENCH_NO_RELAY";
 /// count, so a throughput win here is evidence that relay participation costs
 /// this workload rather than proof that path count alone does.
 ///
-/// Run on loopback (release, 256 MiB, five alternating pairs) it found no
-/// reliable difference — p50 median 49.6 MiB/s with the relay against 73.6
-/// without, on ranges that overlap almost entirely, with the last two pairs
-/// splitting the win. The relay carried ~16-20 KB per transfer, all before hole
-/// punching completed, which is what iroh's `TransportBias::backup()` default
-/// predicts. Loopback paths differ by microseconds, so that rules out a large
-/// effect on a fast local link and nothing more; the switch is kept for the
-/// phone-to-desktop Wi-Fi A/B, where setting it on the receiver alone makes the
-/// whole connection relay-free.
+/// On loopback it found no reliable difference — the relay never becomes
+/// competitive there, carrying ~16-20 KB per run. On Wi-Fi it answers the
+/// question: phone to desktop, 273 MB, four alternating pairs, relay share 16.1%
+/// against 0%, p10 median 8.3 MiB/s against 16.8, and 0/4 runs passing the
+/// stability criteria against 4/4. The median barely moves; the tail doubles.
+///
+/// Setting it on the receiver alone is enough — a dialer can only use the relay
+/// addresses the receiver advertises.
 pub(crate) fn relay_mode() -> RelayMode {
     relay_mode_for(no_relay())
 }
