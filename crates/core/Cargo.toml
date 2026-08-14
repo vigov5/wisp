@@ -28,6 +28,8 @@ thiserror.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]
+# `quic_baseline` (examples/) is a benchmark binary, not library code.
+anyhow.workspace = true
 filetime = "0.2"
 tempfile = "3.27.0"
 tracing-subscriber.workspace = true

@@ -586,11 +586,51 @@ D2). That reframes the desktop-receive Wi-Fi case: there is no local bottleneck
 left to find, and the remaining ~24% is QUIC/AEAD overhead plus whatever the blob
 layer adds.
 
-Still missing for this path: the **transport baseline** (raw QUIC over the same
-link without the blob store), which is what would split "QUIC costs this much"
-from "the blob layer costs this much". It needs a raw-QUIC binary on Android;
-not built yet. Until it exists, the 24% gap is unattributed and must not be
-credited to any one layer.
+#### The transport baseline closes the gap
+
+`crates/core/examples/quic_baseline.rs` is a source/sink over the same iroh,
+encryption, transport config and path, with the blob store, BAO verification,
+record writes and export removed. Cross-compiled for `aarch64-linux-android`
+and run from `adb shell`, so the source is the same phone that runs the app.
+
+Ten baseline runs against nine app runs (relay disabled on both, 256-273 MB,
+same session):
+
+| | app payload | raw QUIC | TCP |
+| --- | --- | --- | --- |
+| whole-transfer average, median | 23.0 MiB/s | 24.4 MiB/s | 27.7 MiB/s |
+| range | 16.0-25.9 | 20.6-26.6 | 27.5-30.0 |
+| p10, median | 20.9 MiB/s | 21.2 MiB/s | not windowed |
+| p10/p50, median | 83% | 88% | not windowed |
+
+```text
+transport_utilization = 23.0 / 24.4 = 94%
+link_utilization      = 23.0 / 27.7 = 83%   (raw QUIC itself is 88% of TCP)
+```
+
+**Everything above the transport costs 6%.** The earlier ~24% gap between app
+throughput and raw TCP is now attributed, and almost all of it is QUIC against
+TCP (12%), not the blob layer. BAO verification, the store, export, record
+checkpoints and progress plumbing together account for the remaining 6%.
+
+That closes the question this section opened. On this path there is no
+meaningful headroom above the transport, so further work on the record/export/
+progress path cannot be justified on throughput grounds — which is consistent
+with B2 finding P0.2 and P0.3 already down at 0.34% and 0.07% of wall time.
+
+Two things the comparison does surface:
+
+- **The app has a stall mode the raw transport does not.** One app run in nine
+  showed two `transport_idle` stalls — no UDP bytes at all, so the sender went
+  quiet rather than the receiver blocking on verification. The baseline sends
+  from memory and had zero idle windows in the four runs measured with windows.
+  The gap is small (one run in nine) but it is real and it points at the sending
+  side above the transport, i.e. D3, not at the receiver.
+- **One run in nine failed after transferring at full speed**, with
+  `running receiver session: reading message length: connection lost` during the
+  final control exchange. Throughput was 25.4 MiB/s right up to the end. That is
+  a reliability item, not a performance one, and it is not tracked anywhere else
+  in this plan.
 
 ### B2. A/B to attribute the changes already landed
 
@@ -1200,23 +1240,29 @@ A provider-only smoke is not sufficient to accept p10/p50/CV/stall.
 
 | criterion | state |
 | --- | --- |
-| link baseline | done — 27.7 MiB/s TCP, four runs (B1) |
+| link baseline | done — 27.7 MiB/s TCP, five runs (B1) |
 | disk and hash baselines | done — desktop 601 MiB/s write, 2,879 MiB/s hash (B1) |
-| raw QUIC transport baseline | **missing** — needs an Android raw-QUIC binary |
+| raw QUIC transport baseline | done — 24.4 MiB/s median, ten runs from the phone (B1) |
 | historical H and builds A-E | **not run** |
 | which change won, and by how much | attributed by unit cost x measured event rate (B2), not by the build matrix |
 
-The two gaps are different in kind. The build matrix is deferrable: the
+Only the build matrix is outstanding, and it is deferrable: the
 unit-cost-times-rate work already separates P0.1 from P0.2 from P0.3 and gives
 effect sizes, so the matrix would refine numbers rather than change the ranking.
-The missing transport baseline is not deferrable in the same way — without it the
-~24% between app throughput and raw TCP stays unattributed, and Gate 3's
-"single-stream-bound" branch cannot be evaluated on evidence.
+It is also now bounded from above — everything the matrix varies lives in the 6%
+between app throughput and the raw transport, so no build in it can be worth
+more than that on this path.
 
-Gate 3's routing question is, however, already answered for this path by D2's
-Wi-Fi A/B: the relay ratio is high (16% median of wire bytes) and removing it
-doubles p10, so **D1 and the upstream iroh issue come before any stream-count
-work**.
+Gate 3's routing question is answered for this path, and by two measurements
+rather than one:
+
+- **Not single-stream-bound, and not bound by anything above the transport.**
+  `transport_utilization` is 94%; the transport is 88% of raw TCP. D2's
+  stream-count experiments and D4's export work have at most 6% to win here.
+- **Relay striping is the one large effect**: 16% median of wire bytes, and
+  removing it doubles p10. So **D1 and the upstream iroh issue come first**, and
+  the D3 sending-side question comes second on the strength of the
+  `transport_idle` stalls the baseline does not reproduce.
 
 ### Gate 3 — Choosing the right optimization branch
 
