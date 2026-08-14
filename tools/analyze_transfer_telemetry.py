@@ -978,14 +978,14 @@ def build_report(parsed: ParsedTelemetry) -> dict[str, object]:
         for (source_id, transfer_id), events in sorted(parsed.transfers.items())
         if events.samples
     ]
-    if not runs:
-        raise AnalysisError("no blob telemetry samples found")
-
     provider_runs = [
         summarize_provider(source_id, transfer_id, events)
         for (source_id, transfer_id), events in sorted(parsed.providers.items())
         if events.samples
     ]
+    if not runs and not provider_runs:
+        raise AnalysisError("no blob telemetry samples found")
+
     phase_rows = [
         {
             "source_id": source_id,
@@ -1009,24 +1009,29 @@ def build_report(parsed: ParsedTelemetry) -> dict[str, object]:
         run_id = provider["benchmark_run_id"]
         if isinstance(run_id, int):
             providers_by_run_id.setdefault(run_id, []).append(provider)
+
+    def attach_phase_timings(row: dict[str, object]) -> None:
+        run_id = row["benchmark_run_id"]
+        matches = phases_by_run_id.get(run_id, []) if isinstance(run_id, int) else []
+        row["phase_timing_count"] = len(matches)
+        row["phases"] = matches
+        row["phase_timings_ms"] = {
+            f"{phase['role']}.{phase['phase']}": phase["elapsed_ms"]
+            for phase in matches
+        }
+        row["phase_outcomes"] = {
+            f"{phase['role']}.{phase['phase']}": phase["outcome"]
+            for phase in matches
+        }
+
+    for provider in provider_runs:
+        attach_phase_timings(provider)
     for run in runs:
         run_id = run["benchmark_run_id"]
         matches = providers_by_run_id.get(run_id, []) if isinstance(run_id, int) else []
         run["provider_match_count"] = len(matches)
         run["provider"] = matches[0] if len(matches) == 1 else None
-        phase_matches = (
-            phases_by_run_id.get(run_id, []) if isinstance(run_id, int) else []
-        )
-        run["phase_timing_count"] = len(phase_matches)
-        run["phases"] = phase_matches
-        run["phase_timings_ms"] = {
-            f"{phase['role']}.{phase['phase']}": phase["elapsed_ms"]
-            for phase in phase_matches
-        }
-        run["phase_outcomes"] = {
-            f"{phase['role']}.{phase['phase']}": phase["outcome"]
-            for phase in phase_matches
-        }
+        attach_phase_timings(run)
 
     all_speeds = [
         float(speed)
@@ -1041,15 +1046,21 @@ def build_report(parsed: ParsedTelemetry) -> dict[str, object]:
     ]
     aggregate = {
         "run_count": len(runs),
+        "provider_run_count": len(provider_runs),
+        "receiver_metrics_available": bool(runs),
         "completed_run_count": sum(run["outcome"] == "complete" for run in runs),
         "sample_count": sum(int(run["sample_count"]) for run in runs),
         "throughput_window_count": len(all_speeds),
         "measurement_valid_run_count": sum(bool(run["measurement_valid"]) for run in runs),
-        "p10_bytes_per_sec": percentile(all_speeds, 0.10),
-        "p50_bytes_per_sec": percentile(all_speeds, 0.50),
-        "median_of_run_medians_bytes_per_sec": statistics.median(run_medians),
+        "p10_bytes_per_sec": percentile(all_speeds, 0.10) if all_speeds else None,
+        "p50_bytes_per_sec": percentile(all_speeds, 0.50) if all_speeds else None,
+        "median_of_run_medians_bytes_per_sec": (
+            statistics.median(run_medians) if run_medians else None
+        ),
         "mean_run_coefficient_of_variation": statistics.fmean(run_cvs) if run_cvs else None,
-        "total_stall_count": sum(int(run["stall_count"]) for run in runs),
+        "total_stall_count": (
+            sum(int(run["stall_count"]) for run in runs) if runs else None
+        ),
         "accepted_run_count_70pct": sum(
             bool(run["passes_p10_70pct_median"] and run["passes_no_stall"])
             for run in runs
@@ -1127,49 +1138,83 @@ def _format_rate(value: object) -> str:
 def print_human_report(report: dict[str, object]) -> None:
     runs = report["runs"]
     assert isinstance(runs, list)
-    print("ID   path     result      windows   p10        median     p10/p50  CV     stalls")
-    for run in runs:
-        assert isinstance(run, dict)
-        ratio = run["p10_to_median"]
-        cv = run["coefficient_of_variation"]
-        print(
-            f"{int(run['source_id'])}:{int(run['transfer_id']):<2} "
-            f"{str(run['path']):<8} "
-            f"{str(run['outcome']):<11} "
-            f"{int(run['throughput_window_count']):>7}   "
-            f"{_format_rate(run['p10_bytes_per_sec']):<10} "
-            f"{_format_rate(run['p50_bytes_per_sec']):<10} "
-            f"{ratio if ratio is not None else 0:>7.1%}  "
-            f"{cv if cv is not None else 0:>5.2f}  "
-            f"{int(run['stall_count']):>6}"
-        )
-        timings = run["phase_timings_ms"]
-        assert isinstance(timings, dict)
-        if timings:
-            rendered = ", ".join(
-                f"{name}={int(elapsed_ms)}ms"
-                for name, elapsed_ms in sorted(timings.items())
+    if runs:
+        print("ID   path     result      windows   p10        median     p10/p50  CV     stalls")
+        for run in runs:
+            assert isinstance(run, dict)
+            ratio = run["p10_to_median"]
+            cv = run["coefficient_of_variation"]
+            print(
+                f"{int(run['source_id'])}:{int(run['transfer_id']):<2} "
+                f"{str(run['path']):<8} "
+                f"{str(run['outcome']):<11} "
+                f"{int(run['throughput_window_count']):>7}   "
+                f"{_format_rate(run['p10_bytes_per_sec']):<10} "
+                f"{_format_rate(run['p50_bytes_per_sec']):<10} "
+                f"{ratio if ratio is not None else 0:>7.1%}  "
+                f"{cv if cv is not None else 0:>5.2f}  "
+                f"{int(run['stall_count']):>6}"
             )
-            print(f"     phases: {rendered}")
+            _print_phase_timings(run)
+    else:
+        print("Receiver throughput samples unavailable; stability metrics were not computed.")
+
+    provider_runs = report["provider_runs"]
+    assert isinstance(provider_runs, list)
+    if provider_runs:
+        print()
+        print("Provider ID   path     result      samples   elapsed    UDP tx avg   loss   congestion")
+        for provider in provider_runs:
+            assert isinstance(provider, dict)
+            average = provider["udp_tx_average_bytes_per_sec"]
+            average_label = _format_rate(average) if average is not None else "n/a"
+            print(
+                f"{int(provider['source_id'])}:{int(provider['transfer_id']):<8} "
+                f"{str(provider['path']):<8} "
+                f"{str(provider['outcome']):<11} "
+                f"{int(provider['sample_count']):>7}   "
+                f"{int(provider['elapsed_ms']) / 1_000:>6.2f}s   "
+                f"{average_label:<12} "
+                f"{int(provider['lost_packets_total']):>4}   "
+                f"{int(provider['congestion_events_total']):>10}"
+            )
+            _print_phase_timings(provider)
     aggregate = report["aggregate"]
     assert isinstance(aggregate, dict)
     print()
-    print(
-        f"Runs: {aggregate['run_count']} | "
-        f"aggregate p10/p50: {_format_rate(aggregate['p10_bytes_per_sec'])} / "
-        f"{_format_rate(aggregate['p50_bytes_per_sec'])} | "
-        f"stalls: {aggregate['total_stall_count']}"
-    )
-    print(
-        f"Accepted (p10 >= 70% median, no stalls): "
-        f"{aggregate['accepted_run_count_70pct']}/{aggregate['run_count']}"
-    )
+    if runs:
+        print(
+            f"Runs: {aggregate['run_count']} | "
+            f"aggregate p10/p50: {_format_rate(aggregate['p10_bytes_per_sec'])} / "
+            f"{_format_rate(aggregate['p50_bytes_per_sec'])} | "
+            f"stalls: {aggregate['total_stall_count']}"
+        )
+        print(
+            f"Accepted (p10 >= 70% median, no stalls): "
+            f"{aggregate['accepted_run_count_70pct']}/{aggregate['run_count']}"
+        )
+    else:
+        print(
+            f"Receiver runs: 0 | provider runs: {aggregate['provider_run_count']} | "
+            "stability: unavailable"
+        )
     if report["skipped_lines"] or report["malformed_telemetry_lines"]:
         print(
             f"Ignored lines: {report['skipped_lines']} non-telemetry, "
             f"{report['malformed_telemetry_lines']} malformed telemetry",
             file=sys.stderr,
         )
+
+
+def _print_phase_timings(row: dict[str, object]) -> None:
+    timings = row["phase_timings_ms"]
+    assert isinstance(timings, dict)
+    if not timings:
+        return
+    rendered = ", ".join(
+        f"{name}={int(elapsed_ms)}ms" for name, elapsed_ms in sorted(timings.items())
+    )
+    print(f"     phases: {rendered}")
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -1224,7 +1269,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.fail_on_unstable:
         aggregate = report["aggregate"]
         assert isinstance(aggregate, dict)
-        if aggregate["accepted_run_count_70pct"] != aggregate["run_count"]:
+        if (
+            aggregate["run_count"] == 0
+            or aggregate["accepted_run_count_70pct"] != aggregate["run_count"]
+        ):
             return 1
     return 0
 

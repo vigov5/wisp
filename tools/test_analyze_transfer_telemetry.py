@@ -3,6 +3,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -382,6 +383,41 @@ class TelemetryAnalysisTests(unittest.TestCase):
         self.assertEqual(len(report["provider_runs"]), 1)
         self.assertEqual(provider["cwnd_p50_bytes"], 2_000_000.0)
         self.assertEqual(provider["lost_packets_total"], 2)
+
+    def test_provider_only_report_joins_mobile_phase_without_receiver_metrics(self):
+        run_fields = {
+            "benchmark_run_id_available": True,
+            "benchmark_run_id": 42,
+        }
+        lines = [
+            config(9, role="provider", **run_fields),
+            provider_sample(9),
+            provider_summary(9),
+            phase_event(
+                42,
+                "background_save",
+                171,
+                role="receiver",
+                string_counters=True,
+            ),
+        ]
+        parsed = telemetry.parse_stream(io.StringIO("\n".join(lines) + "\n"))
+        report = telemetry.build_report(parsed)
+        provider = report["provider_runs"][0]
+        aggregate = report["aggregate"]
+
+        self.assertEqual(report["runs"], [])
+        self.assertEqual(provider["phase_timing_count"], 1)
+        self.assertEqual(provider["phase_timings_ms"]["receiver.background_save"], 171)
+        self.assertFalse(aggregate["receiver_metrics_available"])
+        self.assertIsNone(aggregate["p10_bytes_per_sec"])
+        self.assertIsNone(aggregate["total_stall_count"])
+
+        with (
+            mock.patch.object(telemetry, "analyze_paths", return_value=report),
+            mock.patch.object(telemetry, "print_human_report"),
+        ):
+            self.assertEqual(telemetry.main(["unused", "--fail-on-unstable"]), 1)
 
     def test_phase_timings_join_receiver_by_anonymous_run_id(self):
         run_fields = {
