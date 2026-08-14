@@ -1196,6 +1196,28 @@ A provider-only smoke is not sufficient to accept p10/p50/CV/stall.
   desktop.
 - It is known which change produced a win, and its effect size.
 
+**Status: partly met, on one path.** For phone-to-desktop Wi-Fi:
+
+| criterion | state |
+| --- | --- |
+| link baseline | done — 27.7 MiB/s TCP, four runs (B1) |
+| disk and hash baselines | done — desktop 601 MiB/s write, 2,879 MiB/s hash (B1) |
+| raw QUIC transport baseline | **missing** — needs an Android raw-QUIC binary |
+| historical H and builds A-E | **not run** |
+| which change won, and by how much | attributed by unit cost x measured event rate (B2), not by the build matrix |
+
+The two gaps are different in kind. The build matrix is deferrable: the
+unit-cost-times-rate work already separates P0.1 from P0.2 from P0.3 and gives
+effect sizes, so the matrix would refine numbers rather than change the ranking.
+The missing transport baseline is not deferrable in the same way — without it the
+~24% between app throughput and raw TCP stays unattributed, and Gate 3's
+"single-stream-bound" branch cannot be evaluated on evidence.
+
+Gate 3's routing question is, however, already answered for this path by D2's
+Wi-Fi A/B: the relay ratio is high (16% median of wire bytes) and removing it
+doubles p10, so **D1 and the upstream iroh issue come before any stream-count
+work**.
+
 ### Gate 3 — Choosing the right optimization branch
 
 - High relay ratio ⇒ D1.
