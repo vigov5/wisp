@@ -556,6 +556,42 @@ The initial threshold for investigation is below 70% of the appropriate baseline
 The final release threshold will be fixed once there is data per device and path
 class; a single shared number must not be used to hide mobile disk or CPU limits.
 
+#### Measured: phone to desktop over Wi-Fi
+
+Link baseline, phone to desktop, 256 MiB of TCP through `nc` into a socket sink,
+four runs: **27.7 MiB/s** (27.5 / 27.7 / 27.7 / 27.9 — the link is remarkably
+steady). Same direction, same subnet and same session as the transfer runs.
+
+Local baselines (`cargo test --release -p wisp-core --test baselines --
+--ignored --nocapture`):
+
+| baseline | desktop receiver | phone sender |
+| --- | --- | --- |
+| BLAKE3 hash | 2,879 MiB/s | not measured |
+| Sequential disk write incl. `fsync` | 601 MiB/s | not measured |
+| Sequential read | 1,893 MiB/s (warm cache) | ~1,100 MiB/s (warm cache) |
+
+So on this path:
+
+```text
+link_utilization (relay disabled) = 21.0 / 27.7 = 76%
+link_utilization (relay enabled)  = 18.6 / 27.7 = 67%
+```
+
+**Neither end is locally bottlenecked.** Hashing has ~137x headroom over app
+throughput and the receiver's disk ~29x; the phone's storage read is over 50x
+the link. The transfer sits at 76% of raw TCP with the relay out of the way, and
+drops below the 70% investigation threshold only when the relay is striping (see
+D2). That reframes the desktop-receive Wi-Fi case: there is no local bottleneck
+left to find, and the remaining ~24% is QUIC/AEAD overhead plus whatever the blob
+layer adds.
+
+Still missing for this path: the **transport baseline** (raw QUIC over the same
+link without the blob store), which is what would split "QUIC costs this much"
+from "the blob layer costs this much". It needs a raw-QUIC binary on Android;
+not built yet. Until it exists, the 24% gap is unattributed and must not be
+credited to any one layer.
+
 ### B2. A/B to attribute the changes already landed
 
 Rebuild a baseline from the commit before `8a33818`, then produce builds differing
