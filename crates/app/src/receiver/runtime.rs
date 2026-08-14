@@ -230,6 +230,16 @@ impl ReceiverRuntime {
         // out and surfacing the failure keeps the actor responsive while LAN
         // discovery still runs off the offline ticket (see `reconcile_advertising`).
         const REGISTRATION_TICKET_TIMEOUT: Duration = Duration::from_secs(10);
+        // A benchmark endpoint bound with no relay never comes online, so it
+        // would spend that timeout waiting and then fail to register at all.
+        // Register the direct addresses it does have instead — on the loopback
+        // / LAN link these runs use, that is the whole reachable set.
+        if crate::bench::no_relay() {
+            let ticket = make_ticket_offline(&self.endpoint).map_err(|e| AppError::Internal {
+                message: e.to_string(),
+            })?;
+            return self.register_ticket(resolved_url, ticket).await;
+        }
         let ticket = match tokio::time::timeout(
             REGISTRATION_TICKET_TIMEOUT,
             make_ticket(&self.endpoint),
@@ -252,7 +262,17 @@ impl ReceiverRuntime {
                 });
             }
         };
-        let registration = RendezvousClient::new(resolved_url)
+        self.register_ticket(resolved_url, ticket).await
+    }
+
+    /// Publishes `ticket` to the rendezvous server and adopts the short code it
+    /// hands back.
+    async fn register_ticket(
+        &mut self,
+        server_url: String,
+        ticket: String,
+    ) -> AppResult<ReceiverRegistration> {
+        let registration = RendezvousClient::new(server_url)
             .register_peer(ticket)
             .await
             .map_err(|e| AppError::Internal {

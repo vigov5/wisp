@@ -10,7 +10,7 @@ mod tests;
 
 use std::time::Duration;
 
-use iroh::{Endpoint, RelayMode, endpoint::presets, protocol::Router};
+use iroh::{Endpoint, endpoint::presets, protocol::Router};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::blob_dispatcher::BlobDispatcher;
@@ -121,7 +121,7 @@ impl ReceiverService {
         // failure mode.
         let endpoint = Endpoint::builder(presets::N0)
             .alpns(vec![ALPN.to_vec(), iroh_blobs::ALPN.to_vec()])
-            .relay_mode(RelayMode::Default)
+            .relay_mode(crate::bench::relay_mode())
             .transport_config(crate::quic_keepalive::build_transport_config())
             .secret_key(config.secret_key.clone())
             .bind()

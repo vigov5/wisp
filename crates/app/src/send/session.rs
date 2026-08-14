@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use iroh::{Endpoint, RelayMode, endpoint::presets};
+use iroh::{Endpoint, endpoint::presets};
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
@@ -209,7 +209,7 @@ impl SendSession {
                     wisp_core::protocol::ALPN.to_vec(),
                     iroh_blobs::ALPN.to_vec(),
                 ])
-                .relay_mode(RelayMode::Default)
+                .relay_mode(crate::bench::relay_mode())
                 .transport_config(crate::quic_keepalive::build_transport_config())
                 .secret_key(crate::identity::current_secret_key())
                 .bind()

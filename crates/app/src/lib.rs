@@ -1,3 +1,4 @@
+mod bench;
 pub mod blob_dispatcher;
 pub mod diagnostics;
 pub mod error;
