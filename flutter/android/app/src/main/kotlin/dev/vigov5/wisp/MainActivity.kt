@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
@@ -423,7 +424,13 @@ class MainActivity : FlutterFragmentActivity() {
                 return
             }
             if (resultCode != Activity.RESULT_OK || data == null) {
-                result.success(emptyList<String>())
+                result.success(
+                    mapOf(
+                        "paths" to emptyList<String>(),
+                        "bytesCopied" to 0L,
+                        "copyElapsedMicros" to 0L,
+                    ),
+                )
                 return
             }
             val uris = mutableListOf<Uri>()
@@ -440,7 +447,8 @@ class MainActivity : FlutterFragmentActivity() {
             // streamed back to Flutter via "onPickProgress"; result.success
             // resumes on the main thread once every file is cached.
             lifecycleScope.launch {
-                val paths = withContext(Dispatchers.IO) {
+                val pickResult = withContext(Dispatchers.IO) {
+                    val copyStartedNanos = SystemClock.elapsedRealtimeNanos()
                     val sizes = uris.map { resolveSize(it) ?: 0L }
                     val totalBytes = sizes.sum()
                     var completedBytes = 0L
@@ -459,9 +467,15 @@ class MainActivity : FlutterFragmentActivity() {
                         completedBytes += sizes[index]
                     }
                     emitPickProgress(totalBytes, totalBytes, uris.size, uris.size)
-                    out
+                    val copyElapsedMicros =
+                        (SystemClock.elapsedRealtimeNanos() - copyStartedNanos) / 1_000L
+                    mapOf(
+                        "paths" to out,
+                        "bytesCopied" to out.sumOf { File(it).length() },
+                        "copyElapsedMicros" to copyElapsedMicros,
+                    )
                 }
-                result.success(paths)
+                result.success(pickResult)
             }
             return
         }
@@ -494,6 +508,7 @@ class MainActivity : FlutterFragmentActivity() {
             // = 0) — the bar spins but still shows bytes copied so far.
             lifecycleScope.launch {
                 val res = withContext(Dispatchers.IO) {
+                    val copyStartedNanos = SystemClock.elapsedRealtimeNanos()
                     var copied = 0L
                     var lastEmit = 0L
                     val sizeBytes = copyDocumentTreeToCache(rootDoc, destDir) { delta ->
@@ -503,7 +518,12 @@ class MainActivity : FlutterFragmentActivity() {
                             emitPickProgress(copied, 0L, 0, 1)
                         }
                     }
-                    mapOf("path" to destDir.absolutePath, "sizeBytes" to sizeBytes)
+                    mapOf(
+                        "path" to destDir.absolutePath,
+                        "sizeBytes" to sizeBytes,
+                        "copyElapsedMicros" to
+                            (SystemClock.elapsedRealtimeNanos() - copyStartedNanos) / 1_000L,
+                    )
                 }
                 result.success(res)
             }

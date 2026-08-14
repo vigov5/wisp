@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -12,6 +13,7 @@ import 'directory_size.dart';
 import '../../../platform/android/transfer_keepalive_channel.dart';
 import '../../../platform/android_file_picker.dart';
 import '../../../platform/send_transfer_source.dart';
+import '../../../platform/transfer_telemetry.dart';
 import '../../saved_devices/application/saved_devices_controller.dart';
 import '../../transfers/application/format_utils.dart';
 import '../../settings/application/controller.dart';
@@ -27,6 +29,8 @@ class SendController extends _$SendController {
   DateTime? _transferStartTime;
   DateTime? _lastKeepaliveAt;
   int _activeTransferToken = 0;
+  final Set<SendSourcePreparation> _pendingSourcePreparations =
+      HashSet<SendSourcePreparation>.identity();
 
   @override
   SendState build() {
@@ -36,6 +40,9 @@ class SendController extends _$SendController {
 
   void beginDraft(List<SendPickedFile> files) {
     unawaited(_cancelActiveTransfer());
+    _pendingSourcePreparations
+      ..clear()
+      ..addAll(files.map((file) => file.sourcePreparation).nonNulls);
     state = SendStateDrafting(
       items: files.map(SendDraftItem.fromPickedFile).toList(growable: false),
     );
@@ -46,6 +53,7 @@ class SendController extends _$SendController {
   /// or as a synthetic `.txt` for larger payloads — decided in the Rust core.
   void beginTextDraft(String text) {
     unawaited(_cancelActiveTransfer());
+    _pendingSourcePreparations.clear();
     state = SendStateDrafting(items: const [], inlineText: text);
   }
 
@@ -57,6 +65,7 @@ class SendController extends _$SendController {
       beginTextDraft(text);
       return;
     }
+    _pendingSourcePreparations.clear();
     state = SendStateDrafting(
       items: const [],
       destination: currentState.destination,
@@ -84,6 +93,9 @@ class SendController extends _$SendController {
       return;
     }
 
+    _pendingSourcePreparations.addAll(
+      newItems.map((item) => item.sourcePreparation).nonNulls,
+    );
     state = currentState.copyWith(items: [...currentState.items, ...newItems]);
     _hydrateDirectorySizes();
   }
@@ -101,6 +113,12 @@ class SendController extends _$SendController {
       clearDraft();
       return;
     }
+
+    final retainedPreparations = HashSet<SendSourcePreparation>.identity()
+      ..addAll(nextItems.map((item) => item.sourcePreparation).nonNulls);
+    _pendingSourcePreparations.removeWhere(
+      (preparation) => !retainedPreparations.contains(preparation),
+    );
 
     state = currentState.copyWith(items: nextItems);
   }
@@ -148,6 +166,7 @@ class SendController extends _$SendController {
     unawaited(_cancelActiveTransfer());
     state = const SendStateIdle();
     _pendingDirectorySizes.clear();
+    _pendingSourcePreparations.clear();
     if (Platform.isAndroid) {
       unawaited(AndroidFilePicker.clearPickedCache());
     }
@@ -280,7 +299,10 @@ class SendController extends _$SendController {
           ),
         )
         .listen(
-          (update) => _handleTransferUpdate(update, transferToken),
+          (update) {
+            _emitPendingSourcePreparation(update, transferToken);
+            _handleTransferUpdate(update, transferToken);
+          },
           onError: (Object error, StackTrace stackTrace) =>
               _handleTransferError(error, stackTrace, transferToken),
         );
@@ -406,6 +428,41 @@ class SendController extends _$SendController {
 
   void _dispose() {
     unawaited(_cancelActiveTransfer());
+  }
+
+  void _emitPendingSourcePreparation(
+    SendTransferUpdate update,
+    int transferToken,
+  ) {
+    if (transferToken != _activeTransferToken ||
+        _pendingSourcePreparations.isEmpty) {
+      return;
+    }
+    final currentState = state;
+    if (currentState is! SendStateTransferring) return;
+    final plan = update.plan ?? currentState.transfer.plan;
+    if (plan == null) return;
+
+    final elapsedMicros = _pendingSourcePreparations.fold<int>(
+      0,
+      (sum, preparation) => sum + preparation.elapsed.inMicroseconds,
+    );
+    final bytesCopied = _pendingSourcePreparations.fold<BigInt>(
+      BigInt.zero,
+      (sum, preparation) => sum + preparation.bytesCopied,
+    );
+    emitMobileTransferPhase(
+      role: MobileTransferTelemetryRole.sender,
+      phase: MobileTransferTelemetryPhase.safReadCopy,
+      outcome: MobileTransferTelemetryOutcome.complete,
+      sessionId: plan.sessionId,
+      elapsed: Duration(microseconds: elapsedMicros),
+      bytesTotal: bytesCopied,
+      fileCount: plan.totalFiles,
+    );
+    // A retry reuses the same app-cache copies and must not charge the original
+    // SAF read/copy time to a second network run.
+    _pendingSourcePreparations.clear();
   }
 
   void _handleTransferUpdate(SendTransferUpdate update, int transferToken) {

@@ -29,8 +29,12 @@ class FileSelectorSendSelectionPicker implements SendSelectionPicker {
     // For large files this triggers an OutOfMemoryError.  Use a custom
     // MethodChannel that copies files to the app cache via streaming instead.
     if (Platform.isAndroid) {
-      final paths = await AndroidFilePicker.pickFiles();
-      return paths
+      final result = await AndroidFilePicker.pickFiles();
+      final sourcePreparation = SendSourcePreparation(
+        elapsed: result.copyElapsed,
+        bytesCopied: result.bytesCopied,
+      );
+      return result.paths
           .map((path) {
             BigInt? sizeBytes;
             try {
@@ -43,6 +47,7 @@ class FileSelectorSendSelectionPicker implements SendSelectionPicker {
               name: SendPickedFile.fromPath(path).name,
               kind: SendPickedFileKind.file,
               sizeBytes: sizeBytes,
+              sourcePreparation: sourcePreparation,
             );
           })
           .toList(growable: false);
@@ -85,6 +90,10 @@ class FileSelectorSendSelectionPicker implements SendSelectionPicker {
           name: SendPickedFile.directory(result.path).name,
           kind: SendPickedFileKind.directory,
           sizeBytes: result.sizeBytes,
+          sourcePreparation: SendSourcePreparation(
+            elapsed: result.copyElapsed,
+            bytesCopied: result.sizeBytes,
+          ),
         ),
       ];
     }

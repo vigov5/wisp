@@ -6,6 +6,20 @@ enum SendTransferOutcome { success, cancelled, declined, failed }
 
 enum SendPickedFileKind { file, directory }
 
+/// One native source-read/copy operation completed before a mobile send.
+/// Multiple files selected in one picker invocation share the same instance so
+/// telemetry can count the batch once without retaining source URIs or paths.
+@immutable
+class SendSourcePreparation {
+  const SendSourcePreparation({
+    required this.elapsed,
+    required this.bytesCopied,
+  });
+
+  final Duration elapsed;
+  final BigInt bytesCopied;
+}
+
 @immutable
 class SendRequestData {
   const SendRequestData({
@@ -88,6 +102,7 @@ class SendDraftItem {
     required this.name,
     required this.kind,
     required this.sizeBytes,
+    this.sourcePreparation,
   });
 
   factory SendDraftItem.fromPickedFile(SendPickedFile file) {
@@ -96,6 +111,7 @@ class SendDraftItem {
       name: file.name,
       kind: file.kind,
       sizeBytes: file.sizeBytes ?? BigInt.zero,
+      sourcePreparation: file.sourcePreparation,
     );
   }
 
@@ -103,6 +119,7 @@ class SendDraftItem {
   final String name;
   final SendPickedFileKind kind;
   final BigInt sizeBytes;
+  final SendSourcePreparation? sourcePreparation;
 }
 
 @immutable
@@ -112,6 +129,7 @@ class SendPickedFile {
     required this.name,
     this.kind = SendPickedFileKind.file,
     this.sizeBytes,
+    this.sourcePreparation,
   });
 
   factory SendPickedFile.fromPath(String path) {
@@ -134,4 +152,5 @@ class SendPickedFile {
   final String name;
   final SendPickedFileKind kind;
   final BigInt? sizeBytes;
+  final SendSourcePreparation? sourcePreparation;
 }

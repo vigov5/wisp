@@ -154,17 +154,20 @@ def phase_event(
     *,
     role="sender",
     outcome="complete",
+    string_counters=False,
 ):
     return event(
         "blob_phase",
         0,
         role=role,
         benchmark_run_id_available=True,
-        benchmark_run_id=benchmark_run_id,
+        benchmark_run_id=(
+            str(benchmark_run_id) if string_counters else benchmark_run_id
+        ),
         phase=phase,
         outcome=outcome,
         elapsed_ms=elapsed_ms,
-        bytes_total=1_000,
+        bytes_total="1000" if string_counters else 1_000,
         file_count=1,
     )
 
@@ -407,6 +410,64 @@ class TelemetryAnalysisTests(unittest.TestCase):
             io.StringIO(phase_event(42, "\x1b[31mhostile", 1) + "\n")
         )
         self.assertEqual(parsed.phase_count, 0)
+        self.assertEqual(parsed.malformed_telemetry_lines, 1)
+
+    def test_mobile_phases_accept_canonical_u64_decimal_strings(self):
+        run_id = 18_446_744_073_709_551_615
+        lines = [
+            sample(
+                10,
+                1_000,
+                1_000,
+                sample_ms=1_000,
+                benchmark_run_id_available=True,
+                benchmark_run_id=run_id,
+            ),
+            summary(
+                10,
+                benchmark_run_id_available=True,
+                benchmark_run_id=run_id,
+            ),
+            phase_event(
+                run_id,
+                "saf_read_copy",
+                250,
+                string_counters=True,
+            ),
+            phase_event(
+                run_id,
+                "background_save",
+                500,
+                role="receiver",
+                string_counters=True,
+            ),
+        ]
+        parsed = telemetry.parse_stream(io.StringIO("\n".join(lines) + "\n"))
+
+        self.assertEqual(parsed.phase_count, 2)
+        self.assertEqual(parsed.phases[0][1].benchmark_run_id, run_id)
+        self.assertEqual(parsed.phases[1][1].bytes_total, 1_000)
+        report = telemetry.build_report(parsed)
+        run = report["runs"][0]
+        self.assertEqual(run["phase_timing_count"], 2)
+        self.assertEqual(run["phase_timings_ms"]["sender.saf_read_copy"], 250)
+        self.assertEqual(run["phase_timings_ms"]["receiver.background_save"], 500)
+
+    def test_noncanonical_decimal_string_is_rejected(self):
+        line = phase_event(42, "saf_read_copy", 1, string_counters=True)
+        payload = json.loads(line)
+        payload["fields"]["benchmark_run_id"] = "00042"
+        parsed = telemetry.parse_stream(io.StringIO(json.dumps(payload) + "\n"))
+
+        self.assertEqual(parsed.phase_count, 0)
+        self.assertEqual(parsed.malformed_telemetry_lines, 1)
+
+    def test_core_sample_numeric_strings_remain_rejected(self):
+        payload = json.loads(sample(10, 1_000, 1_000))
+        payload["fields"]["app_bytes_per_sec"] = "1000"
+        parsed = telemetry.parse_stream(io.StringIO(json.dumps(payload) + "\n"))
+
+        self.assertEqual(parsed.sample_count, 0)
         self.assertEqual(parsed.malformed_telemetry_lines, 1)
 
     def test_parser_rejects_unbounded_sample_growth(self):

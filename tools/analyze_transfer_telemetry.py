@@ -25,12 +25,14 @@ KNOWN_PHASES = frozenset(
         "walk_metadata",
         "import_hash",
         "collection_store",
+        "saf_read_copy",
         "dial",
         "control_handshake",
         "decision_wait",
         "blob_setup",
         "fetch_store",
         "export",
+        "background_save",
         "final_ack",
     }
 )
@@ -193,6 +195,23 @@ def _non_negative_int(value: object) -> int | None:
     return value
 
 
+def _non_negative_int_or_decimal(value: object) -> int | None:
+    # Dart cannot represent every Rust u64 as a native signed integer. Mobile
+    # phase JSONL therefore uses bounded, canonical decimal strings for run IDs
+    # and byte counters. Keep every other event on strict JSON integers.
+    if isinstance(value, str):
+        if (
+            not value
+            or len(value) > 20
+            or not value.isascii()
+            or not value.isdigit()
+            or (len(value) > 1 and value[0] == "0")
+        ):
+            return None
+        value = int(value, 10)
+    return _non_negative_int(value)
+
+
 def _known_path(value: object) -> str:
     return value if isinstance(value, str) and value in KNOWN_PATHS else "unknown"
 
@@ -205,9 +224,12 @@ def _strict_bool(value: object) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
-def _benchmark_run_id(fields: dict[str, object]) -> int | None:
+def _benchmark_run_id(
+    fields: dict[str, object], *, allow_decimal_string: bool = False
+) -> int | None:
     available = fields.get("benchmark_run_id_available")
-    value = _non_negative_int(fields.get("benchmark_run_id"))
+    parser = _non_negative_int_or_decimal if allow_decimal_string else _non_negative_int
+    value = parser(fields.get("benchmark_run_id"))
     return value if available is True and value is not None else None
 
 
@@ -448,13 +470,18 @@ def _parse_phase(fields: dict[str, object]) -> PhaseEvent | None:
     role = _known_label(fields.get("role"), KNOWN_PHASE_ROLES)
     phase = _known_label(fields.get("phase"), KNOWN_PHASES)
     outcome = _known_label(fields.get("outcome"), KNOWN_PHASE_OUTCOMES)
+    benchmark_run_id = _benchmark_run_id(fields, allow_decimal_string=True)
     elapsed_ms = _non_negative_int(fields.get("elapsed_ms"))
-    bytes_total = _non_negative_int(fields.get("bytes_total"))
+    bytes_total = _non_negative_int_or_decimal(fields.get("bytes_total"))
     file_count = _non_negative_int(fields.get("file_count"))
     if (
         role == "unknown"
         or phase == "unknown"
         or outcome == "unknown"
+        or (
+            fields.get("benchmark_run_id_available") is True
+            and benchmark_run_id is None
+        )
         or elapsed_ms is None
         or bytes_total is None
         or file_count is None
@@ -462,7 +489,7 @@ def _parse_phase(fields: dict[str, object]) -> PhaseEvent | None:
         return None
     return PhaseEvent(
         role=role,
-        benchmark_run_id=_benchmark_run_id(fields),
+        benchmark_run_id=benchmark_run_id,
         phase=phase,
         outcome=outcome,
         elapsed_ms=elapsed_ms,

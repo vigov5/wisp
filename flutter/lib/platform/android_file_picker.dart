@@ -4,15 +4,37 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+/// Files copied from Android's Storage Access Framework into the app cache.
+/// [copyElapsed] covers native metadata reads and streaming only; time spent by
+/// the user in the system picker is deliberately excluded.
+class AndroidFilePickResult {
+  const AndroidFilePickResult({
+    required this.paths,
+    required this.bytesCopied,
+    required this.copyElapsed,
+  });
+
+  final List<String> paths;
+  final BigInt bytesCopied;
+  final Duration copyElapsed;
+}
+
 /// Result of [AndroidFilePicker.pickFolder].
 class AndroidFolderResult {
-  const AndroidFolderResult({required this.path, required this.sizeBytes});
+  const AndroidFolderResult({
+    required this.path,
+    required this.sizeBytes,
+    required this.copyElapsed,
+  });
 
   final String path;
 
   /// Total size in bytes computed on the native side via the Storage Access
   /// Framework — works regardless of Android scoped-storage restrictions.
   final BigInt sizeBytes;
+
+  /// Native SAF traversal + streaming time, excluding the system picker UI.
+  final Duration copyElapsed;
 }
 
 /// Progress of the native URI → app-cache copy that backs [AndroidFilePicker.
@@ -99,12 +121,24 @@ class AndroidFilePicker {
 
   /// Opens the system file picker and returns a list of absolute paths to
   /// copies of the selected files stored in the app cache directory.
-  static Future<List<String>> pickFiles() async {
+  static Future<AndroidFilePickResult> pickFiles() async {
     _ensureWired();
     pickProgress.value = null;
     try {
-      final result = await _channel.invokeMethod<List<dynamic>>('pickFiles');
-      return result?.cast<String>() ?? const [];
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'pickFiles',
+      );
+      final rawPaths = result?['paths'];
+      final paths = rawPaths is List
+          ? rawPaths.whereType<String>().toList(growable: false)
+          : const <String>[];
+      return AndroidFilePickResult(
+        paths: paths,
+        bytesCopied: BigInt.from(_nonNegativeInt(result?['bytesCopied'])),
+        copyElapsed: Duration(
+          microseconds: _nonNegativeInt(result?['copyElapsedMicros']),
+        ),
+      );
     } finally {
       pickProgress.value = null;
     }
@@ -135,7 +169,18 @@ class AndroidFilePicker {
     };
 
     _folderSizeCache[path] = sizeBytes;
-    return AndroidFolderResult(path: path, sizeBytes: sizeBytes);
+    return AndroidFolderResult(
+      path: path,
+      sizeBytes: sizeBytes,
+      copyElapsed: Duration(
+        microseconds: _nonNegativeInt(result['copyElapsedMicros']),
+      ),
+    );
+  }
+
+  static int _nonNegativeInt(Object? value) {
+    if (value is! num || !value.isFinite || value < 0) return 0;
+    return value.toInt();
   }
 
   /// Returns the cached size for [path] previously set by [pickFolder].

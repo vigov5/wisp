@@ -9,6 +9,7 @@ import '../../../features/transfers/application/state.dart';
 import '../../../src/rust/api/lan.dart' as rust_lan;
 import '../../../src/rust/api/receiver.dart' as rust_receiver;
 import '../../android_media_store.dart';
+import '../../transfer_telemetry.dart';
 import '../rendezvous_defaults.dart';
 import 'mapper.dart';
 import 'source.dart';
@@ -468,7 +469,10 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
   ) async {
     final safUri = androidSaveUri;
     // The completed event has files: [] but plan.files has all paths.
-    final planFiles = event.plan?.files ?? [];
+    final plan = event.plan;
+    final planFiles = plan?.files ?? [];
+    final saveStopwatch = Stopwatch()..start();
+    var saveFailed = false;
     // Fresh transfer — drop any URIs cached from a previous one so the finish
     // screen's open buttons can't resolve to a stale file.
     _savedReceivedUris.clear();
@@ -476,7 +480,7 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
       '[receiver] Android post-transfer: saving ${planFiles.length} file(s) '
       '${safUri != null ? "to SAF folder" : "to MediaStore Downloads/Wisp"}',
     );
-    for (final file in planFiles) {
+    for (final (fileIndex, file) in planFiles.indexed) {
       final relativePath = file.path.replaceAll('\\', '/');
       final srcPath = '$cacheRoot/$relativePath';
       final String? saved;
@@ -493,10 +497,32 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
         // Record the exact final URI so an individual file can be opened from
         // the finish screen without re-deriving (and possibly mis-guessing) it.
         _savedReceivedUris[relativePath] = saved;
-        debugPrint('[receiver] Android saved: $relativePath → $saved');
+        debugPrint(
+          '[receiver] Android saved file ${fileIndex + 1}/${planFiles.length}',
+        );
       } else {
-        debugPrint('[receiver] Android save failed for: $relativePath');
+        saveFailed = true;
+        debugPrint(
+          '[receiver] Android save failed for file '
+          '${fileIndex + 1}/${planFiles.length}',
+        );
       }
+    }
+    saveStopwatch.stop();
+    if (plan != null) {
+      emitMobileTransferPhase(
+        role: MobileTransferTelemetryRole.receiver,
+        phase: MobileTransferTelemetryPhase.backgroundSave,
+        outcome: planFiles.isEmpty
+            ? MobileTransferTelemetryOutcome.skipped
+            : saveFailed
+            ? MobileTransferTelemetryOutcome.failed
+            : MobileTransferTelemetryOutcome.complete,
+        sessionId: plan.sessionId,
+        elapsed: saveStopwatch.elapsed,
+        bytesTotal: plan.totalBytes,
+        fileCount: plan.totalFiles,
+      );
     }
     await AndroidMediaStore.cleanupReceiveCache(cacheRoot);
     debugPrint('[receiver] Android post-transfer: done');
