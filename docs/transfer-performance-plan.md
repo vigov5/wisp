@@ -1,48 +1,49 @@
-# Kế hoạch tối ưu hiệu năng truyền file
+# File transfer performance plan
 
-Cập nhật: 2026-08-14
-Điều chỉnh theo: Vòng 1 và Vòng 2 của `docs/transfer-performance-plan-review.md`
+Updated: 2026-08-14
+Revised against: rounds 1-3 of `docs/transfer-performance-plan-review.md`
 
-## 1. Mục tiêu và cách hiểu trạng thái
+## 1. Goals and how to read status
 
-Mục tiêu của dự án là tận dụng phần lớn năng lực thực của từng đường truyền, giữ
-tốc độ ổn định và giảm thời gian người dùng phải chờ từ lúc chọn file đến lúc file
-sẵn sàng ở đích. Không đánh đổi resume, xác minh BLAKE3, an toàn đường dẫn hoặc độ
-ổn định bộ nhớ để lấy throughput.
+The goal is to use most of each link's real capacity, hold the rate steady, and cut
+the time a user waits between choosing a file and the file being ready at the far
+end. Resume, BLAKE3 verification, path safety and memory stability are not traded
+away for throughput.
 
-Tài liệu dùng ba trạng thái riêng biệt:
+The document uses three distinct states:
 
-- **Đã triển khai:** code đã được merge hoặc có trong working tree.
-- **Đã xác minh chức năng:** build/test đúng, chưa chứng minh nhanh hơn.
-- **Đã xác minh hiệu năng:** có baseline, A/B tái lập được và số liệu đạt ngưỡng.
+- **Implemented:** code is merged or present in the working tree.
+- **Functionally verified:** it builds and tests pass; no proof it is faster.
+- **Performance verified:** there is a baseline, a reproducible A/B, and numbers
+  that meet the threshold.
 
-Các thay đổi tại commit `8a33818` mới ở trạng thái **đã triển khai và đã xác minh
-chức năng**. Chúng là các giả thuyết tối ưu chưa được A/B; không gọi P0 là “hoàn
-tất” cho đến khi Phase B quy được tác dụng cho từng thay đổi.
+The changes at commit `8a33818` are only **implemented and functionally
+verified**. They are optimization hypotheses that have never been A/B'd; P0 is not
+called "complete" until Phase B can attribute an effect to each change.
 
-Không thực hiện thêm QUIC window, congestion-control hoặc AOA tuning trước khi
-Gate 1 và Gate 2 ở cuối tài liệu đạt.
+No further QUIC window, congestion-control or AOA tuning happens before Gate 1 and
+Gate 2 at the end of this document are met.
 
-## 2. Kiến trúc và ràng buộc hiện tại
+## 2. Current architecture and constraints
 
-- Sender import file vào `iroh_blobs::FsStore` bằng `ImportMode::TryReference`,
-  tạo collection và blob ticket.
-- Transfer là mô hình **pull**: receiver mở kết nối ALPN `iroh-blobs`, gọi
-  `store.remote().fetch(connection, ticket).stream()`, dữ liệu bulk chảy từ
-  sender sang receiver.
-- Một HashSeq và các child hiện được xử lý tuần tự trên một bidirectional QUIC
-  stream. Workload nhiều file nhỏ phải được đo riêng vì latency/round-trip có thể
-  quan trọng hơn bandwidth.
-- Receiver tải vào `.wisp/transfers/<hash>/store`, sau đó export bằng
-  `ExportMode::TryReference` khi filesystem hỗ trợ.
-- Control và progress dùng stream riêng với payload file.
-- App dùng một `iroh::Endpoint` chung để tránh nhiều endpoint cùng identity tranh
-  relay slot.
-- Progress channel hiện vẫn là `mpsc::unbounded_channel`. Rủi ro backlog được
-  giảm bằng coalesce tại nguồn xuống tối đa 10 Hz; plan không tuyên bố đã thay nó
-  bằng bounded channel.
+- The sender imports files into `iroh_blobs::FsStore` with
+  `ImportMode::TryReference`, builds a collection and a blob ticket.
+- A transfer is a **pull**: the receiver opens an `iroh-blobs` ALPN connection,
+  calls `store.remote().fetch(connection, ticket).stream()`, and bulk data flows
+  from sender to receiver.
+- One HashSeq and its children are currently handled sequentially over a single
+  bidirectional QUIC stream. Many-small-files workloads must be measured
+  separately because latency and round trips can matter more than bandwidth.
+- The receiver downloads into `.wisp/transfers/<hash>/store`, then exports with
+  `ExportMode::TryReference` where the filesystem supports it.
+- Control and progress use a separate stream from the file payload.
+- The app shares one `iroh::Endpoint` so that multiple endpoints with the same
+  identity do not contend for a relay slot.
+- The progress channel is still an `mpsc::unbounded_channel`. Backlog risk is
+  reduced by coalescing at the source to at most 10 Hz; this plan does not claim
+  it has been replaced with a bounded channel.
 
-Phiên bản đang khóa:
+Pinned versions:
 
 - `iroh 0.97.0`
 - `iroh-blobs 0.99.0`
@@ -50,881 +51,1005 @@ Phiên bản đang khóa:
 - `noq-proto 0.16.0`
 - `tokio 1.50.0`
 
-`noq`/`noq-proto` là QUIC stack bên dưới `iroh`; nâng `iroh` có thể kéo theo thay
-đổi congestion control, multipath, path stats và kết quả benchmark dù code Wisp
-không đổi.
+`noq`/`noq-proto` are the QUIC stack beneath `iroh`; upgrading `iroh` can change
+congestion control, multipath, path stats and benchmark results even when Wisp's
+own code does not change.
 
-## 3. Giả thuyết hiện tại, chưa phải kết luận
+## 3. Current hypotheses, not conclusions
 
-| Giả thuyết | Bằng chứng hiện có | Phép đo quyết định |
+| Hypothesis | Evidence so far | Deciding measurement |
 |---|---|---|
-| Ghi `record.json` theo mỗi progress item làm nghẽn receiver | Trước P0 có thể đạt hàng nghìn write/s; I/O chạy trong async path | Microbench record write và A/B legacy/checkpoint-only |
-| Progress/event storm tạo scheduler/UI pressure | BAO progress có thể phát theo block nhỏ | A/B coalescer-only, đo CPU, queue lag và app throughput |
-| `opt-level = "z"` làm chậm runtime transfer trên mobile | Chưa có z-vs-3; số cũ chỉ so opt 0-vs-3 | Bench BLAKE3, AEAD và E2E z-vs-3 trên thiết bị |
-| AOA allocation/copy gây GC pause | Có allocation trên hot path nhưng chưa có profile | CPU/GC trace, USB throughput và A/B buffer reuse |
-| Không lên được direct path làm throughput giảm lớn nhất ngoài thực địa | Direct/relay chênh năng lực lớn; telemetry đã thấy path | `time_to_direct_ms`, `wire_relay_bytes_ratio`, direct-success rate |
-| Connection rải payload qua nhiều path đồng thời, gây reordering/HOL và gửi một phần qua relay dù có direct | Đo được 3–8 path active cùng lúc; selected path chỉ mang 42,6% byte; 25,7% byte đi qua relay path trong một run direct | A/B giới hạn path, đối chiếu CV/delivery gap và `wire_relay_bytes_ratio` |
-| Window giới hạn relay | Chỉ có phép tính lý thuyết `window / RTT` | BDP/window ratio, raw relay baseline và A/B tăng window |
-| HashSeq tuần tự giới hạn nhiều file nhỏ hoặc một stream | Kiến trúc hiện tại và upstream issue #4286 | files/s, RTT sweep, concurrency/stream A/B |
+| Writing `record.json` per progress item bottlenecks the receiver | Before P0 this could reach thousands of writes/s, with I/O on the async path | Microbench the record write, plus A/B legacy vs checkpoint-only |
+| A progress/event storm creates scheduler and UI pressure | BAO progress can be emitted per small block | A/B coalescer-only, measuring CPU, queue lag and app throughput |
+| `opt-level = "z"` slows the transfer runtime on mobile | No z-vs-3 data; the existing number only compares opt 0 vs 3 | Bench BLAKE3, AEAD and end-to-end z-vs-3 on device |
+| AOA allocation/copying causes GC pauses | Allocations exist on the hot path but there is no profile | CPU/GC trace, USB throughput, A/B buffer reuse |
+| Failing to reach a direct path is the biggest throughput loss in the field | Direct and relay differ greatly in capacity; telemetry already sees the path | `time_to_direct_ms`, `wire_relay_bytes_ratio`, direct-success rate |
+| The connection spreads payload across several paths at once, causing reordering/HOL and sending part of it over relay even when direct is available | 3-8 paths measured active simultaneously; the selected path carried only 42.6% of bytes; 25.7% of bytes went over a relay path in a direct run | A/B with paths limited, comparing CV, delivery gaps and `wire_relay_bytes_ratio` |
+| The window limits relay throughput | Only the theoretical `window / RTT` calculation | BDP/window ratio, raw relay baseline, A/B with a larger window |
+| Sequential HashSeq limits many-small-files or a single stream | Current architecture and upstream issue #4286 | files/s, RTT sweep, concurrency/stream A/B |
 
-## 4. P0 đã triển khai nhưng chưa xác minh hiệu năng
+## 4. P0: implemented but not performance verified
 
 ### P0.1 Coalesce blob progress
 
-- Giới hạn update từ blob layer sang transfer/application layer ở tối đa 10 Hz.
-- Flush byte count cuối trước trạng thái terminal.
-- Đã có unit test về rate limit/final flush.
-- Chưa biết riêng thay đổi này tăng throughput bao nhiêu.
+- Caps updates from the blob layer into the transfer/application layers at 10 Hz.
+- Flushes the final byte count before any terminal state.
+- Unit tests cover the rate limit and final flush.
+- How much this change alone gains is unknown.
 
-### P0.2 Throttle và tách record checkpoint khỏi Tokio worker
+### P0.2 Throttle record checkpoints and move them off the Tokio worker
 
-- Checkpoint tối đa mỗi 1 giây hoặc sau 64 MiB.
-- Serialize/write bằng `spawn_blocking`.
-- Các checkpoint trạng thái quan trọng vẫn ghi ngay.
-- Nằm downstream của coalescer, vì vậy phải A/B riêng để tránh quy công trùng.
+- Checkpoint at most once per second or per 64 MiB.
+- Serialize and write via `spawn_blocking`.
+- Important state checkpoints are still written immediately.
+- Sits downstream of the coalescer, so it must be A/B'd separately to avoid
+  double-crediting.
 
-### P0.3 Ghi record atomically
+### P0.3 Write records atomically
 
-- JSON compact, temp file ngẫu nhiên với `create_new`, rồi rename cùng thư mục.
-- Đây trước hết là thay đổi tính đúng đắn/an toàn. Đo overhead riêng nhưng không
-  bỏ atomic replace để đổi lấy benchmark đẹp hơn.
+- Compact JSON, a randomly named temp file created with `create_new`, then renamed
+  within the same directory.
+- This is primarily a correctness and safety change. Measure its overhead
+  separately, but do not drop atomic replacement to make a benchmark look better.
 
-### P0.4 Release dependency ở `opt-level = 3`
+### P0.4 Release dependencies at `opt-level = 3`
 
-- Bridge crate vẫn ưu tiên kích thước; dependency transfer/crypto được cấu hình
-  `opt-level = 3`.
-- Không tuyên bố BLAKE3 là nguyên nhân cho đến khi có z-vs-3 trên aarch64; BLAKE3
-  NEON có thể được build qua `cc`, còn win thực có thể nằm ở AEAD hoặc code Rust.
+- The bridge crate still optimizes for size; transfer and crypto dependencies are
+  configured at `opt-level = 3`.
+- Do not claim BLAKE3 as the cause until there is z-vs-3 data on aarch64; BLAKE3's
+  NEON path may be built through `cc`, and the real win may sit in AEAD or in Rust
+  code.
 
-## 5. Phase A — Sửa độ tin cậy của telemetry
+## 5. Phase A — Make telemetry trustworthy
 
-Phase này chặn mọi quyết định tuning tiếp theo.
+This phase blocks every tuning decision that follows.
 
-Telemetry nền tảng tại commit `afc652f` đã xác minh chức năng nhưng chưa được coi
-là measurement-valid cho đến khi A1–A4 hoàn tất.
+The baseline telemetry at commit `afc652f` was functionally verified but is not
+treated as measurement-valid until A1-A4 are complete.
 
-**Cập nhật 2026-08-14 — commit `7036d47`:** A1–A4 và phần analyzer của A6 đã
-được triển khai, format/test/analyze cục bộ đều đạt. Receiver/provider dùng cùng
-benchmark correlation token; provider có đúng sender-side cwnd/loss/UDP TX;
-window/config được log; warm-up/finalization được tách khỏi mid-transfer stall;
-EOF thiếu `Done` là failed; sampler task không cancel download future; path change
-force sample và analyzer dùng cửa sổ 1 giây có trọng số. Commit `bb1bb93` bổ sung
-A5 phase timing cho core sender/receiver và analyzer schema v3. Commit `ced0e5e`
-đo Android SAF URI → app-cache và background save app-cache → SAF/MediaStore,
-correlate bằng cùng token; telemetry mobile bị tắt mặc định. Commit
-`1fe1c25` nối cùng opt-in flag vào Rust provider telemetry trên mobile, commit
-`3b6aff0` xuất riêng target này thành JSON typed không có span context, và commit
-`dca51e3` phân loại stall thành transport-active delivery gap, transport-idle hoặc
-unknown mà không nới gate ổn định.
-Commit `bcbde90` đã thay session base-conversion bằng BLAKE3 pseudonymous token,
-publish first/latest progress timestamp từ hot loop và giữ active stall khi failed.
-Commit `f978003` ghép provider loss theo token/timeline để tách loss-recovery, tính
-RTT inflation và BDP trên cùng cửa sổ 1 giây, đồng thời sửa mẫu số coverage. Commit
-`26b4f7c` đổi provider receive window sang tên `local_*`, thêm `config_source`,
-không coi default chép từ noq-proto là measured/configured, và đánh dấu path-counter
-discontinuity để totals bị hụt không còn bị hiểu là đầy đủ. Analyzer hiện là schema
-v5 và vẫn đọc được log schema cũ. Recheck trước device smoke phát hiện Dart phase
-emitter còn dùng session hex đổi cơ số trong khi core đã dùng BLAKE3; commit
-`b5820c5` đưa token do chính core tạo vào `TransferPlanData`, nên mobile phase và
-Rust events không còn có thể lệch thuật toán correlation.
+**Update 2026-08-14 — commit `7036d47`:** A1-A4 and the analyzer part of A6 are
+implemented, with format/test/analyze all passing locally. Receiver and provider
+share one benchmark correlation token; the provider has correct sender-side
+cwnd/loss/UDP TX; window and config are logged; warm-up and finalization are
+separated from mid-transfer stalls; an EOF without `Done` is a failure; the sampler
+task does not cancel the download future; a path change forces a sample and the
+analyzer uses weighted 1-second windows. Commit `bb1bb93` adds A5 phase timing for
+the core sender and receiver plus analyzer schema v3. Commit `ced0e5e` measures
+Android SAF URI → app-cache and background save app-cache → SAF/MediaStore,
+correlated by the same token, with mobile telemetry off by default. Commit
+`1fe1c25` wires the same opt-in flag into Rust provider telemetry on mobile,
+commit `3b6aff0` emits that target as typed JSON without span context, and commit
+`dca51e3` classifies stalls as transport-active delivery gap, transport-idle or
+unknown without loosening the stability gate. Commit `bcbde90` replaced the
+session base-conversion with a BLAKE3 pseudonymous token, publishes first and
+latest progress timestamps from the hot loop, and keeps the active stall on
+failure. Commit `f978003` joins provider loss by token and timeline to separate
+loss recovery, computes RTT inflation and BDP on the same 1-second window, and
+fixes the coverage denominator. Commit `26b4f7c` renames the provider receive
+window to `local_*`, adds `config_source`, stops treating a value copied from
+noq-proto as measured or configured, and flags path-counter discontinuities so
+under-counted totals are no longer read as complete. The analyzer is now at schema
+v5 and still reads older schemas. A recheck before the device smoke found the Dart
+phase emitter still using the base-converted session hex while the core had moved
+to BLAKE3; commit `b5820c5` puts the core-generated token into `TransferPlanData`,
+so mobile phases and Rust events can no longer diverge on the correlation
+algorithm.
 
-**Cập nhật — transport counter provenance đã có nguyên nhân gốc và bản sửa
-(schema v6, chưa commit):** counter mạng trước đây chỉ đọc `PathStats` qua
-`ConnectionInfo::selected_path()`. Trong iroh 0.97, `selected_path()` là
-`paths().find(|p| p.is_selected())`, và `is_selected` chỉ được đặt khi
-selected-path watcher giữ một địa chỉ khớp path đang sống. Vì vậy byte đi qua lúc
-không path nào được chọn không được đếm, và mỗi migration làm mất trọn một khoảng
-lấy mẫu. Đó là cơ chế đằng sau `udp_tx_bytes_total=0` và `4.261 byte` trên payload
-hàng trăm MiB.
+**Update — transport counter provenance has a root cause and a fix (schema v6):**
+network counters previously read `PathStats` only through
+`ConnectionInfo::selected_path()`. In iroh 0.97 `selected_path()` is
+`paths().find(|p| p.is_selected())`, and `is_selected` is set only while the
+selected-path watcher holds an address matching a live path. Bytes carried while
+no path was selected were therefore never counted, and every migration lost a
+whole sampling interval. That is the mechanism behind `udp_tx_bytes_total=0` and
+`4,261 bytes` against a payload of hundreds of MiB.
 
-Bản sửa thêm counter phạm vi **connection** từ `ConnectionInfo::stats()`
-(`udp_tx`/`udp_rx`, cộng frame counter). Chúng đơn điệu cho cả connection, không
-phụ thuộc path selection, nên là số byte đáng tin; tỉ số giữa counter path và
-counter connection trở thành `path_counter_coverage` — chính là phép kiểm chứng
-provenance mà Gate 1 đang thiếu.
+The fix adds **connection**-scoped counters from `ConnectionInfo::stats()`
+(`udp_tx`/`udp_rx` plus frame counters). These are monotonic for the whole
+connection and independent of path selection, making them the trustworthy byte
+figures; the ratio of path counters to connection counters becomes
+`path_counter_coverage`, which is exactly the provenance check Gate 1 was missing.
 
-Smoke CLI↔CLI 64 MiB (loopback, direct, `0` discontinuity, không migration) cho
-thấy vấn đề rộng hơn báo cáo trên thiết bị:
+A 64 MiB CLI-to-CLI smoke (loopback, direct, `0` discontinuities, no migration)
+shows the problem is wider than the device report suggested:
 
 | Counter | Provider | Receiver |
 |---|---:|---:|
-| Path-scoped | 57.591.003 | 57.590.345 |
-| Connection-scoped | 68.938.270 | 68.932.812 |
-| `path_counter_coverage` | 83,5% | 83,5% |
+| Path-scoped | 57,591,003 | 57,590,345 |
+| Connection-scoped | 68,938,270 | 68,932,812 |
+| `path_counter_coverage` | 83.5% | 83.5% |
 
-Payload là 67.108.864 byte. Counter connection cho overhead khoảng 2,7% — đúng với
-QUIC/UDP. Counter path lại **thấp hơn cả payload**, tức không thể là số byte UDP
-đúng. Nói cách khác counter path hụt khoảng 16,5% ngay cả trong trường hợp sạch
-nhất, chứ không chỉ khi migration hoặc khi `path=unknown`. Mọi con số loss/cwnd
-theo path trong tài liệu này phải đọc là lower bound tương ứng với coverage của
-run đó.
+The payload was 67,108,864 bytes. The connection counters correspond to about 2.7%
+overhead, correct for QUIC over UDP. The path counters come out **below the
+payload itself**, so they cannot be a correct UDP byte count. In other words the
+path counters fall roughly 16.5% short even in the cleanest case, not only during
+a migration or when `path=unknown`. Every path-scoped loss and cwnd figure in this
+document must be read as a lower bound tied to that run's coverage.
 
-**Cơ chế của khoảng hụt đã được xác định.** Sample giờ log `path_count`, và smoke
-lặp lại cho thấy connection giữ tới **4 path** cùng lúc (`path_count` nhận giá trị
-1, 3, 4 ở cả hai đầu), coverage 85,0%. `noq-proto` tăng `stats.udp_tx` và
-`path_stats[path_id].udp_tx` tại cùng chỗ với cùng giá trị, nên hai chuỗi không
-mâu thuẫn — chỉ là counter theo path mô tả **một** path trong nhiều path đang
-được dùng. Vì vậy `PathStats` của selected path về bản chất không phải mẫu số cho
-"đã gửi/nhận bao nhiêu", và đây không phải trường hợp biên: nó đúng với mọi
-connection multipath, kể cả LAN direct ổn định.
+**The mechanism of the shortfall is identified.** Samples now log `path_count`, and
+a repeated smoke showed the connection holding up to **4 paths** at once
+(`path_count` taking values 1, 3, 4 at both ends) at 85.0% coverage. `noq-proto`
+increments `stats.udp_tx` and `path_stats[path_id].udp_tx` at the same sites with
+the same values, so the two series do not contradict each other — the path counter
+simply describes **one** path among several in use. The selected path's
+`PathStats` is therefore not the denominator for "how much was sent or received",
+and this is not an edge case: it holds for every multipath connection, including a
+stable direct LAN.
 
-Do đó report phân biệt hai chẩn đoán có cùng triệu chứng: `path_count > 1` nghĩa
-là selected path chỉ mang một phần traffic; `path_count == 1` với coverage thấp
-nghĩa là có sample không chọn được path nào.
+Reports consequently distinguish two diagnoses with the same symptom:
+`path_count > 1` means the selected path carries only part of the traffic;
+`path_count == 1` with low coverage means some samples had no path selected.
 
-**Smoke thiết bị thật (desktop → Pixel 4 release, Wi-Fi 192.168.1.x, 128 MiB
-direct) tái hiện đúng ca xấu nhất của Gate 1 và cho thấy bản sửa xử lý được nó:**
+**A real-device smoke (desktop → Pixel 4 release, Wi-Fi 192.168.1.x, 128 MiB
+direct) reproduces Gate 1's worst case exactly, and shows the fix handles it:**
 
 | | Provider (desktop) | Receiver (Android) |
 |---|---:|---:|
-| `path` báo cáo | `unknown` | direct |
+| Reported `path` | `unknown` | direct |
 | `path_count` | 6 | 6 |
-| Path-scoped total | **0** | 6.278.860 |
-| Connection-scoped total | **137.971.390** | 137.969.068 |
-| Coverage | **0,0%** | 4,6% |
+| Path-scoped total | **0** | 6,278,860 |
+| Connection-scoped total | **137,971,390** | 137,969,068 |
+| Coverage | **0.0%** | 4.6% |
 
-Payload 134.217.728 byte. Provider chính là triệu chứng đã báo cáo trước đây —
-`path=unknown` và path counter bằng 0 — nên với schema v5 run này sẽ không có số
-liệu mạng nào dùng được. Với schema v6, counter connection ghi 137,97 MB ở cả hai
-đầu (lệch nhau 2.322 byte, overhead 2,8% so với payload), trung bình 11,93 MB/s
-khớp với app median 11,7 MiB/s phía receiver. Receiver `outcome=complete`, tức
-xác minh BLAKE3 đạt. `stream_data_blocked` bằng 0 ở cả hai đầu, nên run này
-**không** window-bound — đo được chứ không phải giả định.
+Payload 134,217,728 bytes. The provider is precisely the previously reported
+symptom — `path=unknown` and a path counter of 0 — so under schema v5 this run
+would have had no usable network figures. Under schema v6 the connection counters
+record 137.97 MB at both ends (2,322 bytes apart, 2.8% overhead against the
+payload), averaging 11.93 MB/s, which agrees with the receiver's 11.7 MiB/s app
+median. The receiver reported `outcome=complete`, so BLAKE3 verification passed.
+`stream_data_blocked` was 0 at both ends, so this run was **not** window-bound —
+measured, not assumed.
 
-Kết luận: byte accounting không còn phụ thuộc vào việc iroh có chọn được path hay
-không. Số theo path vẫn giữ nguyên nhưng luôn đi kèm coverage để không bị đọc
-nhầm là toàn bộ traffic.
+Conclusion: byte accounting no longer depends on whether iroh managed to select a
+path. Path-scoped numbers are unchanged but always travel with their coverage, so
+they cannot be misread as the whole of the traffic.
 
-**Chiều ngược lại (Android release provider → desktop receiver, 128 MiB direct)
-cho thấy hậu quả định lượng của lỗi cũ.** File dùng chính payload nhận được ở
-chiều trước, và hash round-trip desktop → Android → desktop khớp byte-for-byte.
+**The reverse direction (Android release provider → desktop receiver, 128 MiB
+direct) shows the quantitative cost of the old bug.** The file was the payload
+received in the previous direction, and the desktop → Android → desktop round-trip
+hash matched byte for byte.
 
 | | Android provider | Desktop receiver |
 |---|---:|---:|
-| `path` báo cáo | `unknown` | direct |
+| Reported `path` | `unknown` | direct |
 | `path_count` | 6 | 6 |
-| Path-scoped total | 16.298.505 | — |
-| Connection-scoped total | 146.552.381 | 138.288.810 |
-| Coverage | 11,1% | 21,0% |
-| Throughput trung bình | **1,96 MiB/s** theo path | — |
-| | **17,66 MiB/s** theo connection | |
+| Path-scoped total | 16,298,505 | — |
+| Connection-scoped total | 146,552,381 | 138,288,810 |
+| Coverage | 11.1% | 21.0% |
+| Average throughput | **1.96 MiB/s** via path | — |
+| | **17.66 MiB/s** via connection | |
 
-Cùng một run, cùng một counter, hai cách đọc chênh nhau **9 lần**. Con số theo
-path (1,96 MiB/s) là thứ telemetry cũ sẽ báo cáo, và nó sẽ dẫn cả đợt điều tra
-hiệu năng đi truy một hiện tượng không tồn tại. Con số theo connection
-(17,66 MiB/s) khớp với app median 16,4 MiB/s phía receiver.
+The same run and the same counters, read two ways, differ by a factor of **9**.
+The path-scoped number (1.96 MiB/s) is what the old telemetry would report, and it
+would have sent the whole performance investigation chasing a phenomenon that does
+not exist. The connection-scoped number (17.66 MiB/s) agrees with the receiver's
+16.4 MiB/s app median.
 
-Chênh lệch sender/receiver ở tầng connection cũng có ý nghĩa vật lý: sender gửi
-146,55 MB cho payload 134,22 MB (overhead 9,2%), receiver nhận 138,29 MB
-(overhead 3,0%). Khoảng 8,2 MB chênh là dữ liệu mất/phải truyền lại — nhất quán
-với loss và congestion event mà provider ghi nhận, cộng một path discontinuity.
-Trước đây toàn bộ bức tranh này vô hình. `stream_data_blocked` bằng 0 ở cả hai
-đầu nên run này cũng không window-bound.
+The sender/receiver discrepancy at connection level also carries physical meaning:
+the sender sent 146.55 MB for a 134.22 MB payload (9.2% overhead) while the
+receiver got 138.29 MB (3.0% overhead). The roughly 8.2 MB difference is lost and
+retransmitted data — consistent with the loss and congestion events the provider
+recorded, plus one path discontinuity. All of that was previously invisible.
+`stream_data_blocked` was 0 at both ends, so this run was not window-bound either.
 
-Bản sửa cũng log `stream_data_blocked` (tx ở provider, rx ở receiver). Frame này
-có nghĩa "bên gửi có dữ liệu sẵn và bị `MAX_STREAM_DATA` của bên nhận chặn", nên
-nó trả lời câu hỏi window-bound một cách trực tiếp thay vì suy đoán từ
-`bdp_window_ratio`. Trong smoke trên cả hai chỉ số đồng thuận: `0` frame blocked và
-`bdp_window_ratio_p90 = 0,0033`.
+The fix also logs `stream_data_blocked` (tx on the provider, rx on the receiver).
+The frame means "the sender had data ready and the receiver's `MAX_STREAM_DATA`
+held it back", so it answers the window-bound question directly instead of
+inferring from `bdp_window_ratio`. In the smoke above both agreed: `0` blocked
+frames and `bdp_window_ratio_p90 = 0.0033`.
 
-Gate 1 **đã đóng cho desktop và Android**. Emission/schema v6, correlation token,
-phase timing, provenance counter và cờ discontinuity đều đã xác minh trên release
-ở cả hai chiều. iOS được tách thành hạng mục riêng, không còn chặn Gate 1; xem
-§11.
+Gate 1 is **closed for desktop and Android**. Schema v6 emission, correlation
+token, phase timing, provenance counters and the discontinuity flag are all
+verified on release builds in both directions. iOS is tracked as a separate item
+and no longer blocks Gate 1; see §11.
 
-**Smoke thực tế ngày 2026-08-14:**
+**Real smokes on 2026-08-14:**
 
-- CLI debug ↔ CLI debug qua rendezvous/loopback truyền 128 MiB, SHA-256 khớp;
-  analyzer schema v3 ghép receiver/provider/13 phase, `0` malformed. Kết quả này
-  chỉ xác nhận schema, không phải baseline hiệu năng vì là debug + loopback.
-- Desktop CLI debug → Pixel 4 Android release truyền direct 64 MiB, SHA-256 khớp;
-  provider ghi 60 sample trong 14.481 giây, 2 packet loss/congestion event lúc
-  đầu và mobile `background_save=171 ms`; analyzer ghép 9 phase theo pseudonymous
-  run ID, `0` malformed. UI báo khoảng 4,4 MB/s, provider UDP TX trung bình khoảng
-  4,2 MiB/s. Không dùng số này làm baseline vì sender là debug, file synthetic,
-  chỉ có một run và chưa có iperf3 cùng phiên.
-- Android release sender → desktop CLI debug receiver đã truyền direct 64 MiB hai
-  lần với SHA-256 khớp. `saf_read_copy` chỉ 71–106 ms, trong khi `fetch_store`
-  mất 46,854–59,955 giây; SAF/cache không phải bottleneck của workload file lớn
-  hiện tại. Run có đầy đủ provider JSON ghi 190 sample/46,417 giây, UDP TX trung
-  bình khoảng 1,4 MiB/s, 4.813 packet/6.988.224 byte loss, 71 congestion event,
-  RTT cuối khoảng 3,057 giây, CUBIC, MTU 1452, provider-local receive window 8 MiB
-  và send window 64 MiB; local receive window này không chi phối bulk gửi đi.
-  Receiver có p10 0,0 MiB/s, median 1,2 MiB/s, CV 1,62 và 3 stall;
-  analyzer ghép 14 phase, `0` malformed và `--fail-on-unstable` fail đúng kỳ vọng.
-  Trong từng gap app bytes đứng nhưng receiver vẫn nhận khoảng 4,6–12,1 MB UDP.
-  Đối chiếu timeline
-  provider/receiver (terminal lệch chỉ 35 ms) cho thấy gap đầu dài khoảng 7,7 giây
-  không có sender loss/congestion, còn gap 2/3 lần lượt trùng 2.877/1.532 packet loss
-  và 37/28 congestion event. Re-analysis bằng `f978003`/schema v4 đổi đúng hai gap
-  sau thành `transport_active_loss_recovery`; chỉ gap đầu còn là delivery gap chưa
-  giải thích. Schema v5 đọc lại cùng log vẫn cho `0` malformed, hai loss-recovery,
-  một delivery-gap, receiver/provider terminal lệch 35 ms và coverage 1,0.
-- Smoke schema v5 Android release sender → desktop CLI debug receiver truyền direct
-  85.540.428 byte trong 152,7 giây và SHA-256 file đầu ra khớp. Android
-  provider phát `config_source=configured`, tên window local đúng semantics,
-  `path_counter_discontinuity=false` trên sample và count `0` trong summary.
-  Dart `saf_read_copy=126 ms`, Rust provider và desktop receiver cùng token
-  `benchmark_run_id`; analyzer ghép đúng 14 phase, 614 provider sample và `0`
-  malformed. Run này có 5 stall loss-recovery, 8 delivery gap, 5.513 packet loss,
-  104 congestion event, p10 `0`, p50 khoảng 0,3 MiB/s và 80,1 giây stall.
-  RTT QUIC cuối ở provider/receiver lên khoảng 7,5/8,1 giây, nên chỉ dùng
-  để nghiệm thu schema/correlation, không dùng làm baseline hay tuning input.
-- Sau khi chuyển Pixel sang `TienNA 5G`, hai smoke 256 MiB random mới đều hoàn
-  tất direct và SHA-256 `0994D6F7...DC84BA9` khớp. Desktop → Android mất
-  12,903 giây, trung bình 19,84 MiB/s, p10/p50 17,7/21,1 MiB/s, CV 0,187,
-  p10/p50 84,2% và không stall. Android → desktop mất 12,252 giây, trung bình
-  20,89 MiB/s, p10/p50 15,5/21,6 MiB/s, CV 0,232, p10/p50 71,6% và không
-  stall. `saf_read_copy=250 ms`, Android `background_save=471 ms`; control
-  handshake chỉ 24–37 ms thay vì timeout 30 giây ở topology cũ. Đây là bằng
-  chứng mạnh rằng batch Wi-Fi 4/cross-band trước bị topology chi phối, nhưng vẫn
-  chưa là baseline tuyệt đối vì thiếu iperf3 bracket, host BSSID và release build
-  ở cả hai đầu.
-- Receiver core trên Android release đã phát schema v5 đầy đủ: config thực,
-  sample/summary, correlation token, phase Rust/Dart và `0` malformed. Tuy nhiên
-  hai run 256 MiB phát hiện provider telemetry chưa measurement-valid cho bulk:
-  Android provider báo `path=unknown`, `udp_tx_bytes_total=0`; desktop provider
-  chỉ đếm 4.261 byte dù payload 256 MiB. Receiver selected-path counters cũng
-  under-account payload và run desktop → Android có hai counter discontinuity.
-  Vì vậy app throughput, phase và stall của hai run vẫn dùng được, còn provider
-  loss/cwnd/UDP, loss attribution và network totals phải coi là unavailable/lower
-  bound cho tới khi chứng minh sampler đang giữ đúng payload connection hoặc
-  analyzer hạ validity theo coverage.
-- Follow-up có raw bracket hợp lệ cho chiều desktop → Android: `.NET TcpClient`
-  buffer 1 MiB gửi 256 MiB vào Android `toybox nc >/dev/null`. Ba run trước đạt
-  29,97/30,19/30,99 MiB/s, ba run sau đạt 26,86/31,44/28,97 MiB/s; median
-  trước/sau 30,19/28,97 MiB/s, drift 4,0%. Wisp ở giữa dùng một file random mới,
-  hash khớp, nhưng path chuyển direct → relay → direct → relay và 95,0% payload
-  bị tính vào relay. Run chỉ đạt trung bình 11,79 MiB/s, p10/p50 gần
-  0/14,22 MiB/s, CV 0,460, một transport-idle stall 3.529 ms; utilization theo
-  mean-of-medians raw 29,58 MiB/s chỉ 39,9% average và 48,1% ở p50. Provider
-  lần này bám được bulk, đếm 251,2 MiB UDP TX, 16 packet loss, 4 congestion event
-  và 3 discontinuity; receiver thấy 5 discontinuity. Đây là path-migration smoke
-  thật chứng minh lower-bound handling hoạt động, đồng thời đưa D1 lên trước mọi
-  window/CC A/B.
-- Opt-in Rust telemetry trên Android đã được nối từ cùng Dart define. Target này
-  được tách khỏi formatter `tracing_android` dạng text và xuất JSON typed không có
-  span context; smoke có 201 event, `0` dòng text legacy và `0` match path/peer/
-  session ID. Không dùng parser regex cho text dính field vì vừa dễ vỡ vừa có thể
-  kéo metadata nhạy cảm từ span.
-- Hai sender run đều tái hiện stall dù RSSI/thermal tốt. Dữ liệu khoanh vùng vào
-  network/QUIC path sau prepare, nhưng chưa tách được nhiễu/retry Wi-Fi 4 khỏi
-  hành vi loss recovery/CUBIC vì chưa có raw baseline ổn định bao quanh batch.
-- Baseline tạm thời không cài thêm binary dùng Android `toybox dd | nc` gửi raw
-  TCP 128 MiB cùng chiều tới Windows. Hai run đạt 1,526 và 1,556 MiB/s, lệch
-  khoảng 2%; run có timer 1 giây đạt p10 1,298, median 1,591 MiB/s, CV 0,186 và
-  không có zero-window. Wisp đạt khoảng 89% raw TCP ceiling về average nhưng kém
-  ổn định rõ rệt ở application delivery trong phiên đó. Hai raw run mới ngay trước
-  batch kế tiếp chỉ đạt 1,119/1,087 MiB/s, CV 0,553/0,444 và có 8/10 cửa sổ 1 giây
-  rỗng dù RSSI khoảng -34 dBm. Vì vậy không còn được kết luận “vấn đề không nằm ở
-  link”; Wi-Fi 4/2.4 GHz thay đổi mạnh theo thời gian và batch này bị loại khỏi A/B
-  tuning. Đây là denominator tạm, chưa thay thế iperf3 vì không có retransmit/cwnd
-  và multi-stream report chuẩn. ICMP cùng phiên dao động 7–713 ms, nhưng chỉ dùng
-  làm dấu hiệu queue/jitter, không làm throughput baseline vì có thể bị deprioritize.
-- Android provider/receiver schema v5 và boundary Dart đã được xác nhận trên
-  release; boundary iOS thì chưa. Gate 1 vẫn mở vì transport-counter provenance
-  mới phát hiện ở run nhanh, path migration thật và iOS. Hỗ trợ provider-only vẫn
-  được giữ cho log chỉ có phía sender và đã được sửa ở commit `7e7b3c2`.
+- CLI debug ↔ CLI debug over rendezvous/loopback transferred 128 MiB with matching
+  SHA-256; the analyzer joined receiver, provider and 13 phases at schema v3 with
+  `0` malformed lines. This confirms the schema only, not performance, because it
+  is a debug build over loopback.
+- Desktop CLI debug → Pixel 4 Android release transferred 64 MiB direct with
+  matching SHA-256; the provider recorded 60 samples over 14.481 s, 2 packet
+  loss/congestion events early on, and mobile `background_save=171 ms`; the
+  analyzer joined 9 phases by pseudonymous run ID with `0` malformed. The UI
+  reported about 4.4 MB/s and provider UDP TX averaged about 4.2 MiB/s. Not usable
+  as a baseline: the sender was a debug build, the file synthetic, one run only,
+  and no iperf3 in the same session.
+- Android release sender → desktop CLI debug receiver transferred 64 MiB direct
+  twice with matching SHA-256. `saf_read_copy` was only 71-106 ms while
+  `fetch_store` took 46.854-59.955 s, so SAF/cache is not the bottleneck for the
+  current large-file workload. The run with complete provider JSON recorded 190
+  samples over 46.417 s, UDP TX averaging about 1.4 MiB/s, 4,813 packets /
+  6,988,224 bytes lost, 71 congestion events, a final RTT of about 3.057 s, CUBIC,
+  MTU 1452, a provider-local receive window of 8 MiB and a send window of 64 MiB —
+  that local receive window does not govern the bulk being sent. The receiver saw
+  p10 0.0 MiB/s, median 1.2 MiB/s, CV 1.62 and 3 stalls; the analyzer joined 14
+  phases with `0` malformed and `--fail-on-unstable` failed as expected. In each
+  gap the app bytes stood still while the receiver kept taking roughly 4.6-12.1 MB
+  of UDP. Cross-referencing the provider and receiver timelines (terminals only
+  35 ms apart) showed the first gap, about 7.7 s long, had no sender
+  loss/congestion, while gaps 2 and 3 coincided with 2,877 and 1,532 lost packets
+  and 37 and 28 congestion events respectively. Re-analysis with `f978003` /
+  schema v4 correctly reclassified the latter two as
+  `transport_active_loss_recovery`, leaving only the first gap as an unexplained
+  delivery gap. Schema v5 re-reading the same log still gives `0` malformed, two
+  loss-recovery episodes, one delivery gap, a 35 ms receiver/provider terminal
+  skew and coverage 1.0.
+- A schema v5 smoke, Android release sender → desktop CLI debug receiver,
+  transferred 85,540,428 bytes direct in 152.7 s with a matching output SHA-256.
+  The Android provider emitted `config_source=configured`, correct local window
+  naming, `path_counter_discontinuity=false` on samples and a count of `0` in the
+  summary. Dart reported `saf_read_copy=126 ms`, and the Rust provider and desktop
+  receiver shared one `benchmark_run_id` token; the analyzer joined 14 phases and
+  614 provider samples with `0` malformed. This run had 5 loss-recovery stalls, 8
+  delivery gaps, 5,513 lost packets, 104 congestion events, p10 `0`, p50 about
+  0.3 MiB/s and 80.1 s of stall. The final QUIC RTT reached about 7.5 s on the
+  provider and 8.1 s on the receiver, so it is only usable for schema and
+  correlation acceptance, not as a baseline or tuning input.
+- After moving the Pixel to `TienNA 5G`, two fresh 256 MiB random smokes both
+  completed direct with a matching SHA-256 of `0994D6F7...DC84BA9`. Desktop →
+  Android took 12.903 s, averaging 19.84 MiB/s, p10/p50 17.7/21.1 MiB/s, CV 0.187,
+  p10/p50 at 84.2% and no stalls. Android → desktop took 12.252 s, averaging
+  20.89 MiB/s, p10/p50 15.5/21.6 MiB/s, CV 0.232, p10/p50 at 71.6% and no stalls.
+  `saf_read_copy=250 ms` and Android `background_save=471 ms`; the control
+  handshake took only 24-37 ms instead of the 30-second timeout seen on the old
+  topology. This is strong evidence that the earlier Wi-Fi 4 / cross-band batch was
+  dominated by topology, but it is still not an absolute baseline: no iperf3
+  bracket, no host BSSID, and not a release build at both ends.
+- The receiver core on Android release emitted complete schema v5: real config,
+  samples and summary, correlation token, Rust and Dart phases, `0` malformed.
+  However the two 256 MiB runs revealed that provider telemetry was not yet
+  measurement-valid for bulk: the Android provider reported `path=unknown` and
+  `udp_tx_bytes_total=0`, and the desktop provider counted only 4,261 bytes against
+  a 256 MiB payload. The receiver's selected-path counters also under-accounted the
+  payload, and the desktop → Android run had two counter discontinuities. App
+  throughput, phases and stalls from those runs remain usable, while provider
+  loss/cwnd/UDP, loss attribution and network totals had to be treated as
+  unavailable or lower bounds until either the sampler was shown to be holding the
+  right payload connection or the analyzer downgraded validity by coverage.
+- A follow-up produced a valid raw bracket for the desktop → Android direction: a
+  `.NET TcpClient` with a 1 MiB buffer sending 256 MiB into Android
+  `toybox nc >/dev/null`. Three runs before reached 29.97/30.19/30.99 MiB/s and
+  three after reached 26.86/31.44/28.97 MiB/s; medians before/after were
+  30.19/28.97 MiB/s, a 4.0% drift. Wisp in the middle used a fresh random file
+  with a matching hash, but the path went direct → relay → direct → relay and
+  95.0% of the payload was attributed to relay. That run averaged only
+  11.79 MiB/s, p10/p50 near 0/14.22 MiB/s, CV 0.460, with one transport-idle stall
+  of 3,529 ms; against a mean-of-medians raw figure of 29.58 MiB/s, utilization was
+  only 39.9% on average and 48.1% at p50. The provider tracked the bulk this time,
+  counting 251.2 MiB UDP TX, 16 lost packets, 4 congestion events and 3
+  discontinuities; the receiver saw 5 discontinuities. This is a genuine
+  path-migration smoke proving the lower-bound handling works, and it puts D1 ahead
+  of any window or CC A/B.
+- Opt-in Rust telemetry on Android is wired from the same Dart define. The target
+  is separated from the text `tracing_android` formatter and emits typed JSON with
+  no span context; the smoke produced 201 events, `0` legacy text lines and `0`
+  matches for path/peer/session ID. Do not use a regex parser over text with
+  concatenated fields: it is both fragile and liable to pull sensitive metadata out
+  of spans.
+- Both sender runs reproduced stalls despite good RSSI and thermals. The data
+  localizes the problem to the network/QUIC path after prepare, but Wi-Fi 4 noise
+  and retries cannot yet be separated from loss-recovery/CUBIC behaviour because
+  there was no stable raw baseline bracketing the batch.
+- A stopgap baseline that installs no extra binaries used Android
+  `toybox dd | nc` to send raw TCP 128 MiB in the same direction to Windows. Two
+  runs reached 1.526 and 1.556 MiB/s, about 2% apart; the run with a 1-second timer
+  gave p10 1.298, median 1.591 MiB/s, CV 0.186 and no zero-window events. Wisp
+  reached about 89% of the raw TCP ceiling on average but was markedly less stable
+  in application delivery during that session. Two fresh raw runs immediately
+  before the next batch reached only 1.119/1.087 MiB/s with CV 0.553/0.444 and 8 of
+  10 one-second windows empty, despite RSSI around -34 dBm. The conclusion "the
+  problem is not in the link" is therefore no longer supported; Wi-Fi 4 / 2.4 GHz
+  varies strongly over time and this batch is excluded from A/B tuning. This is a
+  stopgap denominator and does not replace iperf3, which has proper
+  retransmit/cwnd and multi-stream reporting. ICMP in the same session ranged
+  7-713 ms, useful only as a queue/jitter hint and not as a throughput baseline
+  since it can be deprioritized.
+- Android provider/receiver schema v5 and the Dart boundary are confirmed on
+  release; the iOS boundary is not. Provider-only support is retained for
+  sender-only logs and was fixed in commit `7e7b3c2`.
 
-### Kết quả đối chiếu Vòng 2
+### Round 2 review outcomes
 
-- V1, V2 và V5 đã sửa ở `bcbde90`, sau đó boundary Dart được đồng bộ ở `b5820c5`:
-  token không còn là base-conversion thuận nghịch ở bất kỳ emitter nào, timestamp
-  lấy từ hot loop, failed-terminal không làm mất active stall.
-- V3, V4 và phần path-counter của V8 đã sửa ở `26b4f7c`: provider window mang
-  nghĩa local, nguồn config tách configured/assumed/unknown, migration có cờ
-  discontinuity và analyzer coi network totals khi đó là lower bound.
-- Phần BDP/coverage của V8 và V11 đã sửa ở `f978003`: throughput/RTT dùng cùng
-  cửa sổ 1 giây; provider loss chỉ join khi token duy nhất và terminal timeline
-  đủ gần. Discontinuity giao stall làm attribution hạ về `unknown`.
-- V6 đã đối chiếu contract `iroh-blobs 0.99.0`; V7 đã đối chiếu tài liệu
-  cancel-safety của `n0-watcher 0.6.1` và lưu bằng chứng cạnh `select!`.
-- V9 đã thành E1b nhưng chỉ chạy sau raw bracket ổn định; V10 không còn đủ cơ sở
-  kết luận “không phải link” vì raw Wi-Fi 4 mới cũng burst/zero-window.
-- V12 dùng duy nhất trạng thái Gate 1 ở §11. V13 là vấn đề trust-proxy/security
-  ngoài phạm vi performance plan và phải được xử lý bằng commit riêng.
+- V1, V2 and V5 were fixed in `bcbde90`, with the Dart boundary brought into line
+  in `b5820c5`: the token is no longer a reversible base conversion in any emitter,
+  timestamps come from the hot loop, and a failed terminal does not lose the active
+  stall.
+- V3, V4 and the path-counter part of V8 were fixed in `26b4f7c`: provider windows
+  carry local meaning, config source separates configured/assumed/unknown,
+  migrations raise a discontinuity flag, and the analyzer treats network totals as
+  lower bounds when one occurs.
+- The BDP/coverage part of V8 and V11 were fixed in `f978003`: throughput and RTT
+  use the same 1-second window, and provider loss is joined only when the token is
+  unique and the terminal timelines are close enough. A discontinuity overlapping a
+  stall downgrades attribution to `unknown`.
+- V6 was checked against the `iroh-blobs 0.99.0` contract; V7 was checked against
+  the `n0-watcher 0.6.1` cancel-safety documentation, with the evidence recorded
+  next to the `select!`.
+- V9 became E1b but only runs after the raw bracket is stable; V10 no longer
+  supports the conclusion "not the link", because the fresh raw Wi-Fi 4 runs also
+  burst and zero-window.
+- V12 keeps a single Gate 1 status in §11. V13 is a trust-proxy/security issue
+  outside this plan's scope and must be handled in its own commit.
 
-### A1. Đọc đúng chiều của QUIC stats
+### A1. Read QUIC stats from the right direction
 
-Receiver là đầu nhận bulk. Tại receiver:
+The receiver is the bulk-receiving end. On the receiver:
 
-- Dùng được: application bytes, `udp_rx.bytes`, RTT, selected path và current MTU.
-- `cwnd`, sent loss và congestion events mô tả chiều gửi cục bộ của receiver,
-  chủ yếu ACK/control; chỉ giữ dưới tên `local_*`, không dùng để kết luận về bulk.
-- Muốn đánh giá CUBIC/BBR hoặc payload loss phải thu path stats tại blob provider
-  phía sender và gắn log bằng correlation token dùng chung. Từ `bcbde90`, token
-  là BLAKE3 domain-separated pseudonym chứ không còn là session ID đổi cơ số.
+- Usable: application bytes, `udp_rx.bytes`, RTT, selected path and current MTU.
+- `cwnd`, sent loss and congestion events describe the receiver's own sending
+  direction, mostly ACK and control traffic; keep them under `local_*` names and do
+  not draw bulk conclusions from them.
+- Judging CUBIC vs BBR or payload loss requires path stats collected at the blob
+  provider on the sender, with logs tied together by a shared correlation token.
+  Since `bcbde90` the token is a BLAKE3 domain-separated pseudonym rather than a
+  base-converted session ID.
 
-Bổ sung vào mỗi sample/config record:
+Add to every sample and config record:
 
-- `stream_receive_window_bytes`, `connection_receive_window_bytes` và
-  `send_window_bytes` thực tế ở receiver. Provider phải prefix receive-side field
-  bằng `local_` để không bị đọc nhầm là flow-control credit của receiver.
-- Congestion controller và build profile đang dùng.
-- `config_source=measured|configured|assumed_upstream_default|unknown`; giá trị
-  chép tay từ noq-proto không được gắn `known=true`.
-- `role=receiver|provider` để parser không trộn semantics hai phía.
-- Counter phạm vi connection từ `ConnectionInfo::stats()`:
-  `connection_udp_tx_bytes_delta`/`connection_udp_rx_bytes_delta` cùng
-  `connection_stats_available`. Đây là số byte đáng tin; counter theo path chỉ là
-  lower bound và phải luôn đọc kèm `path_counter_coverage`.
-- `path_count` và `active_path_count`: số path connection đang giữ, và số path
-  thực sự có byte trong sample đó. Lớn hơn 1 nghĩa là counter theo selected path
-  chỉ mô tả một phần traffic — khác hẳn với trường hợp không chọn được path nào.
-- Aggregate theo **tất cả** path: `all_paths_udp_tx/rx_bytes_delta`,
-  `all_paths_lost_packets_delta`. Cộng gộp per-`PathId` nên loss không còn là
-  lower bound. Hai điều kiện bắt buộc để con số này đúng: dedup theo `PathId`
-  trong từng snapshot (một path có thể xuất hiện một lần cho mỗi transport addr,
-  cùng counter), và giữ lại entry của path đã rời list (path có thể quay lại).
-  Bỏ một trong hai làm tổng lệch 1,07× và 1,70× so với connection; có cả hai thì
-  khớp 1,0001×.
+- The receiver's actual `stream_receive_window_bytes`,
+  `connection_receive_window_bytes` and `send_window_bytes`. The provider must
+  prefix receive-side fields with `local_` so they are not misread as the
+  receiver's flow-control credit.
+- The congestion controller and build profile in use.
+- `config_source=measured|configured|assumed_upstream_default|unknown`; a value
+  hand-copied from noq-proto must not be marked `known=true`.
+- `role=receiver|provider` so a parser does not mix the two sides' semantics.
+- Connection-scoped counters from `ConnectionInfo::stats()`:
+  `connection_udp_tx_bytes_delta` / `connection_udp_rx_bytes_delta` plus
+  `connection_stats_available`. These are the trustworthy byte figures; path
+  counters are only lower bounds and must always be read with
+  `path_counter_coverage`.
+- `path_count` and `active_path_count`: how many paths the connection holds, and
+  how many actually carried bytes in that sample. Above 1 means the selected-path
+  counter describes only part of the traffic — a different situation from having no
+  path selected at all.
+- Aggregates over **every** path: `all_paths_udp_tx/rx_bytes_delta` and
+  `all_paths_lost_packets_delta`. Summed per `PathId`, so loss stops being a lower
+  bound. Two conditions are required for these numbers to be right: deduplicate by
+  `PathId` within each snapshot (a path can appear once per transport address, each
+  entry carrying the same counters), and retain entries for paths that have left
+  the list (a path can come back). Dropping either skews the total to 1.07x and
+  1.70x of the connection figure; with both, it matches to 1.0001x.
 - `direct_path_udp_bytes_delta` / `relay_path_udp_bytes_delta` /
-  `aoa_path_udp_bytes_delta`: byte trên dây theo loại path đã mang chúng. Đây là
-  cách duy nhất trả lời "bao nhiêu đi qua relay" trên connection multipath.
-- `stream_data_blocked_tx/rx` và `data_blocked_tx`. Đây là bằng chứng trực tiếp về
-  flow control: bên gửi có dữ liệu sẵn và bị window của bên nhận chặn.
+  `aoa_path_udp_bytes_delta`: wire bytes attributed to the kind of path that
+  carried them. This is the only way to answer "how much went over the relay" on a
+  multipath connection.
+- `stream_data_blocked_tx/rx` and `data_blocked_tx`. These are direct evidence of
+  flow control: the sender had data ready and the receiver's window held it back.
 
-Tính chỉ số chẩn đoán:
+Derived diagnostic:
 
 ```text
 bdp_window_ratio = app_bytes_per_sec * rtt_seconds / stream_receive_window_bytes
 ```
 
-`bdp_window_ratio >= 0,8` kéo dài chỉ là tín hiệu **có thể window-bound**. Tính ratio
-từ cùng cửa sổ throughput 1 giây, không trộn app rate 250 ms với percentile 1 giây.
-Từ schema v6, `stream_data_blocked` là bằng chứng mạnh hơn hẳn: khác với một tỉ số
-suy đoán, frame này chỉ được phát khi bên gửi thực sự bị window chặn. Ratio dùng để
-tầm soát; frame dùng để kết luận.
-Chỉ xác nhận khi đổi window làm throughput thay đổi tái lập được và raw path còn
-headroom. Đồng thời tính `rtt_inflation = current_rtt / min_rtt` để phát hiện queue.
+A sustained `bdp_window_ratio >= 0.8` is only a signal that the transfer **may be**
+window-bound. Compute the ratio from the same 1-second throughput window; do not
+mix a 250 ms app rate with 1-second percentiles. From schema v6,
+`stream_data_blocked` is far stronger evidence: unlike an inferred ratio, the frame
+is only emitted when the sender is genuinely blocked by the window. Use the ratio
+to screen and the frame to conclude. Confirm only when changing the window changes
+throughput reproducibly and the raw path still has headroom. Also compute
+`rtt_inflation = current_rtt / min_rtt` to detect queueing.
 
-### A2. Sửa định nghĩa warm-up, stall và terminal outcome
+### A2. Fix the definitions of warm-up, stall and terminal outcome
 
-- Đo `time_to_first_byte_ms` riêng; thời gian từ connect đến byte đầu không phải
-  mid-transfer stall.
-- Chỉ kích hoạt stall detector sau lần tăng byte đầu tiên và kết thúc khi nhận
-  `GetProgressItem::Done` tường minh.
-- Stream kết thúc bằng `None` mà chưa có `Done` phải là `failed/incomplete`, không
-  ghi `outcome=complete`.
-- Byte counter và timestamp lần tăng đầu/cuối phải được publish từ download loop.
-  Nếu chỉ gắn thời điểm ở sampler 250 ms thì TTFB bị đo thừa và stall bị đo thiếu
-  một chiều tới 250 ms; stall thật khoảng 600 ms có thể lọt ngưỡng 500 ms.
-- Phân biệt `stall_count`, `stall_total_ms`, `longest_stall_ms` với warm-up và
-  finalization pause. Stall đang mở khi `complete` là finalization; khi `failed`
-  phải giữ là failure stall, không trừ khỏi summary.
-- Hợp đồng `iroh-blobs 0.99.0` xác nhận `Done` là completed, `Error` là closed but
-  incomplete, và `GetProgress::complete()` đổi stream đóng không có result thành
-  `LocalFailure`; vì vậy `None -> Failed` là đúng semantics upstream và có unit test.
+- Measure `time_to_first_byte_ms` separately; the time from connect to the first
+  byte is not a mid-transfer stall.
+- Arm the stall detector only after the first byte increase, and end it on an
+  explicit `GetProgressItem::Done`.
+- A stream ending in `None` without `Done` must be `failed/incomplete`, never
+  `outcome=complete`.
+- The byte counter and the first/last increase timestamps must be published from
+  the download loop. Timestamping only at the 250 ms sampler over-measures TTFB and
+  under-measures stalls by up to 250 ms in one direction; a real 600 ms stall can
+  slip past a 500 ms threshold.
+- Keep `stall_count`, `stall_total_ms` and `longest_stall_ms` distinct from warm-up
+  and finalization pauses. A stall still open at `complete` is finalization; at
+  `failed` it must stay a failure stall and not be subtracted from the summary.
+- The `iroh-blobs 0.99.0` contract confirms `Done` means completed, `Error` means
+  closed but incomplete, and `GetProgress::complete()` turns a stream closed
+  without a result into `LocalFailure`; `None -> Failed` therefore matches upstream
+  semantics and has a unit test.
 
-### A3. Loại observer effect khỏi download loop
+### A3. Remove the observer effect from the download loop
 
-Telemetry-on không được liên tục cancel `stream.next()` mỗi 250 ms.
+Telemetry-on must not repeatedly cancel `stream.next()` every 250 ms.
 
-Thiết kế ưu tiên:
+Preferred design:
 
-- Download loop ở cả production và benchmark tiếp tục dùng `stream.next().await`.
-- Khi telemetry bật, loop chỉ cập nhật byte counter nguyên tử.
-- Một sampler task tùy chọn đọc byte counter và `ConnectionInfo` mỗi 250 ms; task
-  có stop/final flush rõ ràng và không có channel dữ liệu không giới hạn.
-- `n0-watcher 0.6.1::Watcher::updated()` được upstream ghi rõ cancel-safe; lưu bằng
-  chứng version/source này cạnh `select!` và test path-change accounting.
-- Nếu chọn giữ `select!`, phải chứng minh `next()` cancel-safe bằng tài liệu API và
-  integration test; nếu không có bằng chứng thì không dùng thiết kế đó.
+- The download loop keeps using `stream.next().await` in both production and
+  benchmark builds.
+- With telemetry on, the loop only updates an atomic byte counter.
+- An optional sampler task reads the byte counter and `ConnectionInfo` every
+  250 ms, with an explicit stop and final flush and no unbounded data channel.
+- `n0-watcher 0.6.1::Watcher::updated()` is documented upstream as cancel-safe;
+  keep that version/source evidence next to the `select!` and test path-change
+  accounting.
+- If `select!` is kept, `next()` must be shown cancel-safe from API documentation
+  and an integration test; without that evidence, do not use the design.
 
-### A4. Metric path và phân loại nghẽn
+### A4. Path metrics and bottleneck classification
 
-- `time_to_direct_ms`: từ lúc bắt đầu dial/transfer đến khi selected path lần đầu
-  là direct; ghi `never_direct=true` nếu không đạt.
-- `relay_bytes_ratio`: tổng application byte delta khi selected path là relay chia
-  tổng transferred bytes.
-- `direct_bytes_ratio` và số lần path migration.
-- So sánh `udp_rx_bytes_delta` với `app_bytes_delta`:
-  - UDP vẫn tăng nhưng app offset đứng nhiều sample liên tiếp và provider có loss
-    cùng timeline ⇒ `transport_active_loss_recovery` (HOL/retransmit).
-  - UDP vẫn tăng, app đứng nhưng provider không có loss ⇒
-    `transport_active_delivery_gap`; mới lúc này điều tra reorder/verify/store/disk.
-  - Cả UDP và app cùng đứng ⇒ nghi ngờ sender, path, flow/congestion hoặc upstream
-    store read.
-- Chỉ join loss khi có đúng một provider match và timeline terminal đủ gần; nếu
-  không thì giữ `unknown`/delivery-gap rộng, không khẳng định recovery.
-- Đây là heuristic; `GetProgressItem::Progress` là payload prefix đã aggregate nên
-  packet ngoài thứ tự có thể làm offset đứng dù UDP vẫn tăng. Luôn kết hợp provider
-  stats và phase timing trước khi kết luận.
+- `time_to_direct_ms`: from the start of the dial/transfer to the first time the
+  selected path is direct; record `never_direct=true` if it never happens.
+- `relay_bytes_ratio`: total application byte delta while the selected path is
+  relay, divided by total transferred bytes.
+- `direct_bytes_ratio` and the number of path migrations.
+- Compare `udp_rx_bytes_delta` against `app_bytes_delta`:
+  - UDP still rising while the app offset stands still across several consecutive
+    samples, with provider loss on the same timeline ⇒
+    `transport_active_loss_recovery` (HOL/retransmit).
+  - UDP still rising, app flat, but no provider loss ⇒
+    `transport_active_delivery_gap`; only now investigate
+    reorder/verify/store/disk.
+  - Both UDP and app flat ⇒ suspect the sender, the path, flow/congestion control
+    or the upstream store read.
+- Join loss only when there is exactly one matching provider and the terminal
+  timelines are close enough; otherwise keep `unknown` or a broad delivery gap
+  rather than asserting recovery.
+- This is a heuristic; `GetProgressItem::Progress` is an aggregated payload prefix,
+  so out-of-order packets can freeze the offset while UDP keeps rising. Always
+  combine provider stats and phase timing before concluding.
 
-### A5. Timing đầy đủ theo phase
+### A5. Complete phase timing
 
-Instrument cả sender lẫn receiver:
+Instrument both sender and receiver:
 
-- Walk/metadata, SAF read/copy, import/hash và thời gian đến lúc blob ticket sẵn sàng.
-- Handshake, time-to-first-byte và network transfer.
-- Receiver store/verify và final export.
-- Trên Android/iOS, đo cả thời gian background save đến khi file thật sự sẵn sàng,
-  không chỉ thời điểm protocol báo completed.
+- Walk/metadata, SAF read/copy, import/hash, and time until the blob ticket is
+  ready.
+- Handshake, time-to-first-byte and network transfer.
+- Receiver store/verify and final export.
+- On Android and iOS, also measure background save until the file is genuinely
+  ready, not just when the protocol reports completed.
 
-### A6. Analyzer/harness
+### A6. Analyzer and harness
 
-- Parser JSONL theo kiểu streaming, nhóm bằng `(source_log, transfer_id)` để nhiều
-  process cùng bắt đầu counter từ 1 không bị gộp.
-- Giới hạn kích thước file, dòng và số sample; chỉ dùng JSON primitive, không
-  `pickle`/`eval`.
-- Xuất cả JSON machine-readable và bảng người đọc được.
-- Gộp sample 250 ms thành cửa sổ 1 giây không chồng lấn trước khi tính throughput
-  p10/p50/p90 và coefficient of variation; dùng `sample_ms` làm trọng số khi tick
-  bị trễ.
-- Tính low-speed episode, stall, path byte ratio và phase timing; khi path đổi thì
-  force sample để giảm lượng byte bị quy nhầm cho path mới.
-- Cho phép report provider-only khi mobile release chỉ có boundary phase; vẫn ghép
-  phase theo pseudonymous correlation token nhưng không tạo giả receiver
-  throughput/stability.
-  `--fail-on-unstable` phải fail nếu không có receiver sample hợp lệ.
-- Báo path-counter discontinuity khi selected path đổi thay vì im lặng hụt totals;
-  `network_stats_coverage` phải chia cho sample count, không chia cho throughput
-  window count.
-- `tools/analyze_transfer_telemetry.py` hiện phát report schema v5; chỉ coi schema
-  đã nghiệm thu sau smoke emission trên các target còn thiếu ở Gate 1.
+- Stream the JSONL parser, grouping by `(source_log, transfer_id)` so several
+  processes each starting their counter at 1 are not merged.
+- Bound file size, line length and sample count; use only JSON primitives, never
+  `pickle` or `eval`.
+- Emit both machine-readable JSON and a human-readable table.
+- Resample 250 ms samples into non-overlapping 1-second windows before computing
+  p10/p50/p90 throughput and the coefficient of variation; weight by `sample_ms`
+  when a tick is late.
+- Compute low-speed episodes, stalls, path byte ratios and phase timings; force a
+  sample on path change to reduce bytes misattributed to the new path.
+- Allow provider-only reports when a mobile release has only boundary phases;
+  still join phases by the pseudonymous correlation token, but never fabricate
+  receiver throughput or stability. `--fail-on-unstable` must fail when there are
+  no valid receiver samples.
+- Report a path-counter discontinuity when the selected path changes instead of
+  silently under-counting totals; `network_stats_coverage` must divide by sample
+  count, not by throughput window count.
+- `tools/analyze_transfer_telemetry.py` currently emits schema v6 reports; treat a
+  schema as accepted only after an emission smoke on the targets still open at
+  Gate 1.
 
-## 6. Phase B — Dựng baseline và quy công P0
+## 6. Phase B — Build baselines and attribute P0
 
-### B1. Baseline tuyệt đối
+### B1. Absolute baselines
 
-Mỗi path cần hai mốc:
+Each path needs two reference points:
 
-1. **Link baseline:** iperf3 cho LAN/AOA để biết năng lực TCP/UDP thực tế.
-2. **Transport baseline:** raw QUIC echo/source-sink dùng cùng iroh/noq, encryption
-   và path với Wisp nhưng không có blob store/hash/export.
+1. **Link baseline:** iperf3 for LAN/AOA, to know the real TCP/UDP capacity.
+2. **Transport baseline:** a raw QUIC echo/source-sink using the same iroh/noq,
+   encryption and path as Wisp but without the blob store, hashing or export.
 
-Đo thêm baseline local:
+Also measure local baselines:
 
-- Sequential file read/write trên filesystem thật.
-- Hash throughput và AEAD throughput theo đúng release profile/architecture.
-- SAF/provider read trên Android; file-provider access trên iOS nếu áp dụng.
+- Sequential file read/write on the real filesystem.
+- Hash throughput and AEAD throughput at the exact release profile and
+  architecture.
+- SAF/provider read on Android; file-provider access on iOS if applicable.
 
-Chỉ số hạng nhất:
+First-class metrics:
 
 ```text
 link_utilization      = app_payload_throughput / link_baseline_throughput
 transport_utilization = app_payload_throughput / raw_quic_throughput
 ```
 
-Ngưỡng ban đầu để điều tra là dưới 70% baseline phù hợp. Ngưỡng release cuối sẽ
-được khóa sau khi có dữ liệu theo từng class thiết bị/path; không dùng một con số
-chung để che giấu giới hạn disk/CPU của mobile.
+The initial threshold for investigation is below 70% of the appropriate baseline.
+The final release threshold will be fixed once there is data per device and path
+class; a single shared number must not be used to hide mobile disk or CPU limits.
 
-### B2. A/B quy công các thay đổi đã land
+### B2. A/B to attribute the changes already landed
 
-Tái dựng baseline từ commit trước `8a33818`, rồi tạo các build chỉ khác một biến.
-Historical build chỉ chạy trong thư mục benchmark dùng một lần; không dùng nó với
-dữ liệu người dùng vì record write cũ không atomic.
+Rebuild a baseline from the commit before `8a33818`, then produce builds differing
+in one variable each. Historical builds run only in a throwaway benchmark
+directory; never point one at user data, because the old record write is not
+atomic.
 
 | Build | Record format/write | Coalescer | Record checkpoint | Release dependency |
 |---|---|---:|---:|---:|
-| H — exact historical | pretty/direct write | off | per-progress/blocking in async | z |
-| A — controlled baseline | compact/atomic | off | per-progress via blocking pool | z |
-| B — record-only | compact/atomic | off | 1 s/64 MiB + blocking pool | z |
-| C — coalescer-only | compact/atomic | 10 Hz | per-progress via blocking pool | z |
-| D — P0 runtime | compact/atomic | 10 Hz | 1 s/64 MiB + blocking pool | z |
-| E — current release | compact/atomic | 10 Hz | 1 s/64 MiB + blocking pool | 3 |
+| H — exact historical | pretty / direct write | off | per-progress, blocking in async | z |
+| A — controlled baseline | compact / atomic | off | per-progress via blocking pool | z |
+| B — record-only | compact / atomic | off | 1 s / 64 MiB + blocking pool | z |
+| C — coalescer-only | compact / atomic | 10 Hz | per-progress via blocking pool | z |
+| D — P0 runtime | compact / atomic | 10 Hz | 1 s / 64 MiB + blocking pool | z |
+| E — current release | compact / atomic | 10 Hz | 1 s / 64 MiB + blocking pool | 3 |
 
-- So H-vs-A chỉ cho biết tổng chênh lệch lịch sử/correctness rewrite; attribution
-  coalescer và checkpoint dùng A–D, nơi atomic write được giữ cố định.
-- Có microbench direct-write-vs-atomic trong scratch directory để tách overhead
-  record format/write mà không tạo production build thiếu an toàn.
-- Có microbench feed progress ở 10, 100, 1.000 và khoảng 6.400 event/s để đo CPU,
-  số write và scheduler delay.
-- Báo cả effect size và confidence interval, không chỉ chọn run nhanh nhất.
+- H vs A only gives the total historical/correctness-rewrite difference;
+  attribution for the coalescer and the checkpoint comes from A-D, where atomic
+  writes are held constant.
+- Include a direct-write-vs-atomic microbench in a scratch directory to isolate
+  record format and write overhead without producing an unsafe production build.
+- Include a microbench feeding progress at 10, 100, 1,000 and roughly 6,400
+  events/s to measure CPU, write count and scheduler delay.
+- Report effect size and confidence intervals, not just the fastest run.
 
-Kết quả bắt buộc: bảng attribution cho coalescer, checkpoint và z-vs-3. Nếu một
-thay đổi không có win đo được, giữ/bỏ dựa trên lợi ích correctness/complexity chứ
-không tiếp tục ghi công hiệu năng cho nó.
+Required output: an attribution table for the coalescer, the checkpoint and z-vs-3.
+If a change shows no measurable win, keep or drop it on correctness and complexity
+grounds rather than continuing to credit it with performance.
 
-## 7. Phase C — Benchmark tái lập được
+## 7. Phase C — Reproducible benchmarks
 
-### C1. Desktop A/B trước
+### C1. Desktop A/B first
 
-Ưu tiên desktop↔desktop với Linux `netem`; trên Windows dùng công cụ impairment
-tương đương như clumsy khi cần. Desktop cho phép chạy nhiều lần, kiểm soát RTT/loss
-và tránh thermal/mobile flash làm nhiễu phép đo.
+Prefer desktop-to-desktop with Linux `netem`; on Windows use an equivalent
+impairment tool such as clumsy when needed. Desktop allows many repetitions,
+controlled RTT and loss, and avoids thermal and mobile flash noise.
 
-Ma trận tối thiểu:
+Minimum matrix:
 
-| Scenario | RTT | Loss | Rate cap | Mục đích |
+| Scenario | RTT | Loss | Rate cap | Purpose |
 |---|---:|---:|---:|---|
-| Direct LAN | 2–5 ms | 0% | 1 Gbit/s hoặc link thật | CPU/store ceiling |
-| Direct WAN giả lập | 50/100/200 ms | 0% | 100 Mbit/s | flow-control/RTT scaling |
-| Loss sweep | 50/100 ms | 0,1% và 1% | 100 Mbit/s | CC/recovery stability |
-| Relay thật/self-host | RTT đo thực | đo thực | relay thực | relay/path overhead |
+| Direct LAN | 2-5 ms | 0% | 1 Gbit/s or the real link | CPU/store ceiling |
+| Simulated direct WAN | 50/100/200 ms | 0% | 100 Mbit/s | flow-control / RTT scaling |
+| Loss sweep | 50/100 ms | 0.1% and 1% | 100 Mbit/s | CC/recovery stability |
+| Real or self-hosted relay | measured | measured | real relay | relay/path overhead |
 
-- File random 1–2 GiB là mặc định; chọn kích thước để mỗi run đo được ít nhất
-  30–60 giây. File lớn hơn chỉ dùng khi link quá nhanh hoặc cho soak.
-- Tách warm-cache network benchmark và cold-cache E2E benchmark; không trộn hai
-  loại trong cùng thống kê.
-- Mỗi variant có ít nhất 1 warm-up và 10 measured runs.
-- Chạy A/B xen kẽ hoặc randomized order, không chạy toàn bộ A rồi toàn bộ B.
+- A 1-2 GiB random file is the default; size it so each run measures at least
+  30-60 seconds. Larger files only when the link is very fast, or for soaks.
+- Keep warm-cache network benchmarks separate from cold-cache end-to-end
+  benchmarks; never mix the two in one statistic.
+- Each variant gets at least 1 warm-up and 10 measured runs.
+- Interleave or randomize A/B order; never run all of A then all of B.
 
-### C2. Mobile chỉ xác nhận cấu hình thắng
+### C2. Mobile only confirms the winning configuration
 
-- Android↔Android, desktop↔Android và iOS↔desktop/iOS theo khả năng lab.
-- Chỉ xác nhận 1–2 cấu hình đã thắng trên desktop, tối thiểu 5 measured runs mỗi
-  class thiết bị.
-- Chờ nhiệt độ/clock trở về vùng định trước trước run tiếp theo; ghi thermal state
-  theo thời gian, không chỉ đầu/cuối.
-- Soak riêng 10–20 phút hoặc file lớn để phát hiện thermal throttling, memory tăng
-  tuyến tính và background restriction. Không dùng soak làm run A/B thường ngày.
+- Android-to-Android, desktop-to-Android, and iOS-to-desktop/iOS as the lab
+  allows.
+- Confirm only the 1-2 configurations that won on desktop, with at least 5
+  measured runs per device class.
+- Wait for temperature and clocks to return to a predefined band before the next
+  run; record thermal state over time, not just at the start and end.
+- Run separate 10-20 minute or large-file soaks to catch thermal throttling,
+  linear memory growth and background restrictions. Do not use a soak as a routine
+  A/B run.
 
-### C3. Phân tầng Wi-Fi 4/5/6
+### C3. Wi-Fi 4/5/6 stratification
 
-Có, benchmark phải tính đến thế hệ Wi-Fi, nhưng không dùng nhãn Wi-Fi 4/5/6 hoặc
-PHY rate làm baseline throughput. Thế hệ, band và channel width là **stratum**;
-iperf3 đo ngay trên cùng cặp thiết bị, cùng chiều và cùng thời điểm mới là mẫu số.
+Benchmarks must account for the Wi-Fi generation, but the Wi-Fi 4/5/6 label and
+the PHY rate are not a throughput baseline. Generation, band and channel width are
+**strata**; the denominator is an iperf3 measurement taken on the same device
+pair, in the same direction, at the same time.
 
-Với mesh, cùng SSID và cùng subnet chưa đủ để coi là cùng môi trường.
-`same-node`, `cross-node wired-backhaul` và `cross-node wireless-backhaul` là ba
-stratum khác nhau. Run chính để tối ưu phải pin cùng AP node/BSSID và band
-nếu lab cho phép; cross-node mesh là track robustness riêng.
+With mesh, the same SSID and the same subnet are not enough to call it the same
+environment. `same-node`, `cross-node wired-backhaul` and
+`cross-node wireless-backhaul` are three different strata. The primary optimization
+runs must pin the same AP node/BSSID and band if the lab allows; cross-node mesh is
+a separate robustness track.
 
-Ma trận lab tối thiểu, chỉ chạy hàng mà phần cứng/AP thực sự hỗ trợ:
+Minimum lab matrix, running only rows the hardware and AP actually support:
 
-| Class | Chuẩn | Band | Channel width mục tiêu | Vai trò |
+| Class | Standard | Band | Target channel width | Role |
 |---|---|---:|---:|---|
-| Wi-Fi 4 / 2.4 | 802.11n | 2.4 GHz | 20 MHz; 40 MHz tách riêng | Môi trường phổ biến, dễ nhiễu |
-| Wi-Fi 4 / 5 | 802.11n | 5 GHz | 40 MHz | Tách ảnh hưởng band khỏi generation |
-| Wi-Fi 5 | 802.11ac | 5 GHz | 80 MHz; 160 MHz tách riêng nếu có | Baseline mobile/desktop hiện đại |
-| Wi-Fi 6 | 802.11ax | 5 GHz | 80 MHz | OFDMA/ax nhưng không giả định tải đơn sẽ nhanh hơn |
-| Wi-Fi 6E | 802.11ax | 6 GHz | 80/160 MHz, mỗi width một stratum | Tùy chọn khi lab có AP/client 6 GHz |
+| Wi-Fi 4 / 2.4 | 802.11n | 2.4 GHz | 20 MHz; 40 MHz as its own stratum | Common, interference-prone environment |
+| Wi-Fi 4 / 5 | 802.11n | 5 GHz | 40 MHz | Separates band effects from generation |
+| Wi-Fi 5 | 802.11ac | 5 GHz | 80 MHz; 160 MHz separately if available | Modern mobile/desktop baseline |
+| Wi-Fi 6 | 802.11ax | 5 GHz | 80 MHz | OFDMA/ax, without assuming a single flow is faster |
+| Wi-Fi 6E | 802.11ax | 6 GHz | 80/160 MHz, each width its own stratum | Optional when the lab has 6 GHz AP and client |
 
-Mỗi run ghi, nếu OS cho phép:
+Record per run, where the OS allows:
 
-- Chuẩn 802.11, band/frequency, channel width, negotiated TX/RX PHY, RSSI,
-  NSS/MCS, retry/channel utilization; trường không lấy được phải là `unavailable`,
-  không suy đoán.
-- SSID và BSSID của cả hai endpoint, AP/mesh node ID, kiểu backhaul, client
-  isolation/multicast filtering và Windows network profile/firewall. Không pool run
-  có BSSID/node khác nhau; BSSID không đọc được phải ghi `unavailable`.
-- Model/firmware AP, model/OS client, khoảng cách/vị trí cố định, nguồn điện,
-  thermal status và nhiệt độ theo thời gian.
-- Selected Wisp path, direct/relay ratio, hướng truyền và vai trò từng thiết bị.
+- 802.11 standard, band/frequency, channel width, negotiated TX/RX PHY, RSSI,
+  NSS/MCS, retry and channel utilization; any field that cannot be read must be
+  `unavailable`, never guessed.
+- SSID and BSSID of both endpoints, AP/mesh node ID, backhaul type, client
+  isolation and multicast filtering, and the Windows network profile/firewall. Do
+  not pool runs with different BSSIDs or nodes; an unreadable BSSID must be
+  recorded as `unavailable`.
+- AP model and firmware, client model and OS, fixed distance and position, power
+  source, thermal status and temperature over time.
+- The selected Wisp path, direct/relay ratio, transfer direction and each device's
+  role.
 
-Preflight topology trước mỗi batch:
+Topology preflight before every batch:
 
-1. Xác nhận IP/subnet, SSID/BSSID/node và band của cả hai endpoint; invalid run
-   nếu roam BSSID/node giữa chừng, trừ khi đó chính là path-migration test.
-2. Kiểm tra unicast hai chiều và mDNS/broadcast discovery. mDNS fail nhưng
-   unicast pass phải gắn cờ `multicast_blocked`; không quy lỗi cho transfer core.
-3. Ping hai chiều chỉ là cảnh báo queue/asymmetry, không là throughput baseline.
-   Khi RTT/loss bất đối xứng rõ, phải xác nhận bằng iperf3/raw test hai
-   chiều và không chạy A/B QUIC tuning trước khi topology ổn định.
-4. Xác nhận Windows network profile/firewall và AP `client isolation`/multicast
-   snooping theo cấu hình lab; không tắt security control trong production để che lỗi.
+1. Confirm IP/subnet, SSID/BSSID/node and band of both endpoints; a run is invalid
+   if the BSSID or node roams mid-transfer, unless that is the path-migration test
+   itself.
+2. Check bidirectional unicast and mDNS/broadcast discovery. mDNS failing while
+   unicast passes must be flagged `multicast_blocked` and not blamed on the
+   transfer core.
+3. Bidirectional ping is only a queue/asymmetry warning, never a throughput
+   baseline. When RTT or loss is clearly asymmetric, confirm with bidirectional
+   iperf3 or a raw test, and do not run QUIC tuning A/Bs until the topology is
+   stable.
+4. Confirm the Windows network profile/firewall and the AP's client isolation and
+   multicast snooping against the lab configuration; never disable a production
+   security control to paper over a failure.
 
-Protocol đo baseline cho từng chiều:
+Baseline protocol per direction:
 
-1. Chạy iperf3 TCP một stream cùng chiều Wisp ngay trước batch; tùy chọn thêm 4
-   stream để biết link ceiling khác single-flow ceiling bao nhiêu.
-2. Chạy lại ngay sau batch. Dùng median before/after làm `link_baseline`; nếu hai
-   mốc lệch trên 10% thì coi môi trường thay đổi và chạy lại batch.
-3. Tính `link_utilization = app payload throughput / iperf3 throughput`. PHY chỉ
-   là metadata/upper bound; không dùng `payload / PHY` để pass/fail.
-4. Không pool kết quả khác generation/band/channel width. So sánh p10/p50, CV,
-   stall, direct ratio và utilization bên trong từng stratum.
+1. Run single-stream iperf3 TCP in the same direction as Wisp immediately before
+   the batch; optionally add a 4-stream run to see how far the link ceiling differs
+   from the single-flow ceiling.
+2. Repeat immediately after the batch. Use the median of before and after as
+   `link_baseline`; if the two differ by more than 10%, treat the environment as
+   changed and rerun the batch.
+3. Compute `link_utilization = app payload throughput / iperf3 throughput`. PHY is
+   metadata and an upper bound only; never use `payload / PHY` to pass or fail.
+4. Do not pool results across generation, band or channel width. Compare p10/p50,
+   CV, stalls, direct ratio and utilization within each stratum.
 
-Smoke Pixel 4 hiện tại là một quan sát **không phải baseline**: Wi-Fi 4/2.4 GHz,
-2442 MHz, RSSI khoảng -35 đến -41 dBm, PHY TX dao động khoảng 52–117 Mbps và RX
-khoảng 130–173 Mbps, thermal status 0; cuối các run pin khoảng 37,9–38,7 °C.
-Host-side PHY không lấy được do quyền Windows nên được ghi `unavailable`. Cần
-lặp lại bằng release ở cả hai đầu, file đại diện, iperf3 bracket và ít nhất 5
-measured runs trong cùng Wi-Fi stratum.
+The current Pixel 4 smoke is an observation, **not a baseline**: Wi-Fi 4 /
+2.4 GHz, 2442 MHz, RSSI around -35 to -41 dBm, PHY TX varying about 52-117 Mbps
+and RX about 130-173 Mbps, thermal status 0; battery around 37.9-38.7 °C at the end
+of the runs. Host-side PHY was unavailable due to Windows permissions and is
+recorded as `unavailable`. It needs repeating with release builds at both ends, a
+representative file, an iperf3 bracket and at least 5 measured runs within one
+Wi-Fi stratum.
 
-Schema-v5 smoke mới ghi Pixel trên BSSID `c2:49:43:1f:a6:77`, Wi-Fi 4/2.4 GHz
-2442 MHz, RSSI -44 dBm, PHY TX/RX 52/117 Mbps. Laptop dùng AX211 trên
-Windows profile `TienNA 5G 2`, category `Public`; Pixel dùng SSID `TienNA`, nên
-hai endpoint khác SSID/band dù cùng `192.168.1.0/24`. BSSID/PHY host không đọc
-được do Windows location permission. Trong lúc transfer, ping Pixel → laptop chỉ
-3,1–3,5 ms trong khi laptop → Pixel lên 119–209 ms; mDNS không thấy peer,
-Windows → Android rớt control handshake hai lần, còn Android → Windows đi
-direct. Đây là batch `cross_band_suspect_mesh_or_ap_asymmetry` và bị loại
-khỏi mọi kết luận window/CC.
+A newer schema-v5 smoke recorded the Pixel on BSSID `c2:49:43:1f:a6:77`, Wi-Fi 4 /
+2.4 GHz 2442 MHz, RSSI -44 dBm, PHY TX/RX 52/117 Mbps. The laptop used an AX211 on
+the Windows profile `TienNA 5G 2`, category `Public`; the Pixel used SSID
+`TienNA`, so the two endpoints were on different SSIDs and bands despite sharing
+`192.168.1.0/24`. Host BSSID and PHY were unreadable because of the Windows
+location permission. During the transfer, ping from Pixel to laptop was only
+3.1-3.5 ms while laptop to Pixel reached 119-209 ms; mDNS did not find the peer,
+Windows → Android dropped the control handshake twice, and Android → Windows went
+direct. This batch is tagged `cross_band_suspect_mesh_or_ap_asymmetry` and is
+excluded from any window or CC conclusion.
 
-Controlled retry chuyển Pixel sang SSID `TienNA 5G`, BSSID
-`c2:49:43:3f:a6:78`, Wi-Fi 5/5805 MHz, RSSI -44 dBm, negotiated TX/RX
-866/780 Mbps và IP `192.168.1.83`. Laptop vẫn ở profile `TienNA 5G 2`; hậu tố
-profile Windows không chứng minh SSID/BSSID khác, còn host BSSID vẫn phải ghi
-`unavailable`. Ping hai chiều không mất gói; sau warm-up laptop → Pixel giảm từ
-178 xuống 2 ms và Pixel → laptop giảm từ 21 xuống khoảng 3 ms. Hai chiều Wisp
-256 MiB random đều direct, khoảng 19,84–20,89 MiB/s trung bình, không stall và
-hash khớp. Đây là controlled topology smoke xác nhận giả thuyết cross-band/mesh,
-nhưng chưa thay iperf3 before/after hay ma trận ít nhất 5 measured runs.
+A controlled retry moved the Pixel to SSID `TienNA 5G`, BSSID
+`c2:49:43:3f:a6:78`, Wi-Fi 5 / 5805 MHz, RSSI -44 dBm, negotiated TX/RX
+866/780 Mbps and IP `192.168.1.83`. The laptop stayed on the `TienNA 5G 2`
+profile; a Windows profile suffix does not prove a different SSID or BSSID, and the
+host BSSID still has to be recorded as `unavailable`. Bidirectional ping lost no
+packets; after warm-up, laptop → Pixel fell from 178 ms to 2 ms and Pixel → laptop
+from 21 ms to about 3 ms. Both directions of a 256 MiB random Wisp transfer went
+direct at roughly 19.84-20.89 MiB/s average with no stalls and matching hashes.
+This is a controlled topology smoke confirming the cross-band/mesh hypothesis, but
+it does not replace an iperf3 before/after bracket or a matrix of at least 5
+measured runs.
 
-Raw bracket kế tiếp cho chiều desktop → Android giữ median trước/sau trong 4,0%,
-nhưng Wisp ở giữa chỉ có direct ratio 5,0% và relay ratio 95,0%, dù BSSID/band
-không đổi và RSSI cuối -47 dBm. Do đó topology Wi-Fi cũ giải thích batch rất chậm
-ban đầu, nhưng “cùng 5 GHz” chưa đủ bảo đảm Wisp giữ direct path. Phải stratify
-thêm selected path và loại run relay khỏi A/B transport tuning cho direct LAN.
+The next raw bracket for the desktop → Android direction kept its before/after
+medians within 4.0%, yet the Wisp run in between had a direct ratio of only 5.0%
+and a relay ratio of 95.0%, despite unchanged BSSID and band and a final RSSI of
+-47 dBm. So the old Wi-Fi topology explains the initial very slow batch, but "same
+5 GHz" is not enough to guarantee Wisp keeps a direct path. Stratify further by
+selected path and exclude relay runs from direct-LAN transport tuning A/Bs.
 
-mDNS/broadcast vẫn fail hai chiều trên topology mới: desktop `--nearby` tìm 0
-receiver, Android cũng báo không có nearby device khi desktop receiver đang sống,
-trong khi short-code unicast handshake/transfer thành công. Gắn cờ batch
-`multicast_blocked`; điều tra Windows `Public` firewall và mesh multicast
-forwarding riêng, không trộn với direct-transfer throughput.
+mDNS/broadcast still fails in both directions on the new topology: desktop
+`--nearby` finds 0 receivers, and Android also reports no nearby devices while a
+desktop receiver is alive, while the short-code unicast handshake and transfer
+succeed. Flag the batch `multicast_blocked`; investigate the Windows `Public`
+firewall and mesh multicast forwarding separately, without mixing it into
+direct-transfer throughput.
 
-### C4. Workload tách riêng
+### C4. Separate workloads
 
-- **Một file lớn:** MB/s, utilization, p10/p50/p90, CV và stall.
-- **Nhiều file nhỏ:** ví dụ 1.000 file ở các bucket 4/64/1.024 KiB; đo files/s,
-  total completion time và round trips. Không đánh giá scenario này chỉ bằng MB/s.
-- **Prepare/SAF:** time-to-ticket và effective source-read MB/s.
-- **Finalize/export:** time-to-file-ready và effective export/write MB/s.
-- **Path establishment:** direct-success rate, time-to-direct và relay byte ratio.
+- **One large file:** MB/s, utilization, p10/p50/p90, CV and stalls.
+- **Many small files:** for example 1,000 files in 4/64/1,024 KiB buckets;
+  measure files/s, total completion time and round trips. Never judge this
+  scenario by MB/s alone.
+- **Prepare/SAF:** time-to-ticket and effective source-read MB/s.
+- **Finalize/export:** time-to-file-ready and effective export/write MB/s.
+- **Path establishment:** direct-success rate, time-to-direct and relay byte
+  ratio.
 
-## 8. Phase D — Thứ tự thử nghiệm sau khi có dữ liệu
+## 8. Phase D — Experiment order once there is data
 
-### D1. Direct-path reliability trước
+### D1. Direct-path reliability first
 
-Nếu `relay_bytes_ratio` cao hoặc `never_direct` thường xuyên, ưu tiên discovery,
-hole punching, address freshness và path migration. Một transfer đi sai path có
-thể chậm hơn mọi micro-tuning cộng lại.
+If `relay_bytes_ratio` is high or `never_direct` happens often, prioritize
+discovery, hole punching, address freshness and path migration. A transfer on the
+wrong path can be slower than every micro-tuning put together.
 
-Smoke 2026-08-14 trên cùng subnet cho thấy Windows browse không thấy mDNS/broadcast,
-nhưng gói WSPD unicast trực tiếp tới Pixel nhận reply hợp lệ và transfer qua code
-đi direct. Receiver/responder vẫn sống; nhánh cần điều tra là multicast/broadcast,
-Windows firewall/AP isolation và cách lấy địa chỉ peer an toàn để targeted unicast.
-Không quét mù toàn bộ `/24` trong production.
+A 2026-08-14 smoke on the same subnet showed Windows browse not seeing
+mDNS/broadcast, while a WSPD unicast packet sent directly to the Pixel got a valid
+reply and a code-based transfer went direct. The receiver/responder was alive; the
+branch to investigate is multicast/broadcast, the Windows firewall and AP
+isolation, and how to obtain a peer address safely for targeted unicast. Do not
+blind-scan an entire `/24` in production.
 
-Smoke schema v5 ban đầu cho thấy Windows → Android timeout
-`control_handshake`/`LastOpenPath`, còn Android → Windows hoàn tất direct. Sau
-khi Pixel chuyển từ Wi-Fi 4/2.4 GHz sang `TienNA 5G`, handshake hai chiều còn
-24–37 ms và hai transfer 256 MiB đạt khoảng 20 MiB/s không stall. Vì vậy cố định
-band/node/BSSID và kiểm topology vẫn đứng trước D2/E1/E2. mDNS vẫn fail dù
-short-code direct pass, nên discovery/firewall là nhánh D1 độc lập chứ không phải
-bằng chứng transport core chậm.
+An early schema v5 smoke showed Windows → Android timing out on
+`control_handshake`/`LastOpenPath` while Android → Windows completed direct. After
+the Pixel moved from Wi-Fi 4 / 2.4 GHz to `TienNA 5G`, the handshake took 24-37 ms
+in both directions and two 256 MiB transfers reached roughly 20 MiB/s with no
+stalls. Pinning band/node/BSSID and checking topology therefore still comes before
+D2/E1/E2. mDNS still fails even though short-code direct passes, so
+discovery/firewall is an independent D1 branch rather than evidence that the
+transport core is slow.
 
-Bracket raw/Wisp/raw sau đó cô lập rõ hơn: raw TCP vẫn khoảng 29,58 MiB/s theo
-mean-of-medians, còn Wisp migration ba lần rồi gửi 95,0% payload qua relay, đạt
-11,79 MiB/s average và có stall 3.529 ms. Đây là quyết định D1: tìm vì sao direct
-path rơi về relay trên cùng BSSID trước khi thử parallel stream, receive window,
-MTU hoặc congestion controller.
+A raw/Wisp/raw bracket isolated it further: raw TCP held about 29.58 MiB/s by
+mean-of-medians, while Wisp migrated three times and then sent 95.0% of the payload
+over relay, averaging 11.79 MiB/s with a 3,529 ms stall. That is the D1 decision:
+find out why the direct path falls back to relay on the same BSSID before trying
+parallel streams, receive windows, MTU or a congestion controller.
 
-**Cập nhật quan trọng — relay không phải hiện tượng all-or-nothing.** Trước đây
-D1 chỉ nhìn `relay_bytes_ratio`, tức application byte gán cho path **được chọn**.
-Schema v6 đo byte trên dây theo từng loại path và cho kết quả khác hẳn: một run
-desktop → Android mà receiver báo `path=direct` suốt, `relay_bytes_ratio` bằng 0,
-vẫn có **25,7% byte đi qua relay path**, còn selected path chỉ mang 42,6%. Nói
-cách khác đường direct và đường relay chạy **song song**, không phải cái này thay
-cái kia.
+**Important update — relay is not all-or-nothing.** D1 previously looked only at
+`relay_bytes_ratio`, i.e. application bytes attributed to the **selected** path.
+Schema v6 measures wire bytes per path kind and gives a very different answer: a
+desktop → Android run where the receiver reported `path=direct` throughout and
+`relay_bytes_ratio` was 0 still put **25.7% of its bytes over a relay path**, while
+the selected path carried only 42.6%. The direct and relay routes run **in
+parallel**; one does not replace the other.
 
-Hệ quả cho D1: câu hỏi không còn là "có lên được direct không" mà là "bao nhiêu
-phần trăm thực sự đi direct". Dùng `wire_relay_bytes_ratio` làm chỉ số, không
-dùng `relay_bytes_ratio` — chỉ số cũ báo 0% cho đúng run có 25,7% relay.
+Consequence for D1: the question is no longer "did it reach direct" but "what
+fraction actually went direct". Use `wire_relay_bytes_ratio` as the metric, not
+`relay_bytes_ratio` — the old metric reported 0% for exactly the run that was 25.7%
+relay.
 
 ### D2. Parallel child/stream experiment
 
-Đưa thí nghiệm này lên trước AOA và QUIC tuning tổng quát vì upstream issue #4286
-đã chỉ ra rủi ro single-stream throughput.
+This comes before AOA and general QUIC tuning because upstream issue #4286 already
+points at a single-stream throughput risk.
 
-**Tiền đề đã đổi:** đo được 3–8 path gửi byte đồng thời, nên ở tầng path đã có
-song song sẵn, không chủ ý. Trước khi thêm song song ở tầng stream/child, phải
-biết song song hiện có đang giúp hay đang hại: nhiều path với RTT/loss khác nhau
-gây reordering, và ở tầng BAO thì reordering thành head-of-line blocking — đúng
-dạng "transport-active delivery gap" đang săn. Thí nghiệm rẻ nhất là giới hạn số
-path và so CV/delivery gap/`wire_relay_bytes_ratio`, chạy trước mọi thay đổi
-protocol.
+**The premise has changed:** 3-8 paths were measured sending bytes concurrently, so
+parallelism already exists at the path layer, unintentionally. Before adding
+parallelism at the stream or child layer, it must be known whether the existing
+parallelism helps or hurts: several paths with differing RTT and loss cause
+reordering, and at the BAO layer reordering becomes head-of-line blocking — exactly
+the "transport-active delivery gap" shape being hunted. The cheapest experiment is
+to limit the number of paths and compare CV, delivery gaps and
+`wire_relay_bytes_ratio`, run before any protocol change.
 
-- Với nhiều file nhỏ: A/B concurrency 1/2/4/8, có bounded queue và giới hạn memory.
-- Với một file lớn: spike riêng 1-vs-2/4 stream chỉ trên benchmark branch để kiểm
-  chứng single-stream ceiling; chưa thay protocol production trước khi có win rõ.
-- Đánh giá files/s, throughput, CPU, memory, fairness, cancel/resume và hash verify.
-- Khi có nhiều stream, mới đánh giá lại connection-level `send_window`; với một
-  stream, `MAX_STREAM_DATA` là ràng buộc chặt hơn và lý do “8× để serve không nghẽn”
-  chưa đủ cơ sở.
+**The experiment cannot be run at iroh 0.97, and that is now measured rather than
+assumed.** Two levers were tried and both fail:
 
-### D3. Sender prepare và mobile provider
+1. *Transport config.* `max_concurrent_multipath_paths` and
+   `set_max_remote_nat_traversal_addresses` reject any value below their
+   recommended floors (13 and 12), logging a warning and keeping the default
+   (`src/endpoint/quic.rs:467`, `:530`). The count can be raised, never lowered,
+   and multipath cannot be turned off.
+2. *Narrowing the dial.* `WISP_BENCH_SINGLE_PATH` offers a single direct address
+   and no relay at the blob dial. Measured on loopback it took `path_count` from
+   1/3/4 down to 1/3 — a narrower start, not control. The reason is in
+   `src/socket/remote_map/remote_state.rs`: iroh tracks addresses per *remote*
+   rather than per dial, and once a direct path comes up it deliberately reopens
+   any relay addresses it holds ("we may have raced this with a relay address")
+   and then triggers hole punching for more.
 
-- Đưa walk/metadata blocking I/O ra blocking pool nếu profile xác nhận chặn runtime.
-- Import/hash với bounded concurrency, bắt đầu 2–4 mobile và 4–8 desktop.
-- Profile SAF read/copy trên Android và provider access trên iOS trước khi tăng
+Point 2 also explains the 25.7% relay share in a direct transfer: keeping the
+relay path alive alongside direct is intentional iroh behaviour, not a failure to
+upgrade the path.
+
+The one lever left at this version is building a benchmark endpoint at
+`RelayMode::Disabled`, which removes relay paths at the source instead of asking
+iroh not to reopen them. Combined with `WISP_BENCH_SINGLE_PATH` that should give a
+direct-only run to compare against. Otherwise this question waits for E4, where a
+newer iroh may expose the knob.
+
+Until then the multipath hypothesis can only be tested observationally: correlate
+per-sample `active_path_count` and `relay_path_udp_bytes_delta` against app
+throughput and delivery gaps across many runs. That is weaker evidence than an
+A/B and must be labelled as such.
+
+- For many small files: A/B concurrency 1/2/4/8 with a bounded queue and a memory
+  limit.
+- For one large file: a separate 1-vs-2/4 stream spike, on a benchmark branch
+  only, to test the single-stream ceiling; do not change the production protocol
+  before there is a clear win.
+- Evaluate files/s, throughput, CPU, memory, fairness, cancel/resume and hash
+  verification.
+- Only re-evaluate the connection-level `send_window` once there are several
+  streams; with one stream `MAX_STREAM_DATA` is the tighter constraint and the "8x
+  so serving does not bottleneck" reasoning has no basis.
+
+### D3. Sender prepare and the mobile provider
+
+- Move walk/metadata blocking I/O to the blocking pool if a profile confirms it
+  blocks the runtime.
+- Import and hash with bounded concurrency, starting at 2-4 on mobile and 4-8 on
+  desktop.
+- Profile SAF read/copy on Android and provider access on iOS before raising
   network concurrency.
-- Duy trì `TryReference` và consistency của source trong thời gian serve.
+- Keep `TryReference` and source consistency for the duration of serving.
 
-Với file Android 64 MiB hiện tại, SAF copy 71–106 ms tương đương khoảng
-604–901 MiB/s và prepare tổng khoảng 131–148 ms, nhỏ hơn rất nhiều so với
-46–60 giây network fetch. Không ưu tiên tối ưu SAF cho large-file path này; chỉ
-mở lại D3 khi workload nhiều file nhỏ, provider khác hoặc iOS cho kết quả khác.
+For the current 64 MiB Android file, a SAF copy of 71-106 ms is roughly
+604-901 MiB/s and total prepare is about 131-148 ms, far below the 46-60 seconds of
+network fetch. SAF optimization is not a priority for this large-file path; reopen
+D3 only when a many-small-files workload, a different provider, or iOS gives a
+different result.
 
-### D4. Finalize/export
+### D4. Finalize and export
 
-- Tối ưu chỉ khi time-to-file-ready hoặc export baseline cho thấy nghẽn.
-- Giữ atomic record và conflict/path validation.
-- Tách protocol-completed khỏi user-visible file-ready trong telemetry/UI.
+- Optimize only when time-to-file-ready or an export baseline shows a bottleneck.
+- Keep atomic records and conflict/path validation.
+- Separate protocol-completed from user-visible file-ready in telemetry and UI.
 
-### D5. AOA copy/GC
+### D5. AOA copy and GC
 
-Chỉ thực hiện khi USB/GC profile xác nhận:
+Only once a USB/GC profile confirms it:
 
-- Reusable batch buffer thay `toByteArray`/`copyOf`.
-- Double buffer hoặc bounded ownership pool.
-- Ring/compacting reassembler thay `buffer + chunk`/`copyOfRange`.
-- A/B 16/32/64 KiB theo controller; không tăng đồng loạt.
-- Không retry partial write bằng cả batch và luôn giữ bounded memory.
-- Duy trì `7900 + IPv4/UDP overhead <= TUN MTU 8000`.
+- A reusable batch buffer instead of `toByteArray`/`copyOf`.
+- Double buffering or a bounded ownership pool.
+- A ring/compacting reassembler instead of `buffer + chunk`/`copyOfRange`.
+- A/B 16/32/64 KiB per controller; do not raise it everywhere at once.
+- Never retry a partial write with the whole batch, and always keep memory
+  bounded.
+- Maintain `7900 + IPv4/UDP overhead <= TUN MTU 8000`.
 
-### D6. UI heartbeat, không che stall thật
+### D6. UI heartbeat, without hiding real stalls
 
-Coalescer chỉ đặt trần 10 Hz, không tạo update khi transfer đứng. Nếu UI giữ tốc độ
-cũ hoặc giật:
+The coalescer only sets a 10 Hz ceiling; it produces no update when the transfer
+stops. If the UI holds a stale rate or stutters:
 
-- Consumer/UI dùng heartbeat trên latest byte counter để speed/ETA giảm về 0 khi
-  không có byte mới.
-- Heartbeat không ghi record hoặc gửi thêm progress frame bulk.
-- Vẫn hiển thị/ghi nhận stall thật; không dùng smoothing để che pipeline pause.
+- The consumer/UI uses a heartbeat over the latest byte counter so speed and ETA
+  decay to 0 when no new bytes arrive.
+- The heartbeat writes no record and sends no additional bulk progress frame.
+- Real stalls are still displayed and recorded; never use smoothing to hide a
+  pipeline pause.
 
-## 9. Phase E — QUIC tuning chỉ khi có bằng chứng
+## 9. Phase E — QUIC tuning only with evidence
 
 ### E1. Window
 
-Cấu hình hiện tại:
+Current configuration:
 
 - Android stream receive window: 8 MiB.
 - Desktop: 16 MiB.
-- Connection send window: 8 lần stream window.
+- Connection send window: 8x the stream window.
 
-Các con số phải đọc theo endpoint: trong run Android **sender** → desktop receiver,
-8 MiB là local receive window không chi phối bulk; receiver desktop advertise
-16 MiB mới là `MAX_STREAM_DATA` có nghĩa. `send_window` là memory cap phía gửi khi
-peer cấp nhiều flow-control credit, không phải bằng chứng rằng từng ấy byte đang nằm
-trên Wi-Fi.
+These numbers must be read per endpoint: in an Android **sender** → desktop
+receiver run, the 8 MiB is a local receive window that does not govern the bulk;
+the desktop receiver advertising 16 MiB is the `MAX_STREAM_DATA` that matters.
+`send_window` is a sender-side memory cap for when the peer grants a lot of
+flow-control credit, not evidence that that many bytes are on the Wi-Fi.
 
-Với LAN/AOA RTT khoảng 2–5 ms, 8 MiB cho flow-control ceiling lý thuyết khoảng
-1,6–4 GiB/s. Xem window là **đã loại trừ theo toán học** trên các path này trừ khi
-telemetry chỉ ra cấu hình thực khác hoặc BDP ratio mâu thuẫn; không tốn ma trận
-8/16/32 MiB cho LAN/AOA.
+At LAN/AOA RTTs of about 2-5 ms, 8 MiB gives a theoretical flow-control ceiling of
+about 1.6-4 GiB/s. Treat the window as **mathematically ruled out** on those paths
+unless telemetry shows a different actual configuration or the BDP ratio
+contradicts it; do not spend an 8/16/32 MiB matrix on LAN/AOA.
 
-Relay không được so với mục tiêu ảo `window / RTT` nếu relay server/rate limit thấp
-hơn. Chỉ thử 16/32 MiB trên Android khi đồng thời:
+Relay must not be compared against the phantom `window / RTT` target if the relay
+server or its rate limit is lower. Only try 16/32 MiB on Android when all of the
+following hold:
 
-- `bdp_window_ratio` thường xuyên gần 1;
-- raw QUIC/relay baseline còn headroom;
-- sender/provider không CPU/disk-bound;
-- memory budget cho window lớn hơn đã đo.
+- `bdp_window_ratio` is regularly near 1;
+- the raw QUIC/relay baseline still has headroom;
+- the sender/provider is not CPU- or disk-bound;
+- the memory budget for the larger window has been measured.
 
-**E1b — giảm window/in-flight cap khi RTT inflation cao:** run direct hiện có RTT
-provider p50 khoảng 1,67 giây, p90 4,16 giây và cwnd p50 khoảng 4,87 MB trên link chỉ
-1,1–1,6 MiB/s. Đây là giả thuyết queue/bufferbloat, chưa phải kết luận nguyên nhân vì
-raw TCP mới cũng giật. Sau khi raw baseline ổn định, A/B receiver window 4/8/16 MiB
-(và send-memory cap tương ứng nếu cần) theo randomized order. Chỉ nhận cấu hình thấp
-hơn khi giảm RTT inflation/loss/stall mà không làm giảm utilization/average quá ngưỡng.
+**E1b — reduce the window / in-flight cap when RTT inflation is high:** the current
+direct runs show provider RTT p50 around 1.67 s, p90 4.16 s and cwnd p50 around
+4.87 MB on a link doing only 1.1-1.6 MiB/s. This is a queue/bufferbloat
+hypothesis, not yet a cause, because the fresh raw TCP runs also stutter. Once the
+raw baseline is stable, A/B receiver windows of 4/8/16 MiB (and the matching
+send-memory cap if needed) in randomized order. Accept a lower configuration only
+when it reduces RTT inflation, loss and stalls without dropping utilization or
+average throughput past the threshold.
 
 ### E2. Congestion control
 
-- Giữ CUBIC làm mặc định cho đến khi có provider-side cwnd/loss.
-- A/B CUBIC/BBR trên cùng iroh/noq version, cùng impairment và randomized order.
-- Quyết định bằng utilization, p10/p50, CV, stall và loss recovery; không chỉ average.
-- Không tự chọn controller chỉ từ nhãn direct/relay nếu chưa có dữ liệu thiết bị/path.
+- Keep CUBIC as the default until there are provider-side cwnd and loss figures.
+- A/B CUBIC and BBR on the same iroh/noq version, the same impairment and in
+  randomized order.
+- Decide on utilization, p10/p50, CV, stalls and loss recovery, not on average
+  alone.
+- Do not auto-select a controller from the direct/relay label alone without
+  per-device and per-path data.
 
-Provider-side evidence hiện đã có trên Android sender: một run direct 64 MiB ghi
-4.813 lost packet, khoảng 6,99 MB lost bytes, 71 congestion event và RTT cuối hơn
-3 giây. Điều này đủ để ưu tiên phân loại recovery và E1b sau khi có raw bracket,
-nhưng chưa đủ để đổi mặc định: chạy randomized CUBIC/BBR trong cùng Wi-Fi stratum,
-ít nhất 5 measured run mỗi cell, và loại batch khi baseline before/after lệch >10%.
-BBR từng được bật ở commit `d386240` rồi revert ở `05c9e4d` do stutter release
-phone-to-phone; dữ liệu cũ chỉ định tính. Nếu retest, dùng benchmark-only override,
-không đổi production default, và yêu cầu thắng cả p10/CV/delivery-gap lẫn average.
+Provider-side evidence now exists on the Android sender: one 64 MiB direct run
+recorded 4,813 lost packets, about 6.99 MB of lost bytes, 71 congestion events and
+a final RTT over 3 seconds. That is enough to prioritize recovery classification
+and E1b once the raw bracket exists, but not enough to change a default: run
+randomized CUBIC/BBR within one Wi-Fi stratum, at least 5 measured runs per cell,
+and discard a batch when the before/after baseline differs by more than 10%. BBR
+was enabled in commit `d386240` and reverted in `05c9e4d` because of stutter on
+release phone-to-phone runs; that older data is qualitative only. Any retest must
+use a benchmark-only override, must not change the production default, and must win
+on p10, CV and delivery gaps as well as average.
 
 ### E3. MTU
 
-- LAN giữ PMTUD mặc định.
-- AOA chỉ tăng/tinh chỉnh sau khi MTU sample, probe loss và USB profile cho thấy lợi
-  ích; kiểm tra fragmentation và controller-specific regression.
+- Keep default PMTUD on LAN.
+- Only raise or tune it for AOA after MTU samples, probe loss and a USB profile
+  show a benefit; check for fragmentation and controller-specific regressions.
 
-### E4. Nâng iroh
+### E4. Upgrading iroh
 
-- Spike riêng cho iroh/iroh-blobs tương thích mới hơn.
-- Chạy lại baseline và benchmark do noq/noq-proto có thể đổi hành vi CC/multipath.
-- Không trộn dependency upgrade với AOA rewrite hoặc parallel-stream protocol change.
+- Run a separate spike for a newer compatible iroh/iroh-blobs.
+- Rerun baselines and benchmarks, since noq/noq-proto may change CC and multipath
+  behaviour.
+- Do not mix a dependency upgrade with an AOA rewrite or a parallel-stream
+  protocol change.
 
-## 10. Chỉ số và tiêu chí nghiệm thu
+## 10. Metrics and acceptance criteria
 
-Mỗi report phải có cả tốc độ tuyệt đối lẫn độ ổn định:
+Every report must carry both absolute speed and stability:
 
-- Link/transport utilization.
-- p10, p50, p90 throughput trên cửa sổ 1 giây; không ghi “median” và “p50” thành
-  hai metric khác nhau.
-- Coefficient of variation và low-speed episodes dưới 10% p50.
-- Mid-transfer stall count/total/longest, tách warm-up/finalize.
+- Link and transport utilization.
+- p10, p50, p90 throughput over 1-second windows; do not record "median" and "p50"
+  as two separate metrics.
+- Coefficient of variation, and low-speed episodes below 10% of p50.
+- Mid-transfer stall count/total/longest, with warm-up and finalize separated.
 - Time-to-first-byte, time-to-direct, direct/relay byte ratio.
-- Prepare, transfer, finalize và file-ready duration.
-- CPU, RSS, thermal state; sender và receiver riêng.
-- Nhiều file nhỏ: files/s và completion latency.
+- Prepare, transfer, finalize and file-ready durations.
+- CPU, RSS and thermal state, separately for sender and receiver.
+- For many small files: files/s and completion latency.
 
-Ngưỡng ban đầu:
+Initial thresholds:
 
-- p10 ít nhất 70% p50; 80% là target sau khi loại warm-up và phase boundary.
-- Không có mid-transfer stall trên 500 ms ở LAN/AOA ổn định.
-- Không có memory tăng tuyến tính trong soak.
-- Không regression resume, cancel, reconnect, hash verification hoặc path safety.
-- Throughput chậm nhưng đều không được coi là đạt nếu utilization thấp; mọi run
-  phải báo baseline ratio.
+- p10 at least 70% of p50; 80% is the target once warm-up and phase boundaries are
+  excluded.
+- No mid-transfer stall over 500 ms on a stable LAN/AOA link.
+- No linear memory growth during a soak.
+- No regression in resume, cancel, reconnect, hash verification or path safety.
+- Slow-but-steady throughput does not pass if utilization is low; every run must
+  report its baseline ratio.
 
 ## 11. Decision gates
 
-### Gate 1 — Telemetry đáng tin
+### Gate 1 — Trustworthy telemetry
 
-- Đúng semantics receiver/provider.
-- Window/config được log.
-- Warm-up không tính stall; `None` không giả complete.
-- Benchmark loop không cancel `stream.next()` theo tick.
-- Có phase timing, path byte ratio và parser test.
-- Progress timestamp không bị sampler bias; failed-terminal stall không biến mất.
-- Active gap được tách loss-recovery bằng provider stats; correlation token không
-  phải session ID đổi cơ số; config source/endpoint semantics không gây hiểu nhầm.
-- Số byte mạng đến từ counter phạm vi connection, không phải counter theo path;
-  mọi report có `path_counter_coverage` để nói rõ counter theo path phủ được bao
-  nhiêu phần traffic.
+- Correct receiver/provider semantics.
+- Window and config are logged.
+- Warm-up is not counted as a stall; `None` does not fake completion.
+- The benchmark loop does not cancel `stream.next()` on a tick.
+- Phase timing, path byte ratios and parser tests exist.
+- Progress timestamps are free of sampler bias; a failed-terminal stall does not
+  vanish.
+- Active gaps are separated from loss recovery using provider stats; the
+  correlation token is not a base-converted session ID; config source and endpoint
+  semantics are not misleading.
+- Network byte figures come from connection-scoped counters rather than path
+  counters, and every report carries `path_counter_coverage` stating how much of
+  the traffic the path counters covered.
 
-**Nguồn sự thật: Gate 1 hiện đang mở.** Android ở cả role sender lẫn receiver đã
-xác minh emission schema v5, receiver samples, SAF/background-save phase join và
-JSON boundary với `0` malformed. Các
-blocker code của Vòng 2 đã được sửa qua `bcbde90`, `f978003`, `26b4f7c` và
-`b5820c5`. Path-migration smoke direct → relay → direct → relay đã xác nhận cờ
-discontinuity và lower-bound reporting.
+Android in both sender and receiver roles has verified schema emission, receiver
+samples, SAF/background-save phase joins and a JSON boundary with `0` malformed
+lines. The round-2 code blockers were fixed in `bcbde90`, `f978003`, `26b4f7c` and
+`b5820c5`. A direct → relay → direct → relay path-migration smoke confirmed the
+discontinuity flag and lower-bound reporting.
 
-Blocker provider counter provenance **đã đóng** (schema v6, xem §5). Nguyên nhân
-gốc là `selected_path()` trả `None` hoặc bỏ qua path không được chọn; bản sửa bổ
-sung counter phạm vi connection, `path_count` và `path_counter_coverage`. Smoke
-CLI↔CLI cho coverage 83,5% ngay trên đường direct sạch (4 path), và smoke thiết
-bị thật desktop → Pixel 4 release tái hiện đúng ca `path=unknown`/counter 0 với
-coverage 0,0% (6 path) — trong cả hai trường hợp counter connection vẫn ghi đúng
-số byte, lệch hai đầu chỉ 2.322 byte trên 128 MiB.
+The provider counter provenance blocker is **closed** (schema v6, see §5). The root
+cause was `selected_path()` returning `None` or skipping non-selected paths; the
+fix adds connection-scoped counters, `path_count` and `path_counter_coverage`. The
+CLI-to-CLI smoke showed 83.5% coverage on a clean direct link with 4 paths, and the
+real-device desktop → Pixel 4 release smoke reproduced the `path=unknown` /
+counter-0 case at 0.0% coverage with 6 paths — in both cases the connection
+counters recorded the byte totals correctly, 2,322 bytes apart across 128 MiB.
 
-Cả hai chiều đã xác minh dưới schema v6 trên release Android: desktop → Android
-(provider coverage 0,0%) và Android → desktop (provider coverage 11,1%, và
-`path_counter_discontinuity_count=1` ở receiver, tức cờ migration cũng hoạt động
-cùng lúc với coverage). Hash round-trip khớp byte-for-byte.
+Both directions are verified under schema v6 on Android release: desktop → Android
+(provider coverage 0.0%) and Android → desktop (provider coverage 11.1%, with
+`path_counter_discontinuity_count=1` on the receiver, so the migration flag works
+alongside coverage). The round-trip hash matched byte for byte.
 
-**Gate 1 đóng cho desktop và Android.** iOS được tách thành hạng mục riêng chạy
-sau, không chặn Gate 2 hay Phase C/D trên hai platform đã nghiệm thu. Khi làm
-iOS, phạm vi là: boundary file-provider, background-save đến lúc file thật sự sẵn
-sàng, và một run schema v6 hai chiều để đối chiếu với bảng ở §5. Cho tới lúc đó,
-mọi kết luận trong tài liệu này chỉ áp dụng cho desktop và Android.
+**Gate 1 is closed for desktop and Android.** iOS is tracked as a separate item to
+be done later and does not block Gate 2 or Phase C/D on the two accepted
+platforms. When iOS is picked up, the scope is: the file-provider boundary,
+background save through to the file genuinely being ready, and one bidirectional
+schema v6 run to compare against the tables in §5. Until then, every conclusion in
+this document applies to desktop and Android only.
 
-Provider-only smoke không đủ để nghiệm thu p10/p50/CV/stall.
+A provider-only smoke is not sufficient to accept p10/p50/CV/stall.
 
-### Gate 2 — Baseline và attribution hoàn tất
+### Gate 2 — Baselines and attribution complete
 
-- Có iperf3/raw QUIC/disk/hash baseline.
-- Có historical H và A/B A–E cho P0 với ít nhất 10 measured runs trên desktop.
-- Biết thay đổi nào tạo win và effect size.
+- iperf3, raw QUIC, disk and hash baselines exist.
+- Historical H and A/B builds A-E for P0 exist, with at least 10 measured runs on
+  desktop.
+- It is known which change produced a win, and its effect size.
 
-### Gate 3 — Chọn đúng nhánh tối ưu
+### Gate 3 — Choosing the right optimization branch
 
-- Relay ratio cao ⇒ D1.
-- Small-file RTT-bound/single-stream-bound ⇒ D2.
+- High relay ratio ⇒ D1.
+- Small-file RTT-bound or single-stream-bound ⇒ D2.
 - Prepare/SAF-bound ⇒ D3.
 - Export-bound ⇒ D4.
 - AOA CPU/GC-bound ⇒ D5.
-- Window/CC-bound với provider stats ⇒ Phase E.
+- Window/CC-bound with provider stats ⇒ Phase E.
 
-Không đạt gate thì không merge tuning của phase sau.
+Tuning from a later phase does not merge until its gate is met.
 
-## 12. Lệnh kiểm tra
+## 12. Check commands
 
 ```powershell
 cargo fmt --all -- --check
@@ -946,21 +1071,25 @@ python -B -m unittest tools/test_analyze_transfer_telemetry.py
 git diff --check
 ```
 
-Các test cần socket/relay/thiết bị thật chạy thành suite riêng và ghi rõ khi bị skip.
-Benchmark luôn ghi commit, release profile, device/OS, CPU governor/thermal state,
-filesystem, Wi-Fi/USB, selected path, impairment config và baseline cùng phiên.
+Tests needing a real socket, relay or device belong in a separate suite and must
+say plainly when they are skipped. Benchmarks always record the commit, release
+profile, device/OS, CPU governor and thermal state, filesystem, Wi-Fi/USB, selected
+path, impairment configuration, and the baseline from the same session.
 
-## 13. Những việc chưa làm
+## 13. What not to do yet
 
-- Không tăng window/MTU đồng loạt khi chưa có BDP/baseline.
-- Không chuyển sang BBR theo benchmark môi trường khác.
-- Không lấy receiver-local cwnd/loss để kết luận payload congestion.
-- Không dùng smoothing UI làm bằng chứng pipeline đã ổn định.
-- Không chạy ma trận mobile hàng chục giờ trước khi desktop A/B chọn ứng viên.
-- Không bỏ hash verification, atomic record hoặc path validation để đổi throughput.
-- Không gọi thay đổi “tối ưu thành công” chỉ vì test chức năng xanh.
+- Do not raise windows or MTU across the board without BDP and baseline data.
+- Do not switch to BBR based on a benchmark from a different environment.
+- Do not use receiver-local cwnd or loss to conclude anything about payload
+  congestion.
+- Do not treat UI smoothing as evidence that the pipeline is stable.
+- Do not run a tens-of-hours mobile matrix before a desktop A/B has picked
+  candidates.
+- Do not drop hash verification, atomic records or path validation for throughput.
+- Do not call a change a "successful optimization" just because functional tests
+  are green.
 
-## 14. Tài liệu tham khảo
+## 14. References
 
 - Iroh QUIC transport configuration: <https://docs.rs/iroh/latest/iroh/endpoint/struct.QuicTransportConfigBuilder.html>
 - Iroh path statistics: <https://docs.rs/iroh/latest/iroh/endpoint/struct.PathStats.html>
