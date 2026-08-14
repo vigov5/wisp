@@ -97,6 +97,9 @@ class Sample:
     direct_path_udp_bytes_delta: int = 0
     relay_path_udp_bytes_delta: int = 0
     aoa_path_udp_bytes_delta: int = 0
+    # Raw progress items the blob layer produced in this window, before the
+    # 10 Hz coalescer. Sizes what P0.1 drops; absent in pre-v7 logs.
+    progress_events_delta: int = 0
 
 
 @dataclass(frozen=True)
@@ -395,6 +398,7 @@ def _parse_sample(fields: dict[str, object]) -> tuple[int, Sample] | None:
             fields, "relay_path_udp_bytes_delta"
         ),
         aoa_path_udp_bytes_delta=_optional_count(fields, "aoa_path_udp_bytes_delta"),
+        progress_events_delta=_optional_count(fields, "progress_events_delta"),
     )
 
 
@@ -1222,6 +1226,7 @@ def summarize_transfer(
     max_path_count = max(
         (sample.path_count for sample in events.samples), default=0
     )
+    progress_events_total = sum(s.progress_events_delta for s in events.samples)
     wire_paths = _wire_path_attribution(events.samples)
     stream_data_blocked_rx_total = (
         summary.stream_data_blocked_rx_total
@@ -1362,6 +1367,15 @@ def summarize_transfer(
         "max_path_count": max_path_count,
         "max_active_path_count": max(
             (sample.active_path_count for sample in events.samples), default=0
+        ),
+        # Raw progress items from the blob layer, before the 10 Hz coalescer.
+        # The rate is what P0.1 stops forwarding into the transfer layer, so
+        # B2 needs it to attribute the coalescer rather than assume a rate.
+        "progress_events_total": progress_events_total,
+        "progress_events_per_sec": (
+            round(progress_events_total / (summary.elapsed_ms / 1000.0), 1)
+            if progress_events_total and summary.elapsed_ms
+            else 0.0
         ),
         # Wire bytes attributed to the kind of path that carried them, summed
         # over every path. `relay_bytes_ratio` above is application payload

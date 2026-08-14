@@ -171,6 +171,10 @@ struct PublishedProgress {
     bytes: AtomicU64,
     first_elapsed_nanos: AtomicU64,
     latest_elapsed_nanos: AtomicU64,
+    /// Every progress item the blob layer produced, counted before any
+    /// coalescing. The rate this implies is what P0.1's 10 Hz cap avoids
+    /// forwarding, so B2 cannot attribute the coalescer without it.
+    events: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -178,6 +182,7 @@ struct PublishedProgressSnapshot {
     bytes: u64,
     first_at: Instant,
     latest_at: Instant,
+    events: u64,
 }
 
 impl PublishedProgress {
@@ -187,6 +192,7 @@ impl PublishedProgress {
             bytes: AtomicU64::new(0),
             first_elapsed_nanos: AtomicU64::new(UNSET_PROGRESS_TIME_NANOS),
             latest_elapsed_nanos: AtomicU64::new(UNSET_PROGRESS_TIME_NANOS),
+            events: AtomicU64::new(0),
         }
     }
 
@@ -194,6 +200,9 @@ impl PublishedProgress {
     /// the byte position so the sampler's acquire load observes a coherent
     /// progress event without adding a lock or await to the hot path.
     fn publish(&self, now: Instant, bytes_received: u64) {
+        // Counted before the monotonicity check: a repeated or stale offset is
+        // still an item the download loop had to handle.
+        self.events.fetch_add(1, Ordering::Relaxed);
         if bytes_received <= self.bytes.load(Ordering::Relaxed) {
             return;
         }
@@ -223,6 +232,7 @@ impl PublishedProgress {
             bytes,
             first_at,
             latest_at: latest_at.max(first_at),
+            events: self.events.load(Ordering::Relaxed),
         }
     }
 
@@ -625,6 +635,10 @@ struct TelemetryRecorder {
     connection_totals: ConnectionTotals,
     path_udp_rx_bytes_total: u64,
     application_path: Option<&'static str>,
+    /// Raw progress items seen at the previous sample, so each window can
+    /// report how many the blob layer produced.
+    previous_progress_events: u64,
+    progress_events_total: u64,
 }
 
 impl TelemetryRecorder {
@@ -646,6 +660,8 @@ impl TelemetryRecorder {
             connection_totals: ConnectionTotals::default(),
             path_udp_rx_bytes_total: 0,
             application_path: None,
+            previous_progress_events: 0,
+            progress_events_total: 0,
         }
     }
 
@@ -675,6 +691,16 @@ impl TelemetryRecorder {
     fn observe_progress(&mut self, progress: PublishedProgressSnapshot) {
         self.state
             .observe_progress(progress.first_at, progress.latest_at, progress.bytes);
+        self.progress_events_total = progress.events;
+    }
+
+    /// Raw progress items since the previous sample, and remember the new base.
+    fn take_progress_events_delta(&mut self) -> u64 {
+        let delta = self
+            .progress_events_total
+            .saturating_sub(self.previous_progress_events);
+        self.previous_progress_events = self.progress_events_total;
+        delta
     }
 
     fn emit_sample(&mut self, now: Instant, connection: &ConnectionInfo, terminal_sample: bool) {
@@ -686,6 +712,7 @@ impl TelemetryRecorder {
         let all_paths = self
             .path_aggregate
             .observe(&PathObservation::capture_all(connection));
+        let progress_events = self.take_progress_events_delta();
         if let Some(counters) = network.counters() {
             self.previous_path = Some(counters);
         }
@@ -771,6 +798,7 @@ impl TelemetryRecorder {
             direct_path_udp_bytes_delta = all_paths.direct_udp_bytes,
             relay_path_udp_bytes_delta = all_paths.relay_udp_bytes,
             aoa_path_udp_bytes_delta = all_paths.aoa_udp_bytes,
+            progress_events_delta = progress_events,
             "blob transfer telemetry sample"
         );
     }
@@ -807,6 +835,7 @@ impl TelemetryRecorder {
             stream_data_blocked_tx_total = self.connection_totals.stream_data_blocked_tx,
             all_paths_udp_rx_bytes_total = self.all_paths_udp_rx_bytes_total,
             all_paths_lost_packets_total = self.all_paths_lost_packets_total,
+            progress_events_total = self.progress_events_total,
             path = network.path_kind,
             path_stats_available = network.stats_available,
             path_count = network.path_count,
@@ -1675,6 +1704,31 @@ mod tests {
         totals.accumulate(third.delta_from(second));
         assert_eq!(totals.udp_tx_bytes, 8_000);
         assert_eq!(totals.samples_without_stats, 0);
+    }
+
+    /// The event count exists to size what the 10 Hz coalescer drops, so it has
+    /// to count items the blob layer produced — including the repeated and
+    /// stale offsets that never move the byte position, since the download loop
+    /// still had to handle each one.
+    #[test]
+    fn progress_events_count_every_item_not_every_byte_advance() {
+        let start = Instant::now();
+        let progress = PublishedProgress::new(start);
+
+        progress.publish(start, 4096);
+        progress.publish(start + Duration::from_millis(1), 4096); // repeat
+        progress.publish(start + Duration::from_millis(2), 2048); // stale
+        progress.publish(start + Duration::from_millis(3), 8192);
+
+        let snapshot = progress.snapshot(start + Duration::from_millis(4));
+        assert_eq!(
+            snapshot.events, 4,
+            "every published item counts, not just the ones that advanced bytes"
+        );
+        assert_eq!(
+            snapshot.bytes, 8192,
+            "the byte position still only moves forward"
+        );
     }
 
     #[test]

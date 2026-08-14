@@ -15,6 +15,10 @@
 use std::io::Write;
 use std::time::Instant;
 
+use wisp_core::fs_plan::ConflictPolicy;
+use wisp_core::protocol::message::{ManifestItem, TransferManifest};
+use wisp_core::transfer::record::TransferRecord;
+
 /// Payload size per baseline. Large enough to swamp setup costs, small enough
 /// to stay friendly on a nearly-full disk.
 const BYTES: usize = 512 * 1024 * 1024;
@@ -82,6 +86,75 @@ fn baseline_sequential_disk_write() {
         read.len() / (1024 * 1024),
         secs,
         mib_per_sec(read.len(), secs)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Cost of one resume-record checkpoint, which is what P0.2's throttle avoids
+/// paying per progress event and what P0.3's atomic replacement adds.
+///
+/// Two shapes are timed on the same record: the shipped one (compact JSON into
+/// a `create_new` temp file, then rename within the directory) and the
+/// pre-P0.3 one (pretty JSON written straight over the destination). The
+/// difference is what atomicity costs; the absolute number times the event rate
+/// is what throttling saves.
+#[test]
+#[ignore = "baseline measurement; run explicitly under --release"]
+fn baseline_record_checkpoint_write() {
+    const ITERATIONS: u32 = 200;
+    /// A manifest big enough to be realistic for a folder transfer — record
+    /// size drives serialisation cost, so a one-file manifest would flatter it.
+    const MANIFEST_ITEMS: u32 = 200;
+
+    let dir = std::env::temp_dir().join("wisp-baseline-record");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create baseline dir");
+
+    let manifest = TransferManifest {
+        items: (0..MANIFEST_ITEMS)
+            .map(|i| ManifestItem::File {
+                path: format!("some/nested/directory/file-{i:04}.bin"),
+                size: 1024 * 1024,
+            })
+            .collect(),
+    };
+    let mut record = TransferRecord::new(
+        [7u8; 32].into(),
+        dir.join("out"),
+        ConflictPolicy::Rename,
+        manifest,
+    );
+
+    let start = Instant::now();
+    for i in 0..ITERATIONS {
+        record.bytes_received = u64::from(i) * 1024 * 1024;
+        record.save(&dir).expect("atomic save");
+    }
+    let atomic_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(ITERATIONS);
+
+    let direct_path = dir.join("record-direct.json");
+    let start = Instant::now();
+    for i in 0..ITERATIONS {
+        record.bytes_received = u64::from(i) * 1024 * 1024;
+        let content = serde_json::to_vec_pretty(&record).expect("serialize");
+        let mut file = std::fs::File::create(&direct_path).expect("create");
+        file.write_all(&content).expect("write");
+    }
+    let direct_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(ITERATIONS);
+
+    let bytes = std::fs::metadata(dir.join("record.json"))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    println!(
+        "record checkpoint ({MANIFEST_ITEMS} items, {bytes} bytes compact): \
+         atomic {atomic_us:.0} us/save, direct pretty {direct_us:.0} us/save"
+    );
+    println!(
+        "  at 1 checkpoint/s a transfer pays {:.1} ms/min; \
+         per progress event at 640 events/s it would be {:.1} ms/s",
+        atomic_us * 60.0 / 1000.0,
+        atomic_us * 640.0 / 1000.0
     );
 
     let _ = std::fs::remove_dir_all(&dir);

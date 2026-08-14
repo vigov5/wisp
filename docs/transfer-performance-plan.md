@@ -621,6 +621,53 @@ Required output: an attribution table for the coalescer, the checkpoint and z-vs
 If a change shows no measurable win, keep or drop it on correctness and complexity
 grounds rather than continuing to credit it with performance.
 
+#### Measured: unit cost times event rate
+
+The build matrix above has not been run. What has been measured is the two
+quantities it multiplies, which is enough to attribute P0.1 against P0.2 without
+double-crediting either.
+
+**Event rate.** The receiver now counts every progress item the blob layer
+produces, before coalescing (`progress_events_delta` per window,
+`progress_events_total` in the summary). On a 273 MB phone-to-desktop Wi-Fi
+transfer: **35,009 items in 21.5 s = 1,625 events/s**, roughly one item per
+9 KB of payload.
+
+**Checkpoint cost.** `baseline_record_checkpoint_write`, release, 200-item
+manifest (15.6 KB compact record), desktop NVMe:
+
+| write shape | cost per save |
+| --- | --- |
+| shipped: compact JSON, `create_new` temp, same-dir rename | 3.4 ms |
+| pre-P0.3: pretty JSON written over the destination | 2.8 ms |
+
+Multiplying through, per second of transfer:
+
+| stage | updates/s | record-write cost | share of wall time |
+| --- | ---: | ---: | ---: |
+| raw blob progress | 1,625 | 5,530 ms/s | impossible |
+| after P0.1 (10 Hz coalescer) | 10 | 34 ms/s | 3.4% |
+| after P0.2 (1/s or 64 MiB) | ~1 | 3.4 ms/s | 0.34% |
+
+So the attribution is:
+
+- **P0.1 is the change that mattered.** It removes 99.4% of downstream updates.
+  At the measured rate a per-update checkpoint would need 5.5 s of record writing
+  per second of transfer — the pre-P0.1 pipeline could not have kept up at all.
+- **P0.2 is real but second-order given P0.1**: it takes 3.4% of wall time down
+  to 0.34%. Worth keeping, and worth more on mobile storage than this desktop
+  figure suggests, but it must not be credited with the coalescer's win.
+- **P0.3 is effectively free.** Atomic replacement adds ~0.7 ms per save, which
+  at one save per second is 0.07% of wall time. There is no performance argument
+  for dropping it, which was the point of measuring it separately.
+
+Caveats, so this is not read as more than it is: unit-cost times rate is not the
+end-to-end A/B the table above specifies, and it cannot capture scheduler effects
+(a blocking write on a Tokio worker costs more than its own duration). The
+figures are desktop Windows on NVMe with a 200-item manifest; a single-file
+record is smaller and cheaper, and Android storage is slower. P0.4 (`z` vs `3`)
+is still unmeasured and needs the aarch64 comparison, not this.
+
 ## 7. Phase C — Reproducible benchmarks
 
 ### C1. Desktop A/B first

@@ -808,6 +808,55 @@ class TelemetryAnalysisTests(unittest.TestCase):
         # path was selected at all.
         self.assertEqual(provider["max_path_count"], 4)
 
+    def test_progress_event_rate_sizes_what_the_coalescer_drops(self):
+        # P0.1 caps forwarding at 10 Hz. Attribution needs the rate *before*
+        # that cap, so the raw item count has to survive into the report.
+        first = json.loads(sample(40, 1_000, 1_000, sample_ms=1_000))
+        first["fields"].update(progress_events_delta=640)
+        second = json.loads(sample(40, 2_000, 2_000, sample_ms=1_000))
+        second["fields"].update(progress_events_delta=660)
+        done = json.loads(summary(40))
+        done["fields"].update(elapsed_ms=2_000)
+        run = telemetry.build_report(
+            telemetry.parse_stream(
+                io.StringIO(
+                    "\n".join(
+                        [
+                            config(40),
+                            json.dumps(first),
+                            json.dumps(second),
+                            json.dumps(done),
+                        ]
+                    )
+                    + "\n"
+                )
+            )
+        )["runs"][0]
+
+        self.assertEqual(run["progress_events_total"], 1_300)
+        self.assertAlmostEqual(run["progress_events_per_sec"], 650.0)
+
+    def test_pre_v7_logs_report_no_progress_event_rate(self):
+        # An absent field means unmeasured, and that must read as zero rather
+        # than as "the blob layer produced no progress items at all".
+        run = telemetry.build_report(
+            telemetry.parse_stream(
+                io.StringIO(
+                    "\n".join(
+                        [
+                            config(41),
+                            sample(41, 1_000, 1_000, sample_ms=1_000),
+                            summary(41),
+                        ]
+                    )
+                    + "\n"
+                )
+            )
+        )["runs"][0]
+
+        self.assertEqual(run["progress_events_total"], 0)
+        self.assertEqual(run["progress_events_per_sec"], 0.0)
+
     def test_stream_data_blocked_settles_the_receive_window_question(self):
         blocked_sample = json.loads(
             sample(32, 1_000, 1_000, sample_ms=1_000)
