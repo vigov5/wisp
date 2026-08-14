@@ -6,6 +6,17 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+/// Enables the anonymous transfer benchmark target for this process.
+///
+/// The Flutter host calls this immediately after Rust initialization using its
+/// compile-time benchmark flag. Other debug targets remain on the normal log
+/// filter, and the default remains disabled so production transfers do not pay
+/// the telemetry sampler cost.
+void setTransferTelemetryEnabled({required bool enabled}) => RustLib
+    .instance
+    .api
+    .crateApiSimpleSetTransferTelemetryEnabled(enabled: enabled);
+
 String greet({required String name}) =>
     RustLib.instance.api.crateApiSimpleGreet(name: name);
 

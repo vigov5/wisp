@@ -16,6 +16,8 @@ import 'features/transfers/feature.dart';
 import 'features/settings/settings_providers.dart';
 import 'features/update/application/update_providers.dart';
 import 'platform/desktop_integration.dart';
+import 'platform/transfer_telemetry.dart';
+import 'src/rust/api/simple.dart' as rust_simple;
 import 'src/rust/frb_generated.dart';
 
 // [args] carries the process launch arguments. On Windows the native runner
@@ -53,6 +55,7 @@ Future<void> main(List<String> args) async {
     await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
   }
   await RustLib.init();
+  rust_simple.setTransferTelemetryEnabled(enabled: transferTelemetryEnabled);
 
   const initialSize = Size(440, 840);
   final bootstrap = await loadAppBootstrap();
