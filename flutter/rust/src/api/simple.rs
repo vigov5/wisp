@@ -6,6 +6,103 @@ type FilterReloadHandle =
 static BASE_LOG_FILTER: OnceLock<String> = OnceLock::new();
 static LOG_FILTER_RELOAD: OnceLock<FilterReloadHandle> = OnceLock::new();
 
+#[cfg(target_os = "android")]
+mod android_telemetry {
+    use std::ffi::{c_char, c_int, CString};
+
+    use serde_json::{Map, Number, Value};
+    use tracing::{
+        field::{Field, Visit},
+        Event, Subscriber,
+    };
+    use tracing_subscriber::{layer::Context, Layer};
+
+    const ANDROID_LOG_DEBUG: c_int = 3;
+    const LOGCAT_TAG: &[u8] = b"wisp\0";
+
+    #[link(name = "log")]
+    unsafe extern "C" {
+        fn __android_log_write(priority: c_int, tag: *const c_char, text: *const c_char) -> c_int;
+    }
+
+    #[derive(Default)]
+    struct JsonFields(Map<String, Value>);
+
+    impl JsonFields {
+        fn insert(&mut self, field: &Field, value: Value) {
+            self.0.insert(field.name().to_owned(), value);
+        }
+    }
+
+    impl Visit for JsonFields {
+        fn record_f64(&mut self, field: &Field, value: f64) {
+            if let Some(value) = Number::from_f64(value) {
+                self.insert(field, Value::Number(value));
+            }
+        }
+
+        fn record_i64(&mut self, field: &Field, value: i64) {
+            self.insert(field, Value::Number(value.into()));
+        }
+
+        fn record_u64(&mut self, field: &Field, value: u64) {
+            self.insert(field, Value::Number(value.into()));
+        }
+
+        fn record_bool(&mut self, field: &Field, value: bool) {
+            self.insert(field, Value::Bool(value));
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.insert(field, Value::String(value.to_owned()));
+        }
+
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.insert(field, Value::String(format!("{value:?}")));
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Default)]
+    pub(super) struct TelemetryLayer;
+
+    impl<S> Layer<S> for TelemetryLayer
+    where
+        S: Subscriber,
+    {
+        fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
+            let mut fields = JsonFields::default();
+            event.record(&mut fields);
+
+            let mut entry = Map::new();
+            entry.insert(
+                "level".to_owned(),
+                Value::String(event.metadata().level().as_str().to_owned()),
+            );
+            entry.insert("fields".to_owned(), Value::Object(fields.0));
+            entry.insert(
+                "target".to_owned(),
+                Value::String(event.metadata().target().to_owned()),
+            );
+            let Ok(payload) = serde_json::to_vec(&Value::Object(entry)) else {
+                return;
+            };
+            let Ok(message) = CString::new(payload) else {
+                return;
+            };
+
+            // Telemetry fields are bounded and exclude span context, so each
+            // anonymous JSON event remains below logcat's line limit.
+            unsafe {
+                __android_log_write(
+                    ANDROID_LOG_DEBUG,
+                    LOGCAT_TAG.as_ptr().cast(),
+                    message.as_ptr(),
+                );
+            };
+        }
+    }
+}
+
 fn log_filter(base: &str, transfer_telemetry_enabled: bool) -> tracing_subscriber::EnvFilter {
     let filter = tracing_subscriber::EnvFilter::new(base);
     if transfer_telemetry_enabled {
@@ -30,9 +127,22 @@ pub fn init_app() {
     #[cfg(target_os = "android")]
     {
         use tracing_subscriber::prelude::*;
+        let regular_log_filter = tracing_subscriber::filter::filter_fn(|metadata| {
+            metadata.target() != TRANSFER_TELEMETRY_TARGET
+        });
+        let telemetry_target_filter = tracing_subscriber::filter::filter_fn(|metadata| {
+            metadata.target() == TRANSFER_TELEMETRY_TARGET
+        });
+        let telemetry_layer =
+            android_telemetry::TelemetryLayer.with_filter(telemetry_target_filter);
         let initialized = tracing_subscriber::registry()
             .with(filter)
-            .with(tracing_android::layer("wisp").unwrap())
+            .with(
+                tracing_android::layer("wisp")
+                    .unwrap()
+                    .with_filter(regular_log_filter),
+            )
+            .with(telemetry_layer)
             .try_init()
             .is_ok();
         if initialized {

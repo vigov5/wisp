@@ -5056,6 +5056,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-stream",
+ "tracing",
  "tracing-android",
  "tracing-subscriber",
  "wisp-app",
