@@ -620,12 +620,16 @@ with B2 finding P0.2 and P0.3 already down at 0.34% and 0.07% of wall time.
 
 Two things the comparison does surface:
 
-- **The app has a stall mode the raw transport does not.** One app run in nine
-  showed two `transport_idle` stalls — no UDP bytes at all, so the sender went
-  quiet rather than the receiver blocking on verification. The baseline sends
-  from memory and had zero idle windows in the four runs measured with windows.
-  The gap is small (one run in nine) but it is real and it points at the sending
-  side above the transport, i.e. D3, not at the receiver.
+- **The app's one stall was slow connection setup, not a stall.** One app run in
+  nine showed two `transport_idle` stalls. Reading that run window by window
+  places both at the *start* of the fetch phase: six seconds carrying only
+  2.4 KB probe-sized samples, then `path_count` goes 3 to 5 and the transfer
+  immediately runs at full rate to the end. Every other run reached 1 MB/s
+  within 0.3 s, on both relay arms (17 runs). So this is the blob connection
+  taking six seconds to find a usable path, not the sender going quiet
+  mid-transfer — **a D1 question, not D3.** With one occurrence there is no
+  basis for saying whether the relay would have covered it; the run that hit it
+  had the relay disabled.
 - **One run in nine failed after transferring at full speed**, with
   `running receiver session: reading message length: connection lost` during the
   final control exchange. Throughput was 25.4 MiB/s right up to the end. That is
@@ -1056,6 +1060,23 @@ network fetch. SAF optimization is not a priority for this large-file path; reop
 D3 only when a many-small-files workload, a different provider, or iOS gives a
 different result.
 
+**Measured: the sending side's storage read costs nothing.** `quic_baseline
+source --from-file` adds a real file read to the baseline's send loop, so the
+difference against the memory source is the sending read in isolation. Five runs
+of each from the phone over Wi-Fi:
+
+| source | median | range | idle windows |
+| --- | --- | --- | --- |
+| memory | 24.4 MiB/s | 20.6-26.6 | 0 of 4 measured |
+| file on `/sdcard` | 25.7 MiB/s | 23.0-28.1 | 0 of 5 |
+
+The file source is not slower — the difference is inside run-to-run Wi-Fi
+variation — and it never produces an idle window. At 25 MiB/s the read is two
+orders of magnitude below the phone's ~1,100 MiB/s sequential storage read, so
+this is the expected result rather than a surprising one. It does close the
+question the `transport_idle` stall opened: **storage on the sending side is not
+what stalls a transfer**, which is what sent that investigation to D1 instead.
+
 ### D4. Finalize and export
 
 - Optimize only when time-to-file-ready or an export baseline shows a bottleneck.
@@ -1260,9 +1281,12 @@ rather than one:
   `transport_utilization` is 94%; the transport is 88% of raw TCP. D2's
   stream-count experiments and D4's export work have at most 6% to win here.
 - **Relay striping is the one large effect**: 16% median of wire bytes, and
-  removing it doubles p10. So **D1 and the upstream iroh issue come first**, and
-  the D3 sending-side question comes second on the strength of the
-  `transport_idle` stalls the baseline does not reproduce.
+  removing it doubles p10. So **D1 and the upstream iroh issue come first**.
+
+D3 is not second: the sending side's storage read was measured against the
+baseline and costs nothing (see D3), and the one stall that looked like a sender
+problem turned out to be six seconds of blob-connection path setup, which is
+also D1. Nothing currently routes to D3 on this path.
 
 ### Gate 3 — Choosing the right optimization branch
 

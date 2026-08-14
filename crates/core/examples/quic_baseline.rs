@@ -15,7 +15,8 @@
 //! cargo run --release -p wisp-core --example quic_baseline -- sink
 //! ```
 //!
-//! Source (sends `--mib` megabytes over one uni stream):
+//! Source (sends `--mib` megabytes over one uni stream; `--from-file PATH`
+//! reads from storage instead of memory, adding the sending side's read):
 //!
 //! ```text
 //! cargo run --release -p wisp-core --example quic_baseline -- source <ticket> --mib 256
@@ -32,6 +33,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use iroh::endpoint::{QuicTransportConfig, VarInt};
 use iroh::{Endpoint, RelayMode, endpoint::presets};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use wisp_core::util::{decode_ticket, make_ticket_offline};
 
 const ALPN: &[u8] = b"wisp/quic-baseline/0";
@@ -142,16 +144,44 @@ async fn run_sink() -> Result<()> {
     Ok(())
 }
 
-async fn run_source(ticket: &str, mib: usize) -> Result<()> {
+async fn run_source(ticket: &str, mib: usize, from_file: Option<&str>) -> Result<()> {
     let addr = decode_ticket(ticket).context("decode ticket")?;
     let endpoint = bind().await?;
     let connection = endpoint.connect(addr, ALPN).await.context("connect")?;
     let mut stream = connection.open_uni().await.context("open uni stream")?;
 
-    let chunk = vec![0x5au8; CHUNK];
     let start = Instant::now();
-    for _ in 0..mib {
-        stream.write_all(&chunk).await.context("write")?;
+    match from_file {
+        // Memory source: the transport is the only thing that can go idle.
+        None => {
+            let chunk = vec![0x5au8; CHUNK];
+            for _ in 0..mib {
+                stream.write_all(&chunk).await.context("write")?;
+            }
+        }
+        // File source: adds the sending side's storage read. Comparing the two
+        // is what separates "the phone's storage stalls the send" from "the
+        // blob provider or the app runtime does" — the app shows occasional
+        // `transport_idle` stalls that the memory source never reproduces.
+        Some(path) => {
+            let mut file = tokio::fs::File::open(path)
+                .await
+                .with_context(|| format!("open {path}"))?;
+            let mut buf = vec![0u8; CHUNK];
+            let mut sent = 0usize;
+            while sent < mib * CHUNK {
+                let n = file.read(&mut buf).await.context("read source file")?;
+                if n == 0 {
+                    // Wrap so a file smaller than --mib still fills the run.
+                    file.seek(std::io::SeekFrom::Start(0))
+                        .await
+                        .context("rewind source file")?;
+                    continue;
+                }
+                stream.write_all(&buf[..n]).await.context("write")?;
+                sent += n;
+            }
+        }
     }
     stream.finish().context("finish")?;
     // The sink's read loop ends when the stream closes; wait for the peer so
@@ -184,8 +214,15 @@ async fn main() -> Result<()> {
                 .transpose()
                 .context("--mib expects a number")?
                 .unwrap_or(256);
-            run_source(ticket, mib).await
+            let from_file = args
+                .iter()
+                .position(|a| a == "--from-file")
+                .and_then(|i| args.get(i + 1))
+                .map(String::as_str);
+            run_source(ticket, mib, from_file).await
         }
-        _ => bail!("usage: quic_baseline sink | quic_baseline source <ticket> [--mib N]"),
+        _ => bail!(
+            "usage: quic_baseline sink | quic_baseline source <ticket> [--mib N] [--from-file PATH]"
+        ),
     }
 }
