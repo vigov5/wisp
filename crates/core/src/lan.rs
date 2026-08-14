@@ -1123,6 +1123,23 @@ pub fn browse_nearby_receivers(
 
     let daemon =
         ServiceDaemon::new().map_err(|source| LanError::mdns("creating mDNS daemon", source))?;
+    // Accept announcements we did not solicit.
+    //
+    // mdns-sd defaults to ignoring any response that does not answer one of its
+    // own queries. That is the wrong default here, because an Android advertiser
+    // may never see our query at all: receiving multicast on Android needs a
+    // `WifiManager.MulticastLock`, and sending announcements does not. Measured
+    // on a Pixel next to this desktop, the phone's announcements arrive at the
+    // desktop (19 `_wisp` packets in 30 s on a raw socket, and mdns-sd parses
+    // them — a response with 8 answers shows up in its trace) while the browse
+    // still reported zero, because none of them were solicited.
+    //
+    // Accepting them costs a slightly more permissive cache. Every entry is
+    // still presence-pinged before being shown, so a stale or spoofed
+    // announcement cannot put a device in the list on its own.
+    if let Err(source) = daemon.accept_unsolicited(true) {
+        return Err(LanError::mdns("enabling unsolicited mDNS answers", source));
+    }
     let browse_rx = daemon
         .browse(WISP_MDNS_SERVICE_TYPE)
         .map_err(|source| LanError::mdns("starting mDNS browse", source))?;

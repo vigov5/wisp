@@ -406,6 +406,16 @@ pub async fn receive(out_dir: PathBuf, conflict: String, server_url: Option<Stri
         }
     };
 
+    // Advertise on the LAN so `wisp send --nearby` can find this receiver.
+    // Its "no receivers found" message tells the user to run `wisp receive` on
+    // the other machine, which was untrue: the receiver service starts with
+    // discovery off and only the Flutter app ever turned it on, so a CLI
+    // receiver was never discoverable. A failure here is not fatal — the short
+    // code still works — so it is reported and the receiver keeps running.
+    if let Err(error) = service.set_discoverable(true).await {
+        warn!(%error, "receive.lan_advertise_failed — short code still works");
+    }
+
     info!(code = %registration.code, expires_at = %registration.expires_at, "receive.ready");
     eprintln!(
         "Pairing code: {} (expires {})",
