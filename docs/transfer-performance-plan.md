@@ -627,6 +627,56 @@ meaningful headroom above the transport, so further work on the record/export/
 progress path cannot be justified on throughput grounds — which is consistent
 with B2 finding P0.2 and P0.3 already down at 0.34% and 0.07% of wall time.
 
+#### Re-measured on iroh 1.0 — and the denominator above was the wrong one
+
+Everything from `#### Measured: phone to desktop over Wi-Fi` down to here was
+taken on iroh 0.97 against a **Wi-Fi** link baseline. Two things invalidate it.
+
+First, the app was not necessarily on Wi-Fi. With a USB tether attached the
+sender selects the tether on most runs (`Ip(192.168.106.130->192.168.106.81)`
+is the selected path in 7 of 9 runs), and the two links are nothing alike:
+
+| link | TCP, 256 MiB, phone → desktop | stability |
+| --- | --- | --- |
+| USB tether (`rndis0`) | **37.27 MiB/s** | 36.5-38.0, very steady |
+| Wi-Fi (`wlan0`) | **12.50 MiB/s** | 10.5-18.9, swings ~2x |
+
+The app runs at 20.7 MiB/s median, which is **above the entire Wi-Fi ceiling**.
+Those transfers cannot have been on Wi-Fi, so dividing them by a Wi-Fi baseline
+was measuring the wrong thing. This also explains the "link moves 2x by time of
+day" note recorded earlier: that is a property of the Wi-Fi link, and a transfer
+riding the tether is insulated from it.
+
+Second, re-running the whole stack in one session on iroh 1.0.3 gives a very
+different decomposition. All four numbers below are same-session, same
+direction, same 273.5 MiB payload, over the tether:
+
+| stage | median | of TCP | marginal cost |
+| --- | --- | --- | --- |
+| TCP link | 37.27 MiB/s | 100% | — |
+| raw QUIC, memory source (n=10) | 27.70 MiB/s | 74% | QUIC + crypto **-26%** |
+| raw QUIC, file source (n=13) | 23.60 MiB/s | 63% | sender storage read **-15%** |
+| app payload (n=9) | 20.69 MiB/s | 56% | blob layer + receiver **-12%** |
+
+```text
+transport_utilization = 20.69 / 27.70 = 75%    (was reported as 94%)
+link_utilization      = 20.69 / 37.27 = 56%    (was reported as 83%)
+```
+
+**So there is roughly 25% above the transport, not 6%**, and it splits about
+evenly between the sending side's storage read and everything else. Both figures
+now sit at or below the 70% investigation threshold this section defines.
+
+One caveat on the middle row, because it nearly produced a wrong answer. The
+file source in `quic_baseline.rs` used to be a strictly serial
+`read → write_all → read` loop with no read-ahead, and it measured **21%** below
+the memory source. That is not the cost of touching storage: the phone reads
+this very file at 276-287 MiB/s, thirteen times the transfer rate, so the path
+is nowhere near storage-bound. It was the harness measuring its own lack of
+pipelining. With the read moved to a task feeding a bounded channel so it
+overlaps the previous chunk's send, the same comparison costs 15%. Only the
+pipelined number belongs in the table.
+
 Two things the comparison does surface:
 
 - **The app's one stall was slow connection setup, not a stall.** One app run in
@@ -1364,6 +1414,23 @@ this is the expected result rather than a surprising one. It does close the
 question the `transport_idle` stall opened: **storage on the sending side is not
 what stalls a transfer**, which is what sent that investigation to D1 instead.
 
+**Superseded: it costs 15%.** Re-measured on iroh 1.0 over the tether with more
+runs, the file source sits at 23.60 MiB/s (n=13) against 27.70 (n=10) for the
+memory source. The five-run Wi-Fi comparison above could not have seen this —
+Wi-Fi's own spread that session (10.5-18.9 MiB/s on a straight TCP baseline) is
+wider than the effect being measured, so "the difference is inside run-to-run
+variation" was true and yet the wrong conclusion to draw from it. Measure this
+on the steady link, not the noisy one.
+
+The narrow reading still holds: this is **not** a storage bandwidth limit. The
+phone reads the payload at 276-287 MiB/s, thirteen times the transfer rate.
+What costs 15% is failing to overlap the read with the send — the baseline's own
+serial `read → write_all` loop cost 21% until the read was moved onto a task
+feeding a bounded channel. So the open D3 question is whether the app's send
+path pipelines its reads any better than that naive loop did, and the sentence
+above about storage not stalling a transfer should not be read as "there is
+nothing here".
+
 ### D4. Finalize and export
 
 - Optimize only when time-to-file-ready or an export baseline shows a bottleneck.
@@ -1544,36 +1611,49 @@ A provider-only smoke is not sufficient to accept p10/p50/CV/stall.
   desktop.
 - It is known which change produced a win, and its effect size.
 
-**Status: partly met, on one path.** For phone-to-desktop Wi-Fi:
+**Status: partly met, on one path.** Phone to desktop, re-measured on iroh 1.0
+over the USB tether — which is the link the sender actually selects when one is
+attached, and not the Wi-Fi link the first pass used as its denominator:
 
 | criterion | state |
 | --- | --- |
-| link baseline | done — 27.7 MiB/s TCP, five runs (B1) |
-| disk and hash baselines | done — desktop 601 MiB/s write, 2,879 MiB/s hash (B1) |
-| raw QUIC transport baseline | done — 24.4 MiB/s median, ten runs from the phone (B1) |
+| link baseline | done — **37.27 MiB/s** TCP over the tether, four runs; Wi-Fi is 12.50 (B1) |
+| disk and hash baselines | done — desktop 601 MiB/s write, 2,879 MiB/s hash; phone reads the payload at 276-287 MiB/s (B1) |
+| raw QUIC transport baseline | done — **27.70 MiB/s** memory source (n=10), **23.60** from file (n=13), from the phone (B1) |
 | historical H and builds A-E | **not run** |
 | which change won, and by how much | attributed by unit cost x measured event rate (B2), not by the build matrix |
+
+The superseded first-pass figures were 27.7 MiB/s TCP, 24.4 MiB/s raw QUIC and
+23.0 MiB/s app, all on iroh 0.97 and all against Wi-Fi.
 
 Only the build matrix is outstanding, and it is deferrable: the
 unit-cost-times-rate work already separates P0.1 from P0.2 from P0.3 and gives
 effect sizes, so the matrix would refine numbers rather than change the ranking.
-It is also now bounded from above — everything the matrix varies lives in the 6%
-between app throughput and the raw transport, so no build in it can be worth
-more than that on this path.
 
-Gate 3's routing question is answered for this path, and by two measurements
-rather than one:
+**Re-routed on iroh 1.0 — the two findings this gate rested on are both gone.**
+The table above is kept for history; the current numbers are in B1's
+`Re-measured on iroh 1.0` section and they invert the conclusion:
 
-- **Not single-stream-bound, and not bound by anything above the transport.**
-  `transport_utilization` is 94%; the transport is 88% of raw TCP. D2's
-  stream-count experiments and D4's export work have at most 6% to win here.
-- **Relay striping is the one large effect**: 16% median of wire bytes, and
-  removing it doubles p10. So **D1 and the upstream iroh issue come first**.
+- **D1 is done, by version bump rather than by us.** Relay striping was the one
+  large effect at 16% median of wire bytes; on iroh 1.0.3 it is 0.0% in 17 of 18
+  runs across two batches, and the single 12.1% outlier finished mid-pack in its
+  batch, costing no measurable throughput. Nothing routes to D1 any more, and
+  the upstream issue draft is superseded.
+- **"Nothing above the transport" was an artefact of the wrong denominator.**
+  `transport_utilization` is **75%**, not 94%, and `link_utilization` is **56%**,
+  not 83% — the old ratios divided tether-borne transfers by a Wi-Fi baseline.
+  There is ~25% above the transport, so the build matrix is *not* bounded at 6%
+  and D2/D3/D4 are back in scope.
+- **D3 is now the largest single item, reversing the note below.** The claim that
+  the sending side's storage read "costs nothing" came from a comparison that
+  is no longer supported: with a pipelined file source the read costs **15%**,
+  against **12%** for the whole blob layer plus receiver. That is not a storage
+  bandwidth limit — the phone reads the payload at 276-287 MiB/s — so it is a
+  pipelining question in the send path, which is exactly D3's subject.
 
-D3 is not second: the sending side's storage read was measured against the
-baseline and costs nothing (see D3), and the one stall that looked like a sender
-problem turned out to be six seconds of blob-connection path setup, which is
-also D1. Nothing currently routes to D3 on this path.
+Ranking on this path is therefore **D3 first, then the QUIC/crypto gap** (26%
+against TCP, the largest single term but also the least likely to be cheap),
+then D2/D4 for the remaining 12%. D1 is closed.
 
 ### Gate 3 — Choosing the right optimization branch
 
@@ -1585,6 +1665,13 @@ also D1. Nothing currently routes to D3 on this path.
 - Window/CC-bound with provider stats ⇒ Phase E.
 
 Tuning from a later phase does not merge until its gate is met.
+
+**Current routing, phone → desktop over USB tether, iroh 1.0.3:** D1 closed
+(relay 0.0% in 17 of 18 runs); **D3 first** at 15% of the transport number;
+QUIC/crypto is larger still at 26% of TCP but is not our code; D2/D4 share the
+remaining 12%. Whenever a link baseline is quoted here it must be measured on
+the interface the sender actually selected for those runs — check the path
+events, do not assume Wi-Fi.
 
 ## 12. Check commands
 
