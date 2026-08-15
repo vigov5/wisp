@@ -1673,6 +1673,48 @@ remaining 12%. Whenever a link baseline is quoted here it must be measured on
 the interface the sender actually selected for those runs — check the path
 events, do not assume Wi-Fi.
 
+#### What D3 turned out to be: not the read
+
+Four measurements, taken to answer "does the app's send path overlap reads with
+sends", and none of them lands on storage:
+
+- **Not read-starved.** 7 of 9 runs record `stall_count = 0`; the two that stall
+  do so once each, for 652 ms and 773 ms.
+- **Not UI-bound.** Per-thread CPU during a live transfer puts Flutter's main
+  thread at 13% of one core and the rasteriser at 3%. The work is in
+  `tokio-rt-worker` (123% aggregate) and `iroh-blob-store` (28%), i.e. the Rust
+  transfer path, so P0.1-style progress coalescing has nothing left to win here.
+- **Not CPU-saturated.** Broken out per thread id, the busiest worker sits at
+  38% of one core with the rest spread across five more — about 1.6 cores of the
+  phone's eight. No single-threaded serialisation ceiling.
+- **The window is not the limiter either.** Sender-side cwnd is *large*: p50
+  4.38 MB, p90 18.1 MB, max 25.1 MB. What one cwnd per RTT implies at the median
+  is 50.7 MiB/s, well above the 20.7 actually achieved.
+
+**The signal is bufferbloat.** Sender RTT runs at p50 82.5 ms, p90 318 ms and
+max 487 ms on a link whose idle RTT is ~2 ms. The tether's bandwidth-delay
+product is 37.27 MiB/s × 2 ms ≈ **78 KB**, and `quic_keepalive` configures an
+8 MiB stream window with a `send_window` of 8× that — **64 MiB, roughly 840× the
+BDP**. The observed cwnd of 4.4-25 MB is 56-320× BDP. The sender is not short of
+window; it is filling a deep queue somewhere in the RNDIS path, which is also
+the most likely explanation for the 18-30 lost packets per run and for both
+stalls (the receiver's view of RTT during them is 61 ms and 172 ms).
+
+That routes the next experiment to **Phase E**, and it is a cheap one: shrink
+the stream/send windows toward something proportionate to the path and see
+whether throughput holds while latency and loss drop. Note the prediction is
+*not* that throughput rises — the cwnd/RTT ceiling says there is already enough
+window — so this is a latency and stall fix unless the loss reduction pays for
+itself.
+
+Two caveats on the above. The sender-side cwnd/RTT distribution is one run
+(n=48 samples); it should be repeated before anything is tuned on it. And
+`local_cwnd_bytes` in the **receiver** log is not this number and must not be
+substituted for it: it is the receiver's own send window, which correctly never
+leaves the 12000-byte initial window because the receiver only sends ACKs. It
+reads 12000 in 58% of samples and never exceeds 13326, which looks like a broken
+metric and is not one.
+
 ## 12. Check commands
 
 ```powershell
