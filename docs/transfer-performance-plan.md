@@ -1179,7 +1179,40 @@ Backup path is decided on the **sender**, which is also where `may_send_data`
 lives. The phone has no Rust-to-logcat wiring, so instrumenting that side means
 adding a logger to the bridge first.
 
-Left as: reproducible only in a faster-link regime, cause not established.
+**Both ends are now instrumented, and both agree in the clean case.** The phone
+side was the gap — nothing sets `RUST_LOG` for an app started from the launcher —
+so `init_app` now also reads the `debug.wisp.log` system property:
+
+```
+adb shell setprop debug.wisp.log 'warn,iroh::socket=debug,iroh::_events=debug,noq_proto::connection=debug'
+adb shell am force-stop dev.vigov5.wisp      # the property is read at init
+adb logcat -v epoch -s wisp:V > sender.log
+```
+
+Four further runs with both ends captured. The sender's own view of the relay
+path is unambiguous and identical every time:
+
+```
+iroh::_events::path::open        path_id=1 network_path=Relay(https://aps1-1.relay.n0.iroh.link./)
+iroh::_events::path::set_status  path_id=1 network_path=Relay(...) status=Backup prev_status=Available
+```
+
+**relay → Backup exactly once, never flipped back to Available, in 4 of 4 runs**,
+matching the receiver's `['Available', 'Backup']` in 6 of 6. Direct (`path_id=0`)
+goes Backup → selected → Available and stays there; the ~5 s NAT-traversal burst
+only re-probes `path_id=0` with `new_path: false`.
+
+That gives a sharp discriminator for when the residue does recur: the sender log
+must show either **no** `Relay … status=Backup` line, or a later
+`Relay … status=Available` flip. Neither has been seen yet.
+
+It still has not recurred: **0 of 15** runs across the whole later session (six
+instrumented receiver-only, five uninstrumented, four with both ends). Not
+thermal throttling either — the phone reads 35.2 °C, on 5 GHz at a 526 Mbps link
+rate with RSSI -62.
+
+Left as: instrumentation ready on both ends, reproducible only in a faster-link
+regime that has not returned, cause not established.
 
 Note that `relay_bytes_ratio` reads 0.0 for every run here, as it did at 0.97 —
 it only counts the selected path, so it cannot see this either way.
