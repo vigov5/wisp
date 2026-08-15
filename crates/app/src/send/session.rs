@@ -469,7 +469,7 @@ fn maybe_demote_pre_handshake_failure(
 fn spawn_send_path_watcher(
     endpoint: Endpoint,
     peer_endpoint_id: iroh::EndpointId,
-    mut conn_info_rx: oneshot::Receiver<iroh::endpoint::ConnectionInfo>,
+    mut conn_info_rx: oneshot::Receiver<iroh::endpoint::Connection>,
     event_tx: mpsc::UnboundedSender<SendEvent>,
     current_path: Arc<StdMutex<ConnectionPath>>,
     current_candidates: Arc<StdMutex<Vec<CandidatePath>>>,
@@ -479,10 +479,12 @@ fn spawn_send_path_watcher(
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(CONNECTION_PATH_POLL_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        // Weak handle to the live connection, delivered once the dial succeeds.
-        // The selected-path badge stays Unknown until then; candidate rows
-        // (from the endpoint address book) populate during connecting either way.
-        let mut conn_info: Option<iroh::endpoint::ConnectionInfo> = None;
+        // Handle on the live connection, delivered once the dial succeeds. The
+        // selected-path badge stays Unknown until then; candidate rows (from the
+        // endpoint address book) populate during connecting either way. Since
+        // iroh 1.0 this is a strong handle, so it is dropped with this task when
+        // `shutdown_rx` fires at the end of the send.
+        let mut conn_info: Option<iroh::endpoint::Connection> = None;
         // Poll immediately on the first tick: the caller's initial snapshot was
         // taken before `connect()` had registered the peer's addresses, so iroh
         // usually has no candidates yet. Polling right away (and comparing

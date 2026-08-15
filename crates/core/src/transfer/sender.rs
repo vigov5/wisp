@@ -1,9 +1,6 @@
 #![allow(dead_code)]
 
-use iroh::{
-    Endpoint, EndpointAddr, EndpointId,
-    endpoint::{Connection, ConnectionInfo},
-};
+use iroh::{Endpoint, EndpointAddr, EndpointId, endpoint::Connection};
 use rand::random;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -127,11 +124,16 @@ pub struct SenderRun {
     pub events: SenderEventStream,
     pub cancel_tx: watch::Sender<bool>,
     pub outcome_rx: oneshot::Receiver<TransferResult<TransferOutcome>>,
-    /// Resolves once the outbound connection is established, with a weak handle
-    /// for reading the *selected* connection path (authoritative, vs the
-    /// endpoint address book). Never resolves if the dial is cancelled/fails
-    /// before connecting — callers should treat that as "no path info".
-    pub conn_info_rx: oneshot::Receiver<ConnectionInfo>,
+    /// Resolves once the outbound connection is established, with a handle for
+    /// reading the *selected* connection path (authoritative, vs the endpoint
+    /// address book). Never resolves if the dial is cancelled/fails before
+    /// connecting — callers should treat that as "no path info".
+    ///
+    /// This is a strong handle: iroh 1.0 removed the weak `ConnectionInfo`, and
+    /// path state is now only reachable through [`Connection`] itself. Holding
+    /// it keeps the connection open, so a receiver must drop it once the
+    /// transfer ends rather than parking it in long-lived UI state.
+    pub conn_info_rx: oneshot::Receiver<Connection>,
 }
 
 impl SenderRun {
@@ -141,7 +143,7 @@ impl SenderRun {
         SenderEventStream,
         watch::Sender<bool>,
         oneshot::Receiver<TransferResult<TransferOutcome>>,
-        oneshot::Receiver<ConnectionInfo>,
+        oneshot::Receiver<Connection>,
     ) {
         (
             self.events,
@@ -273,7 +275,7 @@ struct SenderSession {
     events: SenderEventSink,
     blob_strategy: BlobServingStrategy,
     blob_transport_profile: BlobTransportProfile,
-    conn_info_tx: Option<oneshot::Sender<ConnectionInfo>>,
+    conn_info_tx: Option<oneshot::Sender<Connection>>,
 }
 
 impl SenderSession {
@@ -439,10 +441,11 @@ impl SenderSession {
             }
         };
 
-        // Hand the app a weak handle to read the *selected* connection path
-        // (the authoritative carrying path) for the connection-path badge.
+        // Hand the app a handle to read the *selected* connection path (the
+        // authoritative carrying path) for the connection-path badge. See
+        // `SenderRun::conn_info_rx` on why this keeps the connection alive.
         if let Some(tx) = self.conn_info_tx.take() {
-            let _ = tx.send(connection.to_info());
+            let _ = tx.send(connection.clone());
         }
 
         // --- Handshake ---

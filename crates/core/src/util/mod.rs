@@ -222,16 +222,15 @@ pub async fn classify_connection_path(
 /// is wrong when iroh keeps a *stale* direct candidate marked `Active` — e.g.
 /// a LAN `192.168.x` address left over from when the peer was on Wi-Fi — even
 /// though traffic has migrated to the relay after the peer moved to mobile
-/// data. iroh 0.97 exposes only `Active`/`Inactive` per candidate (no
-/// recency), so the address book alone can't tell the stale candidate from the
-/// real one.
+/// data. iroh exposes only `Active`/`Inactive` per candidate (no recency), so
+/// the address book alone can't tell the stale candidate from the real one.
 ///
-/// The connection's [`ConnectionInfo::selected_path`] is authoritative: it's
-/// the path QUIC has actually selected to carry traffic. Use this for the
-/// connection-path badge. Returns `Unknown` when no path is selected yet (or
-/// the connection has been dropped).
-pub fn connection_path_from_info(info: &iroh::endpoint::ConnectionInfo) -> ConnectionPath {
-    match info.selected_path() {
+/// The connection's selected path is authoritative: it's the path QUIC has
+/// actually selected to carry traffic. Use this for the connection-path badge.
+/// Returns `Unknown` when no path is selected yet, and on a closed connection,
+/// whose path list is empty.
+pub fn connection_path_from_info(connection: &iroh::endpoint::Connection) -> ConnectionPath {
+    match connection.paths().iter().find(|path| path.is_selected()) {
         Some(path) => connection_path_from_transport_addr(path.remote_addr()),
         None => ConnectionPath::unknown(),
     }

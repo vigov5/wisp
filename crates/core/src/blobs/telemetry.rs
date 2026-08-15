@@ -6,9 +6,10 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+use futures_lite::StreamExt;
 use iroh::{
-    TransportAddr, Watcher,
-    endpoint::{ConnectionInfo, PathId},
+    TransportAddr,
+    endpoint::{Connection, PathId},
 };
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::debug;
@@ -249,7 +250,7 @@ impl PublishedProgress {
 impl BlobTransferTelemetry {
     pub(super) fn start(
         started_at: Instant,
-        connection: ConnectionInfo,
+        connection: Connection,
         transport_profile: BlobTransportProfile,
         benchmark_run_id: Option<u64>,
     ) -> Self {
@@ -292,7 +293,7 @@ impl BlobTransferTelemetry {
 
 async fn run_sampler(
     now: Instant,
-    connection: ConnectionInfo,
+    connection: Connection,
     transport_profile: BlobTransportProfile,
     benchmark_run_id: Option<u64>,
     progress: Arc<PublishedProgress>,
@@ -308,11 +309,14 @@ async fn run_sampler(
     // `interval` ticks immediately by default. Reset it so the first sample is
     // a real 250 ms interval while the stop signal remains immediately usable.
     interval.reset();
-    let mut path_watcher = connection.paths();
+    let mut path_events = connection.path_events();
     let mut path_watch_connected = true;
 
-    // n0-watcher 0.6.1 documents `Watcher::updated()` as cancel-safe, so the
-    // select loop cannot consume and lose a path update when another branch wins.
+    // `PathEventStream` wraps a tokio `BroadcastStream`, whose `next()` is
+    // cancel-safe, so the select loop cannot consume and lose a path event when
+    // another branch wins. A consumer that falls behind gets a single
+    // `PathEvent::Lagged` instead of a closed stream, so lagging costs one
+    // sample rather than the whole feed.
     loop {
         tokio::select! {
             biased;
@@ -332,14 +336,14 @@ async fn run_sampler(
                 recorder.observe_progress(progress.snapshot(now));
                 recorder.emit_sample(now, &connection, false);
             }
-            path_update = path_watcher.updated(), if path_watch_connected => {
-                match path_update {
-                    Ok(_) => {
+            path_event = path_events.next(), if path_watch_connected => {
+                match path_event {
+                    Some(_) => {
                         let now = Instant::now();
                         recorder.observe_progress(progress.snapshot(now));
                         recorder.emit_sample(now, &connection, false);
                     }
-                    Err(_) => path_watch_connected = false,
+                    None => path_watch_connected = false,
                 }
             }
         }
@@ -355,7 +359,7 @@ pub(super) struct BlobProviderTelemetry {
 impl BlobProviderTelemetry {
     pub(super) fn start(
         now: Instant,
-        connection: ConnectionInfo,
+        connection: Connection,
         transport_profile: BlobTransportProfile,
         benchmark_run_id: Option<u64>,
     ) -> Self {
@@ -387,7 +391,7 @@ impl BlobProviderTelemetry {
 
 async fn run_provider_sampler(
     now: Instant,
-    connection: ConnectionInfo,
+    connection: Connection,
     transport_profile: BlobTransportProfile,
     benchmark_run_id: Option<u64>,
     mut stop_rx: oneshot::Receiver<TransferEnd>,
@@ -399,11 +403,11 @@ async fn run_provider_sampler(
     let mut interval = tokio::time::interval(TELEMETRY_SAMPLE_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     interval.reset();
-    let mut path_watcher = connection.paths();
+    let mut path_events = connection.path_events();
     let mut path_watch_connected = true;
 
-    // See the cancel-safety note in the receiver sampler above. This watcher
-    // has the same n0-watcher 0.6.1 contract.
+    // See the cancel-safety note in the receiver sampler above. This stream has
+    // the same `BroadcastStream` contract.
     loop {
         tokio::select! {
             biased;
@@ -420,10 +424,10 @@ async fn run_provider_sampler(
             _ = interval.tick() => {
                 recorder.emit_sample(Instant::now(), &connection, false);
             }
-            path_update = path_watcher.updated(), if path_watch_connected => {
-                match path_update {
-                    Ok(_) => recorder.emit_sample(Instant::now(), &connection, false),
-                    Err(_) => path_watch_connected = false,
+            path_event = path_events.next(), if path_watch_connected => {
+                match path_event {
+                    Some(_) => recorder.emit_sample(Instant::now(), &connection, false),
+                    None => path_watch_connected = false,
                 }
             }
         }
@@ -455,7 +459,7 @@ impl ProviderTelemetryRecorder {
         now: Instant,
         transport_profile: BlobTransportProfile,
         benchmark_run_id: Option<u64>,
-        connection: &ConnectionInfo,
+        connection: &Connection,
     ) -> Self {
         Self {
             transfer_id: NEXT_TRANSFER_ID.fetch_add(1, Ordering::Relaxed),
@@ -502,7 +506,7 @@ impl ProviderTelemetryRecorder {
         );
     }
 
-    fn emit_sample(&mut self, now: Instant, connection: &ConnectionInfo, terminal_sample: bool) {
+    fn emit_sample(&mut self, now: Instant, connection: &Connection, terminal_sample: bool) {
         let interval = now.saturating_duration_since(self.last_sample_at);
         let network = NetworkSnapshot::capture(connection);
         let delta = network.delta_from(self.previous_path);
@@ -582,7 +586,7 @@ impl ProviderTelemetryRecorder {
         );
     }
 
-    fn finish(&self, now: Instant, connection: &ConnectionInfo, outcome: TransferEnd) {
+    fn finish(&self, now: Instant, connection: &Connection, outcome: TransferEnd) {
         let network = NetworkSnapshot::capture(connection);
         debug!(
             target: TELEMETRY_TARGET,
@@ -703,7 +707,7 @@ impl TelemetryRecorder {
         delta
     }
 
-    fn emit_sample(&mut self, now: Instant, connection: &ConnectionInfo, terminal_sample: bool) {
+    fn emit_sample(&mut self, now: Instant, connection: &Connection, terminal_sample: bool) {
         let app = self.state.sample(now);
         let network = NetworkSnapshot::capture(connection);
         let delta = network.delta_from(self.previous_path);
@@ -803,7 +807,7 @@ impl TelemetryRecorder {
         );
     }
 
-    fn finish(&mut self, now: Instant, connection: &ConnectionInfo, outcome: TransferEnd) {
+    fn finish(&mut self, now: Instant, connection: &Connection, outcome: TransferEnd) {
         let summary = self.state.finish(now, outcome);
         let network = NetworkSnapshot::capture(connection);
         debug!(
@@ -1061,17 +1065,19 @@ struct PathObservation {
 impl PathObservation {
     /// One entry per **path**, not per advertised address.
     ///
-    /// A single QUIC path can appear in the list once per transport address it
-    /// is reachable at, and every such entry carries the same underlying
-    /// counters. Summing the list as-is therefore counts that path's traffic
-    /// once per address, which measured 1.70x the connection total on a Wi-Fi
+    /// Kept as a defensive fold. Under iroh 0.97 a single QUIC path appeared in
+    /// the list once per transport address it was reachable at, every entry
+    /// carrying the same underlying counters, so summing the list as-is counted
+    /// that path's traffic once per address. iroh 1.0 keys its path list by
+    /// `PathId` and replaces rather than appends, so duplicates should no longer
+    /// reach us — but `PathList` does not guarantee uniqueness in its type, and
+    /// the failure is silent inflation rather than a panic. The 0.97 behaviour
+    /// measured 1.70x the connection total on a Wi-Fi
     /// transfer. Deduplicating by `PathId` keeps each path counted once.
-    fn capture_all(connection: &ConnectionInfo) -> Vec<Self> {
+    fn capture_all(connection: &Connection) -> Vec<Self> {
         let mut by_path: HashMap<PathId, Self> = HashMap::new();
-        for path in connection.paths().get().iter() {
-            let Some(stats) = path.stats() else {
-                continue;
-            };
+        for path in connection.paths().iter() {
+            let stats = path.stats();
             let kind = classify_path(path.remote_addr());
             by_path
                 .entry(path.id())
@@ -1189,18 +1195,16 @@ struct PathAggregateDelta {
 }
 
 impl NetworkSnapshot {
-    fn capture(connection: &ConnectionInfo) -> Self {
+    fn capture(connection: &Connection) -> Self {
         // Read the path list once: it yields the selected path, how many paths
         // exist, and the per-path counters that `selected_path()` alone misses.
-        let paths = connection.paths().get();
+        let paths = connection.paths();
         let path_count = u64::try_from(paths.len()).unwrap_or(u64::MAX);
         let Some(path) = paths.iter().find(|path| path.is_selected()) else {
             return Self::unavailable("unknown", path_count);
         };
         let path_kind = classify_path(path.remote_addr());
-        let Some(stats) = path.stats() else {
-            return Self::unavailable(path_kind, path_count);
-        };
+        let stats = path.stats();
         Self {
             path_kind,
             stats_available: true,
@@ -1302,16 +1306,15 @@ struct PathCountersDelta {
 /// Connection-scoped QUIC counters, aggregated by the QUIC stack over every
 /// path of the connection.
 ///
-/// [`PathStats`] describes a single path and reaches us only through
-/// [`ConnectionInfo::selected_path`], which returns `None` whenever iroh's
-/// selected-path watcher holds no address matching a live path. Both properties
-/// silently removed payload from the totals: bytes carried while no path was
-/// selected were never counted at all, and every migration voided a full
-/// sampling interval as a discontinuity. That is what made provider totals read
-/// `udp_tx_bytes_total = 0` or a few kilobytes against a multi-hundred-megabyte
-/// payload.
+/// [`PathStats`] describes a single path, and the selected path can be absent:
+/// no entry in [`Connection::paths`] reports `is_selected` while iroh is between
+/// selections. Both properties silently removed payload from the totals: bytes
+/// carried while no path was selected were never counted at all, and every
+/// migration voided a full sampling interval as a discontinuity. That is what
+/// made provider totals read `udp_tx_bytes_total = 0` or a few kilobytes against
+/// a multi-hundred-megabyte payload.
 ///
-/// [`ConnectionInfo::stats`] has neither problem. It is monotonic for the whole
+/// [`Connection::stats`] has neither problem. It is monotonic for the whole
 /// connection and indifferent to path selection, so it carries the authoritative
 /// byte counters — and doubles as the yardstick that says how much of the
 /// payload the per-path counters managed to observe.
@@ -1337,10 +1340,8 @@ struct ConnectionCounters {
 }
 
 impl ConnectionCounters {
-    fn capture(connection: &ConnectionInfo) -> Self {
-        let Some(stats) = connection.stats() else {
-            return Self::default();
-        };
+    fn capture(connection: &Connection) -> Self {
+        let stats = connection.stats();
         Self {
             available: true,
             udp_tx_bytes: stats.udp_tx.bytes,

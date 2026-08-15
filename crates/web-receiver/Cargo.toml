@@ -17,8 +17,10 @@ async-channel = "2"
 tokio = { version = "1", default-features = false, features = ["io-util"] }
 # Relay-only browser build: default features off (drops native-only `metrics`
 # on iroh and `fs-store`/`rpc` on iroh-blobs, leaving the wasm-safe MemStore).
-iroh = { version = "0.97", default-features = false }
-iroh-blobs = { version = "0.99", default-features = false }
+# `tls-ring` has to come back explicitly: since iroh 1.0 the crypto provider is
+# feature-gated, and without one `endpoint::presets` compiles away entirely.
+iroh = { version = "1.0", default-features = false, features = ["tls-ring"] }
+iroh-blobs = { version = "0.103", default-features = false }
 
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"

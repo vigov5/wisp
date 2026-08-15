@@ -30,9 +30,11 @@ use crate::lan::in_usb_tunnel_subnet;
 /// so the raised TUN MTU is actually usable end-to-end.
 const AOA_MTU_DISCOVERY_UPPER_BOUND: u16 = 7_900;
 
-// Defaults from the resolved noq-proto 0.16 `TransportConfig` used by noq 0.17.
+// Defaults from the resolved noq-proto 1.1 `TransportConfig` used by noq 1.1.
 // The AOA per-dial override starts from `QuicTransportConfig::builder()`, so
 // these are its expected flow-control values unless that override changes.
+// Unchanged across the iroh 0.97 → 1.0 upgrade: both versions derive them from
+// the same `MAX_STREAM_BANDWIDTH`/`EXPECTED_RTT` pair.
 const NOQ_DEFAULT_STREAM_RECEIVE_WINDOW_BYTES: u64 = 1_250_000;
 const NOQ_DEFAULT_SEND_WINDOW_BYTES: u64 = 10_000_000;
 
@@ -435,7 +437,7 @@ impl BlobDownloadStrategy for SequentialBlobDownload {
             let mut telemetry = telemetry_enabled().then(|| {
                 BlobTransferTelemetry::start(
                     Instant::now(),
-                    connection.to_info(),
+                    connection.clone(),
                     transport_profile,
                     benchmark_run_id,
                 )

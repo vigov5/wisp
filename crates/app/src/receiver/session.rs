@@ -94,12 +94,13 @@ impl ReceiverSession {
 
         let remote_id = connection.remote_id();
         let remote_id_str = remote_id.to_string();
-        // Weak handle to the live connection — used to read the *selected* path
+        // Handle on the live connection — used to read the *selected* path
         // (authoritative), not the endpoint address book (which can report a
-        // stale direct candidate as Active). Captured before `session.start()`
-        // consumes `connection`; it stays valid as long as the core session
-        // keeps the connection alive.
-        let conn_info = connection.to_info();
+        // stale direct candidate as Active). Cloned before `session.start()`
+        // consumes `connection`. Since iroh 1.0 this is a strong handle, so the
+        // path watcher below is shut down explicitly at the end of the session
+        // rather than being left to expire with the connection.
+        let conn_info = connection.clone();
         let initial_path = connection_path_from_info(&conn_info);
         let current_path = Arc::new(Mutex::new(initial_path));
         // Kept past `session.start()` (which consumes `endpoint`) so we can look
@@ -662,7 +663,7 @@ impl ReceiverSession {
 }
 
 fn spawn_connection_path_watcher(
-    conn_info: iroh::endpoint::ConnectionInfo,
+    conn_info: iroh::endpoint::Connection,
     offer_id: u64,
     cmd_tx: mpsc::Sender<ReceiverCommand>,
     current_path: Arc<Mutex<ConnectionPath>>,

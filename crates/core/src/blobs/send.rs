@@ -89,17 +89,19 @@ impl BlobProtocolHandler {
 
 impl ProtocolHandler for BlobProtocolHandler {
     async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
+        // The sampler owns a strong `Connection` clone, and `finish` joins it
+        // below, so the connection cannot close before the terminal sample has
+        // captured the provider's last congestion counters. Under iroh 0.97 the
+        // sampler held a weak `ConnectionInfo` and this function had to keep a
+        // strong handle alive by hand.
         let mut telemetry = telemetry_enabled().then(|| {
             BlobProviderTelemetry::start(
                 std::time::Instant::now(),
-                connection.to_info(),
+                connection.clone(),
                 self.transport_profile,
                 self.benchmark_run_id,
             )
         });
-        // `ConnectionInfo` is weak. Keep one strong handle until the terminal
-        // sample has captured the provider's last congestion counters.
-        let telemetry_connection = telemetry.as_ref().map(|_| connection.clone());
         let result = self.protocol.accept(connection).await;
         if let Some(telemetry) = telemetry.as_mut() {
             let outcome = if result.is_ok() {
@@ -109,7 +111,6 @@ impl ProtocolHandler for BlobProtocolHandler {
             };
             telemetry.finish(outcome).await;
         }
-        drop(telemetry_connection);
         result
     }
 }
