@@ -1124,6 +1124,39 @@ it only counts the selected path, so it cannot see this either way.
 argues that the bias cannot be configured, which is the wrong claim; the real
 defect is the 0.16 scheduling gate, and 1.0 has already largely closed it.
 
+#### Mixed-version transfers still work, but are the slowest case measured
+
+n0 does not support the 0.9x canaries past 1.0, so whether a shipped 0.97 client
+can still talk to a 1.0 one had to be checked rather than assumed. It can. The
+pre-upgrade release APK (iroh 0.97) sending to the upgraded desktop CLI (iroh
+1.0.3) connects, holds a direct path and delivers the same payload byte-exact,
+three times out of three. **The wire protocol did not break** — `iroh_blobs::ALPN`
+is `/iroh-bytes/4` in both iroh-blobs 0.99 and 0.103.
+
+What does change is throughput. Same rig, same payload, three runs:
+
+| pairing | p10 median | p50 median | relay share of wire bytes | passes Gate-1 |
+| --- | --- | --- | --- | --- |
+| 0.97 → 0.97 | 8.3 MiB/s | 18.6 MiB/s | 16.1% | 0/4 |
+| **0.97 → 1.0.3 (mixed)** | **6.7 MiB/s** | **10.4 MiB/s** | **31.7 / 32.0 / 38.0%** | **0/3** |
+| 1.0.3 → 1.0.3 | 18.3 MiB/s | 21.9 MiB/s | 0 / 0 / 0 / 4.3 / 8.5% | 3/5 |
+
+The mixed pair is the worst of the three: roughly double the relay share of the
+homogeneous 0.97 pair and about half the throughput of the homogeneous 1.0 pair,
+consistently across all three runs (`fetch_store` 23.9-28.3 s against 11.9-14.3 s).
+
+A plausible reading — not measured, so treat it as a hypothesis — is that the
+1.0 receiver now re-marks every non-selected path `Backup` dynamically, while the
+0.97 sender's noq-proto 0.16 scheduler only honours that when its own
+`have_available_path` conditions all hold, and so falls back to spreading across
+every path more often than it did against a 0.97 peer.
+
+Consequence for releasing: this is not a compatibility blocker, but a mixed fleet
+is measurably worse than either homogeneous one, so the desktop and mobile
+releases want to go out together rather than staggered. Only the
+old-sender/new-receiver direction was measured; new-sender/old-receiver would
+need an old desktop binary and has not been tested.
+
 - For many small files: A/B concurrency 1/2/4/8 with a bounded queue and a memory
   limit.
 - For one large file: a separate 1-vs-2/4 stream spike, on a benchmark branch
