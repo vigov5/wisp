@@ -45,15 +45,24 @@ Gate 2 at the end of this document are met.
 
 Pinned versions:
 
-- `iroh 0.97.0`
-- `iroh-blobs 0.99.0`
-- `noq 0.17.0`
-- `noq-proto 0.16.0`
+- `iroh 1.0.3`
+- `iroh-blobs 0.103.0`
+- `noq 1.1.1`
+- `noq-proto 1.1.1`
+- `irpc 0.17.0`
 - `tokio 1.50.0`
 
 `noq`/`noq-proto` are the QUIC stack beneath `iroh`; upgrading `iroh` can change
 congestion control, multipath, path stats and benchmark results even when Wisp's
 own code does not change.
+
+**Everything in this document up to the D2 iroh-1.0 subsection was measured
+against `iroh 0.97.0` / `iroh-blobs 0.99.0` / `noq 0.17.0` / `noq-proto 0.16.0`,
+and those numbers are kept as the historical baseline** — the upgrade is the
+reason several of them changed. `irpc` is pinned alongside because 0.13 pulled a
+*second*, older QUIC stack (`noq 0.17`) into the binary next to iroh 1.0's;
+0.17.0 is the version `iroh-blobs 0.103` already depends on, so the graph
+resolves to one stack.
 
 ## 3. Current hypotheses, not conclusions
 
@@ -1059,6 +1068,61 @@ and an upstream issue, not a local patch.
 revision of this section read the loopback null result as evidence that relay
 striping was not real and re-scoped D2 toward D1. The Wi-Fi A/B shows that
 reading was wrong, and wrong because loopback could not exhibit the effect.
+
+#### Resolved by upgrading to iroh 1.0 — mostly
+
+The diagnosis above blames the wrong layer. Relay is *already* registered as
+`TransportBias::backup()` at 0.97, so the striping happened **despite** the path
+being marked `PathStatus::Backup`; `TransportBias` being `pub(crate)` was never
+what stood in the way. The gate that leaked is one layer down, in `noq-proto`.
+
+At **noq-proto 0.16** (`src/connection/mod.rs:1573`) a Backup path was only
+restricted to `path_exclusive_only` frames, and only while some *other* path was
+simultaneously validated, status-Available and holding remote CIDs. Miss any of
+those and the Backup path carried whatever was queued.
+
+**noq-proto 1.1.1** replaces that with a hard rule (`may_send_data`): a
+validated Backup path may not send Data-space frames at all while any validated
+status-Available space exists. iroh 1.0 also applies the status dynamically —
+`apply_selected_path` sets the selected path to `Available` and *every* other
+path to `Backup`, rather than 0.97's static per-transport bias fixed at path-open
+time.
+
+Measured after upgrading to `iroh 1.0.3` / `iroh-blobs 0.103` / `noq-proto
+1.1.1`. Same rig as the A/B above — phone to desktop over Wi-Fi, the same 273 MB
+payload, release build, relay left **enabled** (no `WISP_BENCH_NO_RELAY`), five
+consecutive runs, every one byte-exact at 286,781,694:
+
+| metric | 0.97, relay on | 0.97, no relay | **1.0.3, relay on** |
+| --- | --- | --- | --- |
+| p50 median | 18.6 MiB/s | 21.0 MiB/s | **21.9 MiB/s** |
+| **p10 median** | **8.3 MiB/s** | **16.8 MiB/s** | **18.3 MiB/s** |
+| p10/p50 median | 45% | 79% | **81%** |
+| CV median | 0.33 | 0.16 | **0.18** |
+| relay share of wire bytes | 16.1% | 0.0% | **0.0%, 0.0%, 0.0%, 4.3%, 8.5%** |
+| stalls | 1 | 0 | **0** |
+| **passes the Gate-1 stability criteria** | **0/4** | **4/4** | **3/5** |
+
+With the relay still enabled, 1.0 now matches — slightly beats — what 0.97 could
+only reach by removing the relay entirely.
+
+**The effect is reduced, not eliminated.** Two of five runs still put 4.3% and
+8.5% of wire bytes over a relay path, and the split is exact: **all three
+zero-relay runs pass the gate; both runs with any relay share fail it** (60.8%
+and 62.3% p10/p50 against 81.8/87.6/81.4%). The mechanism is unchanged — relay
+participation still costs the tail — it just now happens in a minority of runs
+instead of all of them. Whether the residue is the same scheduling leak or
+something else (a window before the direct path is validated, where
+`may_send_data` legitimately allows the Backup path to carry data) is not yet
+measured.
+
+Note that `relay_bytes_ratio` reads 0.0 for every run here, as it did at 0.97 —
+it only counts the selected path, so it cannot see this either way.
+`wire_relay_bytes_ratio` remains the only metric that answers the question.
+
+**Do not file the upstream issue as drafted.** `docs/iroh-relay-striping-report.md`
+argues that the bias cannot be configured, which is the wrong claim; the real
+defect is the 0.16 scheduling gate, and 1.0 has already largely closed it.
 
 - For many small files: A/B concurrency 1/2/4/8 with a bounded queue and a memory
   limit.

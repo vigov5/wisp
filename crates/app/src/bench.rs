@@ -41,6 +41,16 @@ const BENCH_NO_RELAY_ENV: &str = "WISP_BENCH_NO_RELAY";
 /// against 0%, p10 median 8.3 MiB/s against 16.8, and 0/4 runs passing the
 /// stability criteria against 4/4. The median barely moves; the tail doubles.
 ///
+/// All of the above was measured at iroh 0.97. The upgrade to iroh 1.0.3 /
+/// noq-proto 1.1.1 largely closes the gap on its own: with the relay still
+/// enabled, five runs on the same rig gave a p10 median of 18.3 MiB/s and 3/5
+/// passing — at or above what 0.97 could only reach by switching the relay off.
+/// The switch is now a diagnostic rather than a lever: two of those five runs
+/// still carried 4.3% and 8.5% of wire bytes over a relay, and those are exactly
+/// the two that failed. Use it to confirm relay participation is the cause when
+/// a run's tail regresses. See "Resolved by upgrading to iroh 1.0 — mostly" in
+/// `docs/transfer-performance-plan.md`.
+///
 /// Setting it on the receiver alone is enough — a dialer can only use the relay
 /// addresses the receiver advertises.
 pub(crate) fn relay_mode() -> RelayMode {

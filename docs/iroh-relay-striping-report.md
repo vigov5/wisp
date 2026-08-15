@@ -3,6 +3,18 @@
 Draft of an upstream report for `n0-computer/iroh`. Measured against iroh 0.97.0
 with iroh-blobs 0.99, noq 0.17, noq-proto 0.16.
 
+> **DO NOT FILE AS WRITTEN — superseded.** This draft's central claim, that the
+> relay bias cannot be configured down, is wrong: relay is already registered as
+> `TransportBias::backup()` at 0.97, so the striping happened *despite* the path
+> being marked `PathStatus::Backup`. The actual defect is one layer lower, in
+> `noq-proto 0.16`'s packet scheduler, and `noq-proto 1.1.1` has largely fixed it
+> (`may_send_data`). After upgrading to iroh 1.0.3 the relay share fell to 0% in
+> three of five runs on this same rig. What is left worth reporting is only the
+> residue — 4.3% and 8.5% of wire bytes over relay in the other two runs — and
+> that needs to be re-diagnosed against 1.0 before it is written up. See
+> "Resolved by upgrading to iroh 1.0 — mostly" in
+> `docs/transfer-performance-plan.md`.
+
 ## Summary
 
 On a phone-to-desktop Wi-Fi transfer, a relay path carries **6-20% of all UDP
