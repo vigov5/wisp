@@ -1211,8 +1211,57 @@ instrumented receiver-only, five uninstrumented, four with both ends). Not
 thermal throttling either — the phone reads 35.2 °C, on 5 GHz at a 526 Mbps link
 rate with RSSI -62.
 
-Left as: instrumentation ready on both ends, reproducible only in a faster-link
-regime that has not returned, cause not established.
+**It recurred, and it killed that discriminator.** A nine-run batch on Wi-Fi +
+USB tether, both ends instrumented, produced one affected run (`w7`, 12.1%) and
+eight clean ones. The affected run's sender log shows **exactly one**
+`Relay(…) status=Backup prev_status=Available` and **no** flip back to
+`Available` — precisely the signature the clean runs show. So the discriminator
+proposed above is wrong: the relay carries bulk data while the sender still
+believes it is `Backup`, and the sender's relay status line cannot tell an
+affected run from a clean one.
+
+The onset is sharp and it is *not* a startup artefact — 0.0% for four deciles,
+then a ramp that never subsides:
+
+```
+decile   1    2    3    4    5     6     7     8     9    10
+relay% 0.0  0.0  0.0  0.2  4.1  17.4  26.0  24.0  30.5  27.3
+```
+
+It coincides with a sender-side path-churn burst. Between 5.01 s and 5.08 s
+every candidate path — the tether `192.168.106.130`, the Wi-Fi `192.168.1.83`,
+and both IPv6 addresses — is opened, set `Backup`, and abandoned; the receiver
+records its own discontinuity at 4.989 s and the first relay bytes at 5.253 s.
+That is a tight correlation, and it is as far as the evidence goes.
+
+**Three candidate mechanisms were tested against all nine runs and all three
+are refuted:**
+
+| hypothesis | refuted by |
+| --- | --- |
+| the connection is left with no `Available` path, so the scheduler spills to the relay | `w1` reaches zero live-and-`Available` IP paths at 4.54 s and carries **0.0%** relay; `w7` never drops below one and carries 12.1% |
+| the *selected* path is abandoned mid-transfer and never replaced | `w7`'s selected path stays live and selected for the whole transfer (it was opened twice, abandoned once) |
+| the direct path is congested, so bulk spills to the relay | RTT does not separate them — `w4` runs at `rtt_p50` 29.8 ms clean, `w7` at 23.4 ms affected, and the highest `rtt_max` in the batch (429 ms) belongs to a 0.0% run |
+
+One correlate survives, at n=1 and therefore worth nothing on its own: `w7` is
+the only run in the batch whose finally-selected path is the EUI-64 IPv6
+(`…c881:42ff:fed6:c947`); the eight clean runs settle on the USB-tether address
+or on a privacy IPv6. Worth checking on the next recurrence, not worth acting on.
+
+Batch numbers, for the record — 273.5 MiB payload, nine runs, byte-exact every
+time:
+
+```
+16.13  18.10  18.31*  19.40  20.46  20.77  21.12  21.50  23.62  MiB/s   (* = the 12.1% run)
+min/median = 0.79   CV = 10.2%   stalls 0/9
+```
+
+That clears Gate 1's ≥ 0.70 criterion, and note the affected run is *not* the
+slowest in the batch — 12.1% of wire bytes on the relay cost it no measurable
+throughput here.
+
+Left as: instrumentation ready on both ends, reproducible at roughly 1-in-9 in
+the high-throughput regime, three mechanisms excluded, cause not established.
 
 Note that `relay_bytes_ratio` reads 0.0 for every run here, as it did at 0.97 —
 it only counts the selected path, so it cannot see this either way.
