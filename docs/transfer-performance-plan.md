@@ -1111,10 +1111,39 @@ only reach by removing the relay entirely.
 zero-relay runs pass the gate; both runs with any relay share fail it** (60.8%
 and 62.3% p10/p50 against 81.8/87.6/81.4%). The mechanism is unchanged — relay
 participation still costs the tail — it just now happens in a minority of runs
-instead of all of them. Whether the residue is the same scheduling leak or
-something else (a window before the direct path is validated, where
-`may_send_data` legitimately allows the Backup path to carry data) is not yet
-measured.
+instead of all of them.
+
+**The residue is not a startup window.** That was the obvious hypothesis —
+`may_send_data` legitimately lets a Backup path carry data before any path is
+validated — and the decile split refutes it. In both affected runs the relay
+share is **exactly zero for the first four deciles**, switches on mid-transfer
+and never switches off:
+
+| decile | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| run 1 | 0% | 0% | 0% | 0% | 1.4% | 1.8% | 6.4% | 15.8% | 12.1% | 9.6% |
+| run 3 | 0% | 0% | 0% | 0% | 12.2% | 13.1% | 21.2% | 19.3% | 17.2% | 12.5% |
+
+The onset is sharp and lands at the same place in both: the first sample
+carrying more than 100 KiB over relay is at 6503 ms (run 1) and 6253 ms (run 3),
+and from there every remaining sample carries relay bytes, peaking at 1.8 MB in
+a single 250 ms window. Both runs show a path-set churn just before it —
+`path_count` jumping to 4-5, the `path_counter_discontinuity` flag, `cwnd` reset
+to its initial 12000 and RTT halving — while `application_path` stays `direct`
+throughout. So the relay is never *selected*; it is carrying bulk data as a
+non-selected path, which is the original D2 shape at a fifth of the magnitude.
+
+Churn alone is not the trigger, though: run 4 logged three discontinuity events
+and carried no relay bulk at all, and run 5 logged one. Whatever distinguishes
+runs 1 and 3 is not visible in the receiver-side telemetry we currently emit.
+
+One suggestive contrast: the residue appeared only when the **receiver** was also
+1.0 (2 of 5), and never in the three 1.0-sender/0.97-receiver runs below. That
+points at the 1.0 receiver's own `apply_selected_path` churn as the thing that
+occasionally re-opens a lane for the sender to use — a lead, on 5 versus 3 runs,
+not a result. Reproducing with `iroh::socket` and `noq_proto::connection` at
+debug level is the next step; the phone has no Rust-to-logcat wiring, so only the
+receiver side can be instrumented without adding one.
 
 Note that `relay_bytes_ratio` reads 0.0 for every run here, as it did at 0.97 —
 it only counts the selected path, so it cannot see this either way.
@@ -1133,29 +1162,32 @@ pre-upgrade release APK (iroh 0.97) sending to the upgraded desktop CLI (iroh
 three times out of three. **The wire protocol did not break** — `iroh_blobs::ALPN`
 is `/iroh-bytes/4` in both iroh-blobs 0.99 and 0.103.
 
-What does change is throughput. Same rig, same payload, three runs:
+What does change is throughput, and **all four pairings say the same thing: the
+sender's version is what decides.** Same rig, same payload throughout:
 
-| pairing | p10 median | p50 median | relay share of wire bytes | passes Gate-1 |
-| --- | --- | --- | --- | --- |
-| 0.97 → 0.97 | 8.3 MiB/s | 18.6 MiB/s | 16.1% | 0/4 |
-| **0.97 → 1.0.3 (mixed)** | **6.7 MiB/s** | **10.4 MiB/s** | **31.7 / 32.0 / 38.0%** | **0/3** |
-| 1.0.3 → 1.0.3 | 18.3 MiB/s | 21.9 MiB/s | 0 / 0 / 0 / 4.3 / 8.5% | 3/5 |
+| pairing | sender | receiver | p10 median | p50 median | relay share of wire bytes | passes Gate-1 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.97 → 0.97 | 0.97 | 0.97 | 8.3 MiB/s | 18.6 MiB/s | 16.1% | 0/4 |
+| 0.97 → 1.0.3 | **0.97** | 1.0.3 | 6.7 MiB/s | 10.4 MiB/s | 31.7 / 32.0 / 38.0% | 0/3 |
+| 1.0.3 → 1.0.3 | **1.0.3** | 1.0.3 | 18.3 MiB/s | 21.9 MiB/s | 0 / 0 / 0 / 4.3 / 8.5% | 3/5 |
+| **1.0.3 → 0.97** | **1.0.3** | 0.97 | **18.2 MiB/s** | **25.4 MiB/s** | **0 / 0 / 0%** | **3/3** |
 
-The mixed pair is the worst of the three: roughly double the relay share of the
-homogeneous 0.97 pair and about half the throughput of the homogeneous 1.0 pair,
-consistently across all three runs (`fetch_store` 23.9-28.3 s against 11.9-14.3 s).
+An old sender is slow whoever it talks to; a new sender is fast whoever it talks
+to, including a 0.97 receiver it has no business being faster with. That is
+exactly what the code says should happen — `may_send_data` is a **sender-side**
+scheduling decision, so upgrading the side that transmits is what buys the win.
 
-A plausible reading — not measured, so treat it as a hypothesis — is that the
-1.0 receiver now re-marks every non-selected path `Backup` dynamically, while the
-0.97 sender's noq-proto 0.16 scheduler only honours that when its own
-`have_available_path` conditions all hold, and so falls back to spreading across
-every path more often than it did against a 0.97 peer.
+The receiver version still modulates it. The old sender does *worse* against a
+1.0 receiver (32-38% relay) than against a 0.97 one (16.1%), which fits the 1.0
+receiver re-marking every non-selected path `Backup` dynamically and closing
+redundant IP paths while the 0.16 sender only honours that when its own
+`have_available_path` conditions hold. Stated as a hypothesis; not measured.
 
-Consequence for releasing: this is not a compatibility blocker, but a mixed fleet
-is measurably worse than either homogeneous one, so the desktop and mobile
-releases want to go out together rather than staggered. Only the
-old-sender/new-receiver direction was measured; new-sender/old-receiver would
-need an old desktop binary and has not been tested.
+Consequence for releasing: **not a compatibility blocker.** A device that has
+been upgraded sends at full speed immediately, even to peers that have not been.
+There is no reason to hold one platform's release for the other — but a device
+left on 0.97 keeps its slow *outbound* transfers, and gets slower still once its
+peers upgrade, so the old build is worth retiring rather than leaving to age.
 
 - For many small files: A/B concurrency 1/2/4/8 with a bounded queue and a memory
   limit.
