@@ -103,6 +103,52 @@ mod android_telemetry {
     }
 }
 
+/// Log filter override read from the `debug.wisp.log` Android system property.
+///
+/// `RUST_LOG` is the normal way in, but nothing sets an environment variable for
+/// an app launched from the launcher, so on-device diagnosis otherwise means
+/// rebuilding with a different default. `adb shell setprop debug.wisp.log
+/// "warn,iroh::socket=debug"` followed by a restart of the app is enough, and
+/// `debug.`-prefixed properties are writable from adb without root.
+///
+/// Values are capped at bionic's `PROP_VALUE_MAX` (92 bytes), which fits the
+/// filters worth typing; anything longer is silently truncated by the platform,
+/// so a truncated directive is dropped by `EnvFilter` rather than misparsed.
+#[cfg(target_os = "android")]
+fn property_log_filter() -> Option<tracing_subscriber::EnvFilter> {
+    use std::ffi::{c_char, c_int, CStr, CString};
+
+    const PROP_NAME: &str = "debug.wisp.log";
+    const PROP_VALUE_MAX: usize = 92;
+
+    unsafe extern "C" {
+        fn __system_property_get(name: *const c_char, value: *mut c_char) -> c_int;
+    }
+
+    let name = CString::new(PROP_NAME).ok()?;
+    // One byte over PROP_VALUE_MAX so a maximum-length value stays NUL-terminated.
+    let mut buffer = [0u8; PROP_VALUE_MAX + 1];
+    let written = unsafe { __system_property_get(name.as_ptr(), buffer.as_mut_ptr().cast()) };
+    if written <= 0 {
+        return None;
+    }
+    let value = CStr::from_bytes_until_nul(&buffer)
+        .ok()?
+        .to_str()
+        .ok()?
+        .trim();
+    if value.is_empty() {
+        return None;
+    }
+    // Reject a filter we cannot parse rather than starting with no filter at all.
+    tracing_subscriber::EnvFilter::try_new(value).ok()
+}
+
+#[cfg(not(target_os = "android"))]
+fn property_log_filter() -> Option<tracing_subscriber::EnvFilter> {
+    None
+}
+
 fn log_filter(base: &str, transfer_telemetry_enabled: bool) -> tracing_subscriber::EnvFilter {
     let filter = tracing_subscriber::EnvFilter::new(base);
     if transfer_telemetry_enabled {
@@ -118,9 +164,12 @@ fn log_filter(base: &str, transfer_telemetry_enabled: bool) -> tracing_subscribe
 
 #[flutter_rust_bridge::frb(init)]
 pub fn init_app() {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        tracing_subscriber::EnvFilter::new("warn,wisp_core=info,wisp_app=info,wisp_bridge=info")
-    });
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .ok()
+        .or_else(property_log_filter)
+        .unwrap_or_else(|| {
+            tracing_subscriber::EnvFilter::new("warn,wisp_core=info,wisp_app=info,wisp_bridge=info")
+        });
     let base_filter = filter.to_string();
     let (filter, reload_handle) = tracing_subscriber::reload::Layer::new(filter);
 
