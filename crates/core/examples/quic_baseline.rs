@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use iroh::endpoint::{QuicTransportConfig, VarInt};
 use iroh::{Endpoint, RelayMode, endpoint::presets};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use wisp_core::util::{decode_ticket, make_ticket_offline};
 
 const ALPN: &[u8] = b"wisp/quic-baseline/0";
@@ -106,7 +106,15 @@ async fn bind(send_window_kib: Option<u64>) -> Result<Endpoint> {
         .context("bind endpoint")
 }
 
-async fn run_sink() -> Result<()> {
+/// `--to-file PATH` makes the sink write what it receives, mirroring the
+/// receiver's store write. The null sink measures the transport alone; the
+/// difference between the two is what landing the bytes on disk costs, which
+/// is the receiver half of the gap between this baseline and the app.
+///
+/// Writes go through a bounded channel to a writer task for the same reason the
+/// file source does: a write inline in the read loop measures its own lack of
+/// pipelining rather than the disk.
+async fn run_sink(to_file: Option<&str>) -> Result<()> {
     let endpoint = bind(None).await?;
     let ticket = make_ticket_offline(&endpoint).context("build ticket")?;
     println!("TICKET {ticket}");
@@ -127,7 +135,28 @@ async fn run_sink() -> Result<()> {
     let mut windows: Vec<u64> = Vec::new();
     let mut window_start: Option<Instant> = None;
     let mut window_bytes = 0u64;
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4);
+    let writer = to_file.map(|path| {
+        let path = path.to_owned();
+        tokio::spawn(async move {
+            let mut file = tokio::fs::File::create(&path)
+                .await
+                .with_context(|| format!("create {path}"))?;
+            while let Some(chunk) = rx.recv().await {
+                file.write_all(&chunk).await.context("write sink file")?;
+            }
+            // fsync, because the receiver's durability cost is part of the
+            // comparison and a buffered write that never lands is not a write.
+            file.sync_all().await.context("fsync sink file")?;
+            anyhow::Ok(())
+        })
+    });
+
     while let Some(n) = stream.read(&mut buf).await.context("read")? {
+        if writer.is_some() && tx.send(buf[..n].to_vec()).await.is_err() {
+            bail!("sink writer task ended early");
+        }
         let now = Instant::now();
         if start.is_none() {
             start = Some(now);
@@ -142,6 +171,10 @@ async fn run_sink() -> Result<()> {
             window_bytes = 0;
             window_start = Some(now);
         }
+    }
+    drop(tx);
+    if let Some(writer) = writer {
+        writer.await.context("sink writer task")??;
     }
     let secs = start.map(|s| s.elapsed().as_secs_f64()).unwrap_or(0.0);
     let mib = total as f64 / (1024.0 * 1024.0);
@@ -250,7 +283,14 @@ async fn run_source(
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
-        Some("sink") => run_sink().await,
+        Some("sink") => {
+            let to_file = args
+                .iter()
+                .position(|a| a == "--to-file")
+                .and_then(|i| args.get(i + 1))
+                .map(String::as_str);
+            run_sink(to_file).await
+        }
         Some("source") => {
             let ticket = args
                 .get(2)
@@ -278,7 +318,7 @@ async fn main() -> Result<()> {
             run_source(ticket, mib, from_file, send_window_kib).await
         }
         _ => bail!(
-            "usage: quic_baseline sink | quic_baseline source <ticket> [--mib N] [--from-file PATH] [--send-window-kib N]"
+            "usage: quic_baseline sink [--to-file PATH] | quic_baseline source <ticket> [--mib N] [--from-file PATH] [--send-window-kib N]"
         ),
     }
 }

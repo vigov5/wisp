@@ -1757,6 +1757,47 @@ changes. The knob for doing that already exists as `debug.wisp.stream_win_mib`,
 though note it moves *both* windows together, so a proper app-side test wants
 `send_window` decoupled first.
 
+#### The receiving end is not where the remaining 12% goes
+
+Two measurements, both against the same phone-side file source.
+
+**Disk write is free.** A sink that writes every byte and `fsync`s runs at
+24.10 MiB/s median against 24.60 for a sink that discards them (n=5 each,
+ranges 23.6-26.0 and 22.2-25.2 — overlapping). That matches the desktop's
+601 MiB/s write baseline: at ~24 MiB/s the disk is two orders of magnitude away
+from mattering.
+
+**Receiver CPU is modestly higher and not saturated.** Processor time consumed
+receiving the same 273.5 MiB, three runs each:
+
+| receiver | CPU | range |
+| --- | --- | --- |
+| baseline sink (transport + disk write) | 18.14 cpu-s | 15.4-19.4 |
+| app receiver (+ BAO verify, store, protocol) | 21.05 cpu-s | 18.9-25.4 |
+
+So everything the app adds on the receiving end costs about **3 cpu-s, ~16%**
+more CPU — but over an ~12 s transfer that is 1.75 cores on a many-core desktop,
+nowhere near saturation. Combined with the sender's 1.6 of 8 cores, **neither
+end is CPU-bound**, and the remaining ~12% does not resolve to a single
+component. It is spread work, not a bottleneck with a name.
+
+Three traps in taking these numbers, all of which produced confident wrong
+answers first:
+
+- **Sample while the bytes are moving.** The driver waits for the UI to settle
+  after tapping Send, and the transfer finishes inside that wait — so a
+  before/after pair taken around the driver call brackets an already-finished
+  transfer and reports ~0 cpu-s. Poll concurrently with the driver instead.
+- **One process per name.** A leftover receiver from an earlier experiment made
+  `Get-Process -Name wisp` ambiguous, and the reading silently came from an idle
+  process. Assert there are no strays before starting.
+- **A stray receiver also changes the transport.** It holds presence port 47474,
+  `PresenceResponder::bind` then fails, the receiver logs
+  `receiver.lan_advertising_unavailable`, and the app falls back to the USB-cable
+  transport — which moves the whole payload with **zero** QUIC telemetry. A run
+  that transfers the right number of bytes is not evidence it used the path you
+  think. Check for telemetry samples, not just the byte count.
+
 ## 12. Check commands
 
 ```powershell
