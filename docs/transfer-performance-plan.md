@@ -1715,6 +1715,48 @@ leaves the 12000-byte initial window because the receiver only sends ACKs. It
 reads 12000 in 58% of samples and never exceeds 13326, which looks like a broken
 metric and is not one.
 
+#### Measured: the send window is the bufferbloat knob, and `stream_receive_window` is not
+
+Sweeping the app's `stream_receive_window` over 8 / 4 / 1 MiB changed nothing —
+25.4 / 24.9 / 25.4 MiB/s, RTT no better. That knob cannot test this, and the
+reason is worth stating because it is easy to get backwards:
+
+- `stream_receive_window` is what an endpoint advertises for streams it
+  **receives**. On a phone → desktop transfer the flow-control limit on the data
+  is therefore the *desktop's* window, not the phone's. This is the knob the
+  relay-ceiling rationale above is about, and it should stay where it is.
+- `send_window` caps the sender's own bytes in flight. It is currently derived
+  as `8 x stream_receive_window`, so raising the receive window for the relay
+  silently raised this to **64 MiB** as a side effect. That coupling is the
+  accident — quinn's default ratio applied to a window that was raised for an
+  unrelated reason.
+
+Sweeping `send_window` directly in `quic_baseline`, five runs each, 256 MiB over
+the tether:
+
+| `send_window` | throughput median (range) | RTT median | packets lost over 5 runs |
+| --- | --- | --- | --- |
+| 64 MiB (today's derived value) | 22.8 MiB/s (20.3-26.7) | 28.9 ms | **15,037** |
+| 2 MiB | 21.6 MiB/s (20.8-21.8) | 20.0 ms | 30 |
+| 1 MiB | 18.8 MiB/s (18.5-19.2) | 13.5 ms | 0 |
+
+Below that it falls away steadily — 256 KiB gives 13.1 MiB/s and 128 KiB gives
+10.7, so the window does become the limiter once it approaches the ~78 KB BDP.
+
+**2 MiB looks like the trade to make on this path**: 5% off median throughput
+for 31% lower RTT under load and a 99.8% cut in lost packets. It also collapses
+the spread — the default's 20.3-26.7 MiB/s becomes 20.8-21.8, which is the
+p10/median stability the acceptance criteria actually grade.
+
+Two things this does not establish. **Relay is unmeasured**: 2 MiB at a 100 ms
+relay RTT implies a 20 MiB/s ceiling, comfortably above what relay paths carry
+here, so no regression is *expected* — but that is arithmetic, not a
+measurement, and it needs one before shipping. And this is `quic_baseline`, not
+the app; the app should be re-measured with the same cap before the constant
+changes. The knob for doing that already exists as `debug.wisp.stream_win_mib`,
+though note it moves *both* windows together, so a proper app-side test wants
+`send_window` decoupled first.
+
 ## 12. Check commands
 
 ```powershell

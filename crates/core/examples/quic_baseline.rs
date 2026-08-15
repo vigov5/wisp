@@ -45,12 +45,24 @@ const STREAM_RECEIVE_WINDOW_BYTES: u32 = 8 * 1024 * 1024;
 #[cfg(not(target_os = "android"))]
 const STREAM_RECEIVE_WINDOW_BYTES: u32 = 16 * 1024 * 1024;
 
-fn transport_config() -> QuicTransportConfig {
+/// `--send-window-kib N` caps bytes in flight, defaulting to the app's 8x rule.
+///
+/// Sweeping this is how the bufferbloat reading gets tested. Note the app's
+/// `stream_receive_window` knob cannot do it: that governs streams the endpoint
+/// *receives*, so on a phone-to-desktop transfer the flow-control limit is the
+/// desktop's window and only `send_window` constrains the sender. A sweep of
+/// 8-64 MiB send window on a link whose bandwidth-delay product is ~78 KB never
+/// binds at all, which is why it came back flat.
+fn transport_config(send_window_kib: Option<u64>) -> QuicTransportConfig {
+    let send_window = match send_window_kib {
+        Some(kib) => kib * 1024,
+        None => 8u64 * u64::from(STREAM_RECEIVE_WINDOW_BYTES),
+    };
     QuicTransportConfig::builder()
         .default_path_max_idle_timeout(Duration::from_millis(6_000))
         .default_path_keep_alive_interval(Duration::from_millis(4_500))
         .stream_receive_window(VarInt::from_u32(STREAM_RECEIVE_WINDOW_BYTES))
-        .send_window(8u64 * u64::from(STREAM_RECEIVE_WINDOW_BYTES))
+        .send_window(send_window)
         .build()
 }
 
@@ -84,18 +96,18 @@ fn report_windows(windows: &[u64]) {
     );
 }
 
-async fn bind() -> Result<Endpoint> {
+async fn bind(send_window_kib: Option<u64>) -> Result<Endpoint> {
     Endpoint::builder(presets::N0)
         .alpns(vec![ALPN.to_vec()])
         .relay_mode(RelayMode::Disabled)
-        .transport_config(transport_config())
+        .transport_config(transport_config(send_window_kib))
         .bind()
         .await
         .context("bind endpoint")
 }
 
 async fn run_sink() -> Result<()> {
-    let endpoint = bind().await?;
+    let endpoint = bind(None).await?;
     let ticket = make_ticket_offline(&endpoint).context("build ticket")?;
     println!("TICKET {ticket}");
     println!("waiting for one connection");
@@ -144,9 +156,14 @@ async fn run_sink() -> Result<()> {
     Ok(())
 }
 
-async fn run_source(ticket: &str, mib: usize, from_file: Option<&str>) -> Result<()> {
+async fn run_source(
+    ticket: &str,
+    mib: usize,
+    from_file: Option<&str>,
+    send_window_kib: Option<u64>,
+) -> Result<()> {
     let addr = decode_ticket(ticket).context("decode ticket")?;
-    let endpoint = bind().await?;
+    let endpoint = bind(send_window_kib).await?;
     let connection = endpoint.connect(addr, ALPN).await.context("connect")?;
     let mut stream = connection.open_uni().await.context("open uni stream")?;
 
@@ -208,8 +225,20 @@ async fn run_source(ticket: &str, mib: usize, from_file: Option<&str>) -> Result
     // the source does not report a time that only measures filling buffers.
     connection.closed().await;
     let secs = start.elapsed().as_secs_f64();
+    // RTT under load is the point of the send-window sweep: a window far above
+    // the path's bandwidth-delay product shows up here as inflated RTT, not as
+    // lower throughput.
+    let (rtt_ms, cwnd, lost) = connection
+        .paths()
+        .iter()
+        .find(|p| p.is_selected())
+        .map(|p| {
+            let s = p.stats();
+            (s.rtt.as_secs_f64() * 1000.0, s.cwnd, s.lost_packets)
+        })
+        .unwrap_or((0.0, 0, 0));
     println!(
-        "source: {mib} MiB in {secs:.2}s = {:.1} MiB/s",
+        "source: {mib} MiB in {secs:.2}s = {:.1} MiB/s  rtt={rtt_ms:.1}ms cwnd={cwnd} lost={lost}",
         mib as f64 / secs
     );
 
@@ -239,10 +268,17 @@ async fn main() -> Result<()> {
                 .position(|a| a == "--from-file")
                 .and_then(|i| args.get(i + 1))
                 .map(String::as_str);
-            run_source(ticket, mib, from_file).await
+            let send_window_kib = args
+                .iter()
+                .position(|a| a == "--send-window-kib")
+                .and_then(|i| args.get(i + 1))
+                .map(|v| v.parse::<u64>())
+                .transpose()
+                .context("--send-window-kib expects a number")?;
+            run_source(ticket, mib, from_file, send_window_kib).await
         }
         _ => bail!(
-            "usage: quic_baseline sink | quic_baseline source <ticket> [--mib N] [--from-file PATH]"
+            "usage: quic_baseline sink | quic_baseline source <ticket> [--mib N] [--from-file PATH] [--send-window-kib N]"
         ),
     }
 }
