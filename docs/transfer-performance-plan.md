@@ -1106,6 +1106,23 @@ consecutive runs, every one byte-exact at 286,781,694:
 With the relay still enabled, 1.0 now matches — slightly beats — what 0.97 could
 only reach by removing the relay entirely.
 
+> **Read the absolute MiB/s across these tables with care.** Repeating the
+> identical 1.0.3 → 1.0.3 run later the same day gave p10 9.3-9.8 MiB/s and p50
+> 11.6-11.9 MiB/s over eleven runs — **about half** the 18.3/21.9 above, from the
+> same code, rig and payload. The Wi-Fi link itself moves by roughly 2x between
+> morning and afternoon here. Every batch in this document was measured in one
+> sitting, so *within* a batch the comparison is sound, but a p10 taken from one
+> batch cannot be subtracted from a p10 taken from another. The 0.97 A/B was
+> internally alternating, which is why its two arms are comparable to each other
+> and not directly to the 1.0.3 column.
+>
+> What does survive across sessions are the **within-run ratios** — relay share
+> of wire bytes, p10/p50, CV, pass rate — because they are computed inside a
+> single transfer. Those are the numbers the conclusions below rest on. On that
+> footing the claim is: **1.0 with the relay enabled behaves like 0.97 with the
+> relay disabled** — relay share ~0, p10/p50 in the high-70s-to-80s, most runs
+> passing — rather than any specific MiB/s figure.
+
 **The effect is reduced, not eliminated.** Two of five runs still put 4.3% and
 8.5% of wire bytes over a relay path, and the split is exact: **all three
 zero-relay runs pass the gate; both runs with any relay share fail it** (60.8%
@@ -1137,13 +1154,32 @@ Churn alone is not the trigger, though: run 4 logged three discontinuity events
 and carried no relay bulk at all, and run 5 logged one. Whatever distinguishes
 runs 1 and 3 is not visible in the receiver-side telemetry we currently emit.
 
-One suggestive contrast: the residue appeared only when the **receiver** was also
-1.0 (2 of 5), and never in the three 1.0-sender/0.97-receiver runs below. That
-points at the 1.0 receiver's own `apply_selected_path` churn as the thing that
-occasionally re-opens a lane for the sender to use — a lead, on 5 versus 3 runs,
-not a result. Reproducing with `iroh::socket` and `noq_proto::connection` at
-debug level is the next step; the phone has no Rust-to-logcat wiring, so only the
-receiver side can be instrumented without adding one.
+**It did not reproduce at all in a later session.** Eleven further 1.0.3 → 1.0.3
+runs — six with `iroh::socket`, `iroh::_events` and `noq_proto::connection` at
+debug, five without — all came back at 0.0% relay. Logging is not what suppressed
+it: the five uninstrumented controls behaved exactly like the six instrumented
+ones, which rules out an observer effect. If the true rate were the 2-in-5 seen
+earlier, eleven consecutive misses would be a 0.4% event, so the rate genuinely
+differed between sessions.
+
+The distinguishing variable is not RTT. The two affected runs had `rtt_p50` of
+71 ms, the *lowest* of their batch; the clean runs in the same batch were at 96
+and 116 ms. What did change between sessions is the link itself: the later batch
+runs at 11.6-11.9 MiB/s p50 against 20.5-23.2 for the earlier one. So the residue
+appears in the high-throughput regime and not in the low one, which is a
+correlation on two batches and no mechanism.
+
+The instrumented runs at least establish the clean baseline precisely. All six
+are identical: exactly one relay path (`fd15:…:12345`) opens ~0.4 s into the
+connection, the peer marks it `Backup` ~0.7 s later, and the periodic
+NAT-traversal burst at ~5.4 s only re-probes `path_id 0`, the direct path, with
+`new_path: false`. The receiver's side of the marking is completely consistent —
+`['Available', 'Backup']`, every run — so whatever admits bulk data onto that
+Backup path is decided on the **sender**, which is also where `may_send_data`
+lives. The phone has no Rust-to-logcat wiring, so instrumenting that side means
+adding a logger to the bridge first.
+
+Left as: reproducible only in a faster-link regime, cause not established.
 
 Note that `relay_bytes_ratio` reads 0.0 for every run here, as it did at 0.97 —
 it only counts the selected path, so it cannot see this either way.
@@ -1176,6 +1212,19 @@ An old sender is slow whoever it talks to; a new sender is fast whoever it talks
 to, including a 0.97 receiver it has no business being faster with. That is
 exactly what the code says should happen — `may_send_data` is a **sender-side**
 scheduling decision, so upgrading the side that transmits is what buys the win.
+
+**The MiB/s columns here are confounded and the relay column is not.** These four
+batches were measured hours apart, and the link moves about 2x over that span
+(see the note above): a later 1.0.3 → 1.0.3 batch came in at p50 11.6 MiB/s
+against the 21.9 in this table. So the throughput ordering between *pairings* is
+not established by these numbers alone.
+
+The relay share is, and it happens to have a matched-throughput control. The
+0.97 → 1.0.3 batch ran at p50 10.4 MiB/s with **32-38%** of wire bytes over a
+relay; the later 1.0.3 → 1.0.3 batch ran at essentially the same p50, 11.6 MiB/s,
+with **0%**. Same link regime, same receiver, opposite relay behaviour — the only
+difference is the sender's version. That comparison carries the conclusion; the
+p10 figures merely agree with it.
 
 The receiver version still modulates it. The old sender does *worse* against a
 1.0 receiver (32-38% relay) than against a 0.97 one (16.1%), which fits the 1.0
