@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error as StdError;
 use std::io::ErrorKind;
 use std::mem::ManuallyDrop;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
@@ -52,7 +52,9 @@ const CACHE_TTL: Duration = Duration::from_secs(30);
 /// Allows the next scan to immediately presence-ping known IPs without waiting for a
 /// fresh mDNS re-announce (SRV TTL = 120 s).
 struct CachedEntry {
-    ip: Ipv4Addr,
+    /// Either family — a peer can be confirmed over IPv6 when its mDNS record
+    /// carried only AAAA records.
+    ip: IpAddr,
     /// Presence-ping port (always WISP_LAN_PRESENCE_PORT for confirmed peers).
     port: u16,
     receiver: NearbyReceiver,
@@ -383,7 +385,14 @@ fn parse_presence_pong(buf: &[u8], expected_nonce: u64) -> bool {
 /// would have to guess 1-in-2^64), so the source-IP check added no real
 /// security — only false negatives.
 pub fn presence_ping(target: SocketAddr, timeout: Duration) -> std::result::Result<(), LanError> {
-    let socket = UdpSocket::bind("0.0.0.0:0").map_err(|source| LanError::Io {
+    // The local socket has to match the target's family: sending to an IPv6
+    // peer from an `0.0.0.0` socket fails outright, which is how AAAA-only
+    // mDNS records used to be misread as "device not reachable".
+    let bind_addr = match target {
+        SocketAddr::V4(_) => "0.0.0.0:0",
+        SocketAddr::V6(_) => "[::]:0",
+    };
+    let socket = UdpSocket::bind(bind_addr).map_err(|source| LanError::Io {
         context: "presence ping bind",
         source,
     })?;
@@ -573,8 +582,40 @@ pub async fn filter_endpoint_addr_by_presence_on_port(
     addr
 }
 
-/// Tries each IPv4 until one answers the presence ping; returns the responding address.
-fn verify_presence(info: &mdns_sd::ResolvedService) -> Option<Ipv4Addr> {
+/// Presence-ping targets for an mDNS record's addresses, IPv4 first.
+///
+/// Both families have to be covered: the advertiser uses `enable_addr_auto()`,
+/// which publishes every address the host has, so a resolution can legitimately
+/// arrive carrying only AAAA records — the A record for that interface simply
+/// has not landed in the resolver cache yet. Reading only the IPv4 set turned
+/// those into "device not reachable" and dropped the peer for the whole scan,
+/// which is the "device intermittently never appears" bug.
+///
+/// IPv4 goes first because it is the common case, so the usual path does not
+/// pay a v6 timeout. A link-local `fe80::` carries its scope id into the
+/// `SocketAddrV6`; without it the send fails with `EINVAL`.
+fn presence_targets(addresses: &HashSet<mdns_sd::ScopedIp>, port: u16) -> Vec<SocketAddr> {
+    let mut targets: Vec<SocketAddr> = Vec::with_capacity(addresses.len());
+    for scoped in addresses {
+        if let mdns_sd::ScopedIp::V4(v4) = scoped {
+            targets.push(SocketAddr::new(IpAddr::V4(*v4.addr()), port));
+        }
+    }
+    for scoped in addresses {
+        if let mdns_sd::ScopedIp::V6(v6) = scoped {
+            targets.push(SocketAddr::V6(SocketAddrV6::new(
+                *v6.addr(),
+                port,
+                0,
+                v6.scope_id().index,
+            )));
+        }
+    }
+    targets
+}
+
+/// Tries each address until one answers the presence ping; returns the responder.
+fn verify_presence(info: &mdns_sd::ResolvedService) -> Option<IpAddr> {
     if info.get_port() != WISP_LAN_PRESENCE_PORT {
         warn!(
             service = %info.get_fullname(),
@@ -584,14 +625,14 @@ fn verify_presence(info: &mdns_sd::ResolvedService) -> Option<Ipv4Addr> {
         );
         return None;
     }
-    let addrs: Vec<_> = info.get_addresses_v4().into_iter().collect();
-    if addrs.is_empty() {
-        warn!(service = %info.get_fullname(), "lan_scan.verify_presence: no IPv4 addresses in record");
+    let targets = presence_targets(info.get_addresses(), info.get_port());
+    if targets.is_empty() {
+        warn!(service = %info.get_fullname(), "lan_scan.verify_presence: no addresses in record");
         return None;
     }
     let timeout = Duration::from_millis(400);
-    for ip in &addrs {
-        let target = SocketAddr::new(IpAddr::V4(*ip), info.get_port());
+    for target in &targets {
+        let target = *target;
         match presence_ping(target, timeout) {
             Ok(()) => {
                 debug!(
@@ -599,7 +640,7 @@ fn verify_presence(info: &mdns_sd::ResolvedService) -> Option<Ipv4Addr> {
                     %target,
                     "lan_scan.presence_ping: OK",
                 );
-                return Some(*ip);
+                return Some(target.ip());
             }
             Err(ref e) => {
                 debug!(
@@ -613,7 +654,7 @@ fn verify_presence(info: &mdns_sd::ResolvedService) -> Option<Ipv4Addr> {
     }
     warn!(
         service = %info.get_fullname(),
-        ips = ?addrs,
+        ips = ?targets,
         "lan_scan.verify_presence: all IPs failed ping — device not reachable",
     );
     None
@@ -622,40 +663,77 @@ fn verify_presence(info: &mdns_sd::ResolvedService) -> Option<Ipv4Addr> {
 /// Answers [`WISP_LAN_PRESENCE_PORT`] UDP datagrams while alive.
 pub struct PresenceResponder {
     stop: Arc<AtomicBool>,
-    join: Option<JoinHandle<()>>,
+    joins: Vec<JoinHandle<()>>,
 }
 
 impl PresenceResponder {
     pub fn bind(port: u16) -> std::result::Result<Self, LanError> {
-        let socket = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], port))).map_err(|source| {
-            LanError::Io {
-                context: "binding presence UDP",
-                source,
-            }
-        })?;
-        socket
-            .set_read_timeout(Some(Duration::from_millis(500)))
-            .map_err(|source| LanError::Io {
-                context: "presence responder set_read_timeout",
-                source,
-            })?;
-
         let stop = Arc::new(AtomicBool::new(false));
-        let stop_t = Arc::clone(&stop);
-        let join = std::thread::Builder::new()
-            .name("wisp-lan-presence".into())
-            .spawn(move || run_presence_loop(socket, stop_t))
-            .map_err(|source| LanError::SpawnPresenceThread { source })?;
+        let mut joins = Vec::new();
 
-        Ok(Self {
-            stop,
-            join: Some(join),
-        })
+        // Both families must answer. The advertiser uses `enable_addr_auto()`,
+        // so a record can carry AAAA records only; a scanner that resolves one
+        // of those has no IPv4 to ping and used to drop the peer for the whole
+        // scan — the "device intermittently never appears" bug.
+        //
+        // IPv6 is bound *first* and IPv4's "address in use" is then tolerated,
+        // because the two families share the port differently per platform:
+        // Linux and Android default `bindv6only` to 0, so `[::]` already covers
+        // IPv4 (as v4-mapped) and a second `0.0.0.0` bind fails; Windows
+        // defaults it to 1, so both binds are needed and both succeed. Binding
+        // IPv4 first would therefore make the IPv6 socket fail on exactly the
+        // platform this bug shows up on.
+        let v6 = Self::listener(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)));
+        let have_v6 = v6.is_ok();
+        match v6 {
+            Ok(sock) => joins.push(Self::spawn(
+                "wisp-lan-presence-v6",
+                sock,
+                Arc::clone(&stop),
+            )?),
+            Err(e) => debug!(error = %e, "lan_presence.v6_bind_skipped"),
+        }
+
+        match Self::listener(SocketAddr::from(([0, 0, 0, 0], port))) {
+            Ok(sock) => joins.push(Self::spawn("wisp-lan-presence", sock, Arc::clone(&stop))?),
+            // Dual-stack socket already serves IPv4; nothing more to bind.
+            // Only expected off Windows — there `bindv6only` is 1, the two
+            // sockets are independent, and an in-use IPv4 port is a real
+            // failure rather than this case.
+            Err(e) if have_v6 && !cfg!(windows) && e.kind() == std::io::ErrorKind::AddrInUse => {
+                debug!("lan_presence.v4_served_by_dual_stack");
+            }
+            Err(source) => {
+                return Err(LanError::Io {
+                    context: "binding presence UDP",
+                    source,
+                });
+            }
+        }
+
+        Ok(Self { stop, joins })
+    }
+
+    fn listener(addr: SocketAddr) -> std::io::Result<UdpSocket> {
+        let socket = UdpSocket::bind(addr)?;
+        socket.set_read_timeout(Some(Duration::from_millis(500)))?;
+        Ok(socket)
+    }
+
+    fn spawn(
+        name: &str,
+        socket: UdpSocket,
+        stop: Arc<AtomicBool>,
+    ) -> std::result::Result<JoinHandle<()>, LanError> {
+        std::thread::Builder::new()
+            .name(name.into())
+            .spawn(move || run_presence_loop(socket, stop))
+            .map_err(|source| LanError::SpawnPresenceThread { source })
     }
 
     fn shutdown(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        if let Some(j) = self.join.take() {
+        for j in self.joins.drain(..) {
             let _ = j.join();
         }
     }
@@ -1096,7 +1174,7 @@ pub fn browse_nearby_receivers(
     // Snapshot the IP cache and start pinging known IPs in parallel threads.
     // Each ping has a 300 ms deadline; since they run concurrently the total
     // wait is bounded by one ping round-trip regardless of how many entries exist.
-    let cache_snapshot: Vec<(String, Ipv4Addr, u16, NearbyReceiver)> = {
+    let cache_snapshot: Vec<(String, IpAddr, u16, NearbyReceiver)> = {
         let cache = peer_cache().lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         cache
@@ -1109,7 +1187,7 @@ pub fn browse_nearby_receivers(
         .into_iter()
         .map(|(ticket, ip, port, receiver)| {
             std::thread::spawn(move || {
-                let target = SocketAddr::new(IpAddr::V4(ip), port);
+                let target = SocketAddr::new(ip, port);
                 match presence_ping(target, Duration::from_millis(300)) {
                     Ok(()) => {
                         debug!(%ip, %port, label = %receiver.label, "lan_scan.cache_hit");
@@ -1147,7 +1225,7 @@ pub fn browse_nearby_receivers(
     // Collect cache hits (≤300 ms, overlaps with mDNS daemon startup).
     // Both maps are keyed by *ticket* so mDNS and broadcast results dedup naturally.
     let mut peers: HashMap<String, NearbyReceiver> = HashMap::new();
-    let mut peer_ips: HashMap<String, (Ipv4Addr, u16)> = HashMap::new();
+    let mut peer_ips: HashMap<String, (IpAddr, u16)> = HashMap::new();
     for handle in cache_ping_handles {
         if let Ok(Some((ticket, ip, port, receiver))) = handle.join() {
             peer_ips.entry(ticket.clone()).or_insert((ip, port));
@@ -1242,7 +1320,7 @@ pub fn browse_nearby_receivers(
             // Record IP for cache update (don't overwrite if mDNS already has it).
             peer_ips
                 .entry(ticket.clone())
-                .or_insert((ip, WISP_LAN_PRESENCE_PORT));
+                .or_insert((IpAddr::V4(ip), WISP_LAN_PRESENCE_PORT));
             // Only insert if this ticket wasn't already seen via mDNS.
             peers.entry(ticket).or_insert(peer);
         }
@@ -1536,5 +1614,100 @@ mod tests {
 
         stop.store(true, Ordering::SeqCst);
         join.join().unwrap();
+    }
+
+    /// The advertiser publishes every host address via `enable_addr_auto()`, so
+    /// a resolution can arrive carrying only AAAA records. Both the ping and the
+    /// responder used to be IPv4-only, which turned those into "device not
+    /// reachable" and dropped the peer for the whole scan.
+    #[test]
+    fn presence_ping_pong_over_ipv6() {
+        let socket = match UdpSocket::bind("[::1]:0") {
+            Ok(socket) => socket,
+            // No IPv6 stack on this host, or the sandbox forbids the bind.
+            Err(_) => return,
+        };
+        let port = socket.local_addr().unwrap().port();
+        socket
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_t = Arc::clone(&stop);
+        let join = std::thread::spawn(move || run_presence_loop(socket, stop_t));
+
+        let target = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, port, 0, 0));
+        let result = presence_ping(target, Duration::from_secs(1));
+
+        stop.store(true, Ordering::SeqCst);
+        join.join().unwrap();
+        result.expect("ping over IPv6");
+    }
+
+    fn scoped(addrs: &[IpAddr]) -> HashSet<mdns_sd::ScopedIp> {
+        addrs.iter().copied().map(mdns_sd::ScopedIp::from).collect()
+    }
+
+    /// The bug this fixes: a record carrying only AAAA addresses. Such a record
+    /// is still `is_valid()` — it *has* addresses — but the old IPv4-only lookup
+    /// found none and gave up, so the caller's `continue` dropped the peer for
+    /// the whole scan and the device intermittently never appeared.
+    #[test]
+    fn presence_targets_covers_an_aaaa_only_record() {
+        let v6: Ipv6Addr = "fd00::1".parse().unwrap();
+        let targets = presence_targets(&scoped(&[IpAddr::V6(v6)]), 47474);
+        assert_eq!(
+            targets,
+            vec![SocketAddr::V6(SocketAddrV6::new(v6, 47474, 0, 0))],
+        );
+    }
+
+    /// IPv4 is tried first so the common case never pays a v6 timeout.
+    #[test]
+    fn presence_targets_orders_ipv4_before_ipv6() {
+        let v4: Ipv4Addr = "192.168.1.5".parse().unwrap();
+        let v6: Ipv6Addr = "fd00::1".parse().unwrap();
+        let targets = presence_targets(&scoped(&[IpAddr::V6(v6), IpAddr::V4(v4)]), 47474);
+        assert_eq!(targets.len(), 2);
+        assert!(targets[0].is_ipv4(), "IPv4 must be probed first");
+        assert!(targets[1].is_ipv6());
+    }
+
+    #[test]
+    fn presence_targets_is_empty_without_addresses() {
+        assert!(presence_targets(&scoped(&[]), 47474).is_empty());
+    }
+
+    /// `PresenceResponder::bind` must answer on both families from one port, and
+    /// must still succeed on a host with no IPv6 (v6 is best-effort).
+    #[test]
+    fn presence_responder_answers_both_families() {
+        let probe = match UdpSocket::bind("0.0.0.0:0") {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+
+        let responder = match PresenceResponder::bind(port) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        presence_ping(
+            SocketAddr::from(([127, 0, 0, 1], port)),
+            Duration::from_secs(1),
+        )
+        .expect("ping over IPv4");
+
+        if UdpSocket::bind("[::1]:0").is_ok() {
+            presence_ping(
+                SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, port, 0, 0)),
+                Duration::from_secs(1),
+            )
+            .expect("ping over IPv6");
+        }
+
+        drop(responder);
     }
 }
