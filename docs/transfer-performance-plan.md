@@ -1067,17 +1067,33 @@ slower do not merely arrive late — everything behind them waits. 2.7% of the
 payload on the relay costs 22% of the throughput, and shows up in the tail RTT
 (117 ms against 86 ms) rather than the median.
 
-**This revises the reading of the relay residue above.** That section concluded
-a 12.1% relay share "cost it no measurable throughput" because the affected run
-finished mid-pack. That comparison was observational — one run against a batch
-whose spread was wider than the effect. Paired against itself, the relay path is
-expensive. The residue is not a curiosity; it is the same phenomenon as this,
-at a share where the unpaired comparison could not see it.
+**Corrected by a cleaner experiment — the 22% and the mechanism above are both
+overstated.** `WISP_BENCH_SINGLE_PATH` removes the relay *and* any additional
+direct address. `WISP_BENCH_NO_RELAY` removes only the relay, which is the
+change actually under consideration. Five interleaved rounds with that lever:
 
-Routing consequence: before adding parallelism at the stream or child layer, the
-question is whether to keep the relay in the dial at all once a direct path is
-established. That is a D1 change, not a D2 one, and on this evidence it is worth
-more than anything else currently on the list.
+| | median | range | packets lost | paired wins |
+| --- | --- | --- | --- | --- |
+| relay in the dial | 30.81 MiB/s | 26.9-36.2 | 246 | 1 of 5 |
+| relay removed | 32.10 MiB/s | 27.2-33.6 | **30** | 4 of 5 |
+
+**+4.2%, not +22%**, with overlapping ranges. What *is* large and consistent is
+loss: down 88%.
+
+The head-of-line story does not survive the per-round data either. Relay share
+in the two multi arms ran 10.93 / 2.03 / 0.01 / 0.61 / 0.28% and 0.95 / 0.01 /
+0.01 / 0.01 / 1.91%, and it does not track throughput — the slowest round in the
+first batch (20.19 MiB/s) carried only 2.03% on the relay, while the 10.93%
+round managed 24.48. So "2.7% of bytes on the relay costs 22% of throughput" is
+an artefact of averaging a share across an arm that happened to contain one
+anomalously slow round, and should not be quoted.
+
+What survives: removing the relay from the dial is worth a few percent of
+throughput and a large reduction in packet loss, on 4 of 5 paired rounds. That
+is still worth having, and it is a D1 change rather than a D2 one — but it is
+not the headline effect the first pass suggested, and it does not rehabilitate
+the relay-residue section's conclusion. That section's finding stands as written:
+one 12.1% run finishing mid-pack is weak evidence either way.
 
 
 This comes before AOA and general QUIC tuning because upstream issue #4286 already
