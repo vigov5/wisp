@@ -1041,6 +1041,45 @@ relay.
 
 ### D2. Parallel child/stream experiment
 
+**Measured: the existing path parallelism is a net loss, and the cost is large.**
+
+`WISP_BENCH_SINGLE_PATH` narrows the receiver's blob dial to one direct address.
+Five interleaved rounds against the app, 273.5 MiB each:
+
+| | median | range | packets lost | paired wins |
+| --- | --- | --- | --- | --- |
+| multi-path (as shipped) | 26.88 MiB/s | 20.2-30.1 | 260 | **0 of 5** |
+| single direct path | **32.69 MiB/s** | 30.9-36.4 | 501 | **5 of 5** |
+
+Five out of five with no overlap between the ranges — this is the clearest
+effect measured anywhere in this plan, and it says **+22%** for doing *less*.
+
+The mechanism is not "two direct paths split the load badly". The second path is
+the **relay**, and it carries only 2.7% of the bytes:
+
+| | byte split | `rtt_p50` | `rtt_p90` |
+| --- | --- | --- | --- |
+| multi | direct 97.3%, relay 2.7% | 18.8 ms | 116.8 ms |
+| single | direct 100% | 18.9 ms | 86.2 ms |
+
+A transfer is one ordered QUIC stream, so bytes placed on a path five times
+slower do not merely arrive late — everything behind them waits. 2.7% of the
+payload on the relay costs 22% of the throughput, and shows up in the tail RTT
+(117 ms against 86 ms) rather than the median.
+
+**This revises the reading of the relay residue above.** That section concluded
+a 12.1% relay share "cost it no measurable throughput" because the affected run
+finished mid-pack. That comparison was observational — one run against a batch
+whose spread was wider than the effect. Paired against itself, the relay path is
+expensive. The residue is not a curiosity; it is the same phenomenon as this,
+at a share where the unpaired comparison could not see it.
+
+Routing consequence: before adding parallelism at the stream or child layer, the
+question is whether to keep the relay in the dial at all once a direct path is
+established. That is a D1 change, not a D2 one, and on this evidence it is worth
+more than anything else currently on the list.
+
+
 This comes before AOA and general QUIC tuning because upstream issue #4286 already
 points at a single-stream throughput risk.
 
