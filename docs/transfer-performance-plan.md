@@ -1088,12 +1088,30 @@ round managed 24.48. So "2.7% of bytes on the relay costs 22% of throughput" is
 an artefact of averaging a share across an arm that happened to contain one
 anomalously slow round, and should not be quoted.
 
-What survives: removing the relay from the dial is worth a few percent of
-throughput and a large reduction in packet loss, on 4 of 5 paired rounds. That
-is still worth having, and it is a D1 change rather than a D2 one — but it is
-not the headline effect the first pass suggested, and it does not rehabilitate
-the relay-residue section's conclusion. That section's finding stands as written:
-one 12.1% run finishing mid-pack is weak evidence either way.
+What survives, confirmed at **n=10** paired rounds across two batches:
+
+| | median | range | packets lost |
+| --- | --- | --- | --- |
+| relay in the dial | 30.94 MiB/s | 26.9-36.2 | 398 |
+| relay removed | 31.95 MiB/s | 27.2-33.6 | **43** |
+
+Removing the relay is faster in **8 of 10** rounds for **+3.2%** median, cuts
+packet loss by **89%**, and narrows the spread from 9.3 to 6.4 MiB/s. The
+throughput gain is small and its ranges still overlap; the loss reduction and
+the tighter distribution are the substantial part, and the latter is what the
+p10/median acceptance criterion actually grades.
+
+That is a D1 change rather than a D2 one — but it is not the headline effect the
+first pass suggested, and it does not rehabilitate the relay-residue section's
+conclusion. That section's finding stands as written: one 12.1% run finishing
+mid-pack is weak evidence either way.
+
+**Not yet a shippable change.** Removing the relay from the dial once a direct
+path exists trades away the fallback that makes a transfer survive the direct
+path dying mid-flight, and nothing here measures that failure mode. The
+experiment disables the relay for the whole connection, which is not the same as
+dropping it after direct is established. Design that carefully or the 89% loss
+win buys a class of transfers that now fail outright.
 
 
 This comes before AOA and general QUIC tuning because upstream issue #4286 already
