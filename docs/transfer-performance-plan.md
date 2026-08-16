@@ -1793,6 +1793,38 @@ should be re-measured with the same cap before the constant changes. The knob
 for doing that exists as `debug.wisp.stream_win_mib`, but note it moves *both*
 windows together, so a proper app-side test wants `send_window` decoupled first.
 
+#### The app does not reproduce it, so the default stays
+
+`send_window` is now an independent knob (`debug.wisp.send_win_kib`), and the
+app was measured with it. It does **not** confirm the baseline result.
+
+Run sequentially — the whole 64 MiB arm, then the whole 2 MiB arm — it looked
+like agreement: 31.54 against 29.96 MiB/s median, loss down 69%, RTT down 10%.
+Interleaved round by round, which is the only version that survives this link's
+drift, the effect disappears:
+
+| | median | range | packets lost | paired wins |
+| --- | --- | --- | --- | --- |
+| 64 MiB | 30.97 MiB/s | 22.6-32.2 | 307 | 2 of 5 |
+| 2 MiB | 30.98 MiB/s | 18.9-32.7 | 210 | 3 of 5 |
+
+Medians agree to two decimal places and the paired wins are a coin flip. Loss is
+lower (-32%) but that is a fraction of the 99.8% the baseline showed, and the
+per-round spread is enormous — one round swings 22.6 → 31.5 in favour of 2 MiB,
+the next swings 32.2 → 18.9 against it.
+
+**So the default does not move.** The plan's bar for changing it is that the app
+agrees, and the app is ambivalent. The sequential sweep would have cleared that
+bar; only interleaving showed it was ordering, not window size. Note this also
+means the earlier -69% loss and -10% RTT from the sequential app run should not
+be quoted — they are the same artefact.
+
+The likely explanation, untested: the blob protocol paces its own writes, so the
+transport's in-flight cap has less room to matter in the app than it does for a
+baseline that blasts a single stream as fast as it can. That is worth knowing
+before any further transport-window work — a knob that moves `quic_baseline`
+substantially can be nearly inert in the product.
+
 #### Measured on the relay: 2 MiB is safe, 1 MiB is not
 
 The relay arm is now measured rather than argued. Forcing it takes more than a
