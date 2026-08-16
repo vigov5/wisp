@@ -1143,22 +1143,43 @@ controller (owned per `PathData`), and loss detection itself
 for the time threshold). There is even a `detect_spurious_loss` that withdraws a
 loss when a later ACK covers it. Cross-path reordering cannot produce this.
 
-So the mechanism is **open**. What is established is only the correlation: with
-a relay path present the direct path loses 8-12x more packets, on a different
-physical interface, for a +3.2% throughput cost. Candidates not yet tested — the
-connection-level `send_window` is shared across paths while each path has its
-own cwnd, so two paths may put more total bytes in flight than the tether
-absorbs; and `spurious_congestion_events` is already in noq's stats but is not
-plumbed into our telemetry, which would settle whether this loss is real.
+So the reordering explanation is out. `spurious_congestion_events` is now
+plumbed through telemetry, and it rules out the softer version too — the loss is
+**real**, not withdrawn:
+
+| arm | lost (selected path) | congestion events | spurious |
+| --- | --- | --- | --- |
+| relay in dial | 159 | 5 | **1** |
+| relay removed | 8 | 3 | 0 |
+
+One withdrawn event out of five. The direct path really is dropping those
+packets.
+
+The same numbers add a clue the earlier batches could not: the loss is **bursty,
+not a higher steady rate**. 159 packets across 5 congestion events is ~32
+packets per episode against ~2.7 per episode without the relay, so each loss
+event is an order of magnitude larger rather than there being more of them. That
+points away from congestion control tuning and towards something dropping a
+burst at once — a send-buffer overflow when the scheduler bursts across two
+paths is the obvious shape, and the connection-level `send_window` being shared
+while each path has its own cwnd is the obvious source of extra in-flight bytes.
+Untested.
+
+Also worth recording against the throughput claim: a third batch run with this
+build went the *other* way, multi faster in 3 of 4 rounds. Pooled across all
+three batches the no-relay arm wins 9 of 14, which is no longer convincing. The
+loss difference held in every batch (246/30, 152/13, 159/8); the throughput
+difference did not.
 
 **Not yet a shippable change.** Removing the relay from the dial once a direct
 path exists trades away the fallback that makes a transfer survive the direct
 path dying mid-flight, and nothing here measures that failure mode. The
 experiment disables the relay for the whole connection, which is not the same as
-dropping it after direct is established. With the mechanism unexplained, the
-cheap next step is to plumb `spurious_congestion_events` through the telemetry:
-if the extra loss is spurious the fix is upstream, and if it is real the shared
-`send_window` across paths is the first thing to test.
+dropping it after direct is established. The loss is now known to be real and bursty, so
+the next step is to test whether two paths overflow a send buffer: instrument or
+cap total in-flight bytes across paths rather than per path. Do not spend it on
+congestion-control tuning — an order-of-magnitude jump in *episode size* with
+barely more episodes is not the signature CC would leave.
 
 
 This comes before AOA and general QUIC tuning because upstream issue #4286 already
