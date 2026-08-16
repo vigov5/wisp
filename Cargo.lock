@@ -5251,6 +5251,7 @@ version = "2.0.1"
 dependencies = [
  "anyhow",
  "axum",
+ "blake3",
  "clap",
  "http-body-util",
  "rand 0.8.5",
