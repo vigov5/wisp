@@ -1160,10 +1160,33 @@ not a higher steady rate**. 159 packets across 5 congestion events is ~32
 packets per episode against ~2.7 per episode without the relay, so each loss
 event is an order of magnitude larger rather than there being more of them. That
 points away from congestion control tuning and towards something dropping a
-burst at once — a send-buffer overflow when the scheduler bursts across two
-paths is the obvious shape, and the connection-level `send_window` being shared
-while each path has its own cwnd is the obvious source of extra in-flight bytes.
-Untested.
+burst at once.
+
+**The shared `send_window` is not it either.** The interleaved app A/B already
+ran that experiment without either arm knowing it: both arms keep the relay, and
+only the in-flight cap differs.
+
+| | direct-path loss | relay share |
+| --- | --- | --- |
+| `send_window` 64 MiB | 307 | 4.28% |
+| `send_window` 2 MiB | 210 | 4.69% |
+| relay removed (64 MiB window) | **8** | 0% |
+
+Cutting the in-flight cap **32x** removes 32% of the loss. Removing the relay
+removes 95% of it. If two paths were overflowing a buffer by putting too many
+bytes in flight, the 32x cap would have dominated; it does not come close.
+
+So three explanations have now been tested and none survives: spurious loss
+detection (measured, 1 event in 5), cross-path reordering in loss detection
+(refuted by reading noq-proto — everything is keyed by `PathId`), and excess
+in-flight bytes from the shared send window (refuted above). The correlation is
+solid and the mechanism is unexplained.
+
+The candidate left standing, untested, is **pacing disruption**: each path paces
+its own sends, but the scheduler alternating between a 2 ms path and a 150 ms
+one may release the direct path's next burst without pacing, which is the shape
+that produces one large loss episode rather than more of them. Confirming that
+needs per-path send timestamps, which the current telemetry does not carry.
 
 Also worth recording against the throughput claim: a third batch run with this
 build went the *other* way, multi faster in 3 of 4 rounds. Pooled across all
@@ -1175,11 +1198,11 @@ difference did not.
 path exists trades away the fallback that makes a transfer survive the direct
 path dying mid-flight, and nothing here measures that failure mode. The
 experiment disables the relay for the whole connection, which is not the same as
-dropping it after direct is established. The loss is now known to be real and bursty, so
-the next step is to test whether two paths overflow a send buffer: instrument or
-cap total in-flight bytes across paths rather than per path. Do not spend it on
-congestion-control tuning — an order-of-magnitude jump in *episode size* with
-barely more episodes is not the signature CC would leave.
+dropping it after direct is established. The loss is real, bursty, and not explained by
+the send window, so the next step is per-path send timestamps to test the pacing
+hypothesis. Do not spend it on congestion-control tuning — an order-of-magnitude
+jump in *episode size* with barely more episodes is not the signature CC would
+leave, and E2 measured BBR3 as halving loss without touching this effect.
 
 
 This comes before AOA and general QUIC tuning because upstream issue #4286 already
