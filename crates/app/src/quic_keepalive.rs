@@ -47,10 +47,15 @@ fn default_send_window_bytes() -> u64 {
 
 /// Reads a `u32` from an Android system property, clamped to `range`.
 ///
-/// Debug-only, same mechanism as `debug.wisp.log`: absent or unparseable leaves
-/// the caller's default, and clamping stops a typo producing a degenerate
-/// config. Returns `None` off Android, where there is no property store.
-#[cfg(target_os = "android")]
+/// Absent or unparseable leaves the caller's default, and clamping stops a typo
+/// producing a degenerate config. Returns `None` off Android, where there is no
+/// property store.
+///
+/// **Debug builds only.** Unlike `debug.wisp.log`, which only widens logging,
+/// these knobs reconfigure the transport, and a release build should not be
+/// silently retunable by anyone who can reach it over adb. The sweeps that use
+/// them run against a debug APK anyway.
+#[cfg(all(target_os = "android", debug_assertions))]
 fn property_u32(name: &str, lo: u32, hi: u32) -> Option<u32> {
     use std::ffi::{CStr, CString, c_char, c_int};
 
@@ -73,7 +78,7 @@ fn property_u32(name: &str, lo: u32, hi: u32) -> Option<u32> {
     value.parse::<u32>().ok().map(|v| v.clamp(lo, hi))
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(all(target_os = "android", debug_assertions)))]
 fn property_u32(_name: &str, _lo: u32, _hi: u32) -> Option<u32> {
     None
 }
@@ -124,7 +129,7 @@ fn congestion_controller_name() -> &'static str {
     }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(all(target_os = "android", debug_assertions))]
 fn property_string(name: &str) -> Option<String> {
     use std::ffi::{CStr, CString, c_char, c_int};
 
@@ -148,7 +153,7 @@ fn property_string(name: &str) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(all(target_os = "android", debug_assertions)))]
 fn property_string(_name: &str) -> Option<String> {
     None
 }
