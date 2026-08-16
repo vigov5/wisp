@@ -17,6 +17,31 @@ The document uses three distinct states:
 - **Performance verified:** there is a baseline, a reproducible A/B, and numbers
   that meet the threshold.
 
+#### Desktop to Android, transport level only
+
+The reverse direction is close to symmetric at the transport, five runs each way
+over the tether with `quic_baseline`:
+
+| direction | median | p10/p50 median |
+| --- | --- | --- |
+| phone -> desktop | 26.3 MiB/s | 85% |
+| desktop -> phone | 22.5 MiB/s | 84% |
+
+About 14% slower, with the same stability. A first run showed p10/p50 of 64%,
+below Gate 1's 70% floor, and four more runs put it at 84% — a single run on
+this rig points the wrong way often enough that it should never be acted on.
+
+**This does not measure the app on that path, and the difference that matters is
+not in the transport.** A desktop -> Android transfer puts the *receiver* on the
+phone, which adds the SAF export the desktop side never pays: the phone writes
+at 217.8 MiB/s against the desktop's 601, hashes at 1,112 against 2,879, and
+per the receive design the bytes only land at finalize with the save running in
+the background after the protocol reports completion. Time-to-file-ready is
+therefore the metric for this path, not throughput, and it is exactly the split
+D4's third bullet asks for and nobody has instrumented. Treat the numbers above
+as evidence the transport is fine in both directions, and the app-level path as
+unmeasured.
+
 ### Status as of 2026-08-16 — phone to desktop is measured out
 
 Read this before any section below, several of which record superseded
