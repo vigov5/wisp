@@ -109,6 +109,38 @@ resolves to one stack.
   NEON path may be built through `cc`, and the real win may sit in AEAD or in Rust
   code.
 
+**Measured on aarch64. The setting is worth keeping, and it is not BLAKE3.**
+
+BLAKE3 is indifferent to it, exactly as suspected. Hashing 512 MiB on the phone
+with dependencies built at `z` and at `3`:
+
+| deps `opt-level` | BLAKE3 hash |
+| --- | --- |
+| `z` | 1094.4, 1091.0 MiB/s |
+| `3` | 936.0, 1080.6 MiB/s |
+
+Same within run-to-run noise — the NEON path is compiled through `cc` and does
+not see the Rust opt-level at all. So the caution above was right: BLAKE3 is not
+the justification.
+
+The transport is a different story. Raw QUIC, 256 MiB phone → desktop over the
+tether, the two builds alternated round by round so link drift cannot fake the
+effect:
+
+| deps `opt-level` | median | range | paired wins |
+| --- | --- | --- | --- |
+| `3` | 26.75 MiB/s | 24.5-32.7 | **8 of 10** |
+| `z` | 24.65 MiB/s | 22.6-27.0 | 2 of 10 |
+
+About **8% of raw QUIC throughput**, and the win therefore sits in AEAD and the
+transport's Rust code rather than in hashing. Eight of ten paired rounds is a
+one-sided sign-test p of roughly 0.05, so this is a real but modest effect
+rather than a decisive one; treat 8% as the order of magnitude, not a constant.
+
+An oddity worth recording: the `z` build of `quic_baseline` came out *larger*
+(27.0 MB against 23.3 MB). Whatever `z` is buying on aarch64 here, it is not
+size for this binary.
+
 ## 5. Phase A — Make telemetry trustworthy
 
 This phase blocks every tuning decision that follows.
@@ -576,9 +608,17 @@ Local baselines (`cargo test --release -p wisp-core --test baselines --
 
 | baseline | desktop receiver | phone sender |
 | --- | --- | --- |
-| BLAKE3 hash | 2,879 MiB/s | not measured |
-| Sequential disk write incl. `fsync` | 601 MiB/s | not measured |
-| Sequential read | 1,893 MiB/s (warm cache) | ~1,100 MiB/s (warm cache) |
+| BLAKE3 hash | 2,879 MiB/s | **1,112.6 MiB/s** |
+| Sequential disk write incl. `fsync` | 601 MiB/s | **217.8 MiB/s** |
+| Sequential read | 1,893 MiB/s (warm cache) | **422.6 MiB/s** (warm cache) |
+
+The phone column is now measured rather than estimated — cross-compile the
+`baselines` test for `aarch64-linux-android` and run it under `adb shell` with
+`TMPDIR=/data/local/tmp`. Note the earlier "~1,100 MiB/s" for the phone's
+sequential read was about 2.6x optimistic; 1,112 MiB/s is its *hash* rate. Even
+so the conclusion is unchanged and now rests on real numbers: against a ~21
+MiB/s transfer, hashing has 53x headroom, the read 20x and the write 10x, so
+nothing local on the phone is close to binding.
 
 So on this path:
 
