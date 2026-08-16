@@ -735,6 +735,18 @@ Two things the comparison does surface:
   a reliability item, not a performance one, and it is not tracked anywhere else
   in this plan.
 
+  **Not reproduced on iroh 1.0.** Across 86 completed transfers in one session —
+  105 receiver logs including aborted runs — there is not a single
+  `connection lost` or `reading message length`, and the only ERROR-level lines
+  are `Endpoint dropped without calling Endpoint::close` from the harness killing
+  its own receiver. If the rate were still 1 in 9, seeing zero in 86 has
+  probability 4e-05, so the original rate is gone. What 0 of 86 supports is an
+  upper bound: **at most about 3.4%, roughly 1 in 29**, at 95% one-sided. That is
+  not proof of a fix — the failure was on the control exchange after the payload,
+  and nothing here targeted it — but it is no longer a 1-in-9 problem, and the
+  iroh 1.0 upgrade is the obvious candidate. Leave it open at the lower bound
+  rather than closed.
+
 ### B2. A/B to attribute the changes already landed
 
 Rebuild a baseline from the commit before `8a33818`, then produce builds differing
