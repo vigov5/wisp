@@ -560,6 +560,7 @@ impl ProviderTelemetryRecorder {
             lost_packets_delta = delta.lost_packets,
             lost_bytes_delta = delta.lost_bytes,
             congestion_events_delta = delta.congestion_events,
+            spurious_congestion_events_delta = delta.spurious_congestion_events,
             current_mtu = network.current_mtu,
             plpmtud_probe_loss_delta = delta.lost_plpmtud_probes,
             // Connection-scoped counters. Unlike the path-scoped ones above,
@@ -579,6 +580,7 @@ impl ProviderTelemetryRecorder {
             all_paths_lost_packets_delta = all_paths.lost_packets,
             all_paths_lost_bytes_delta = all_paths.lost_bytes,
             all_paths_congestion_events_delta = all_paths.congestion_events,
+            all_paths_spurious_congestion_events_delta = all_paths.spurious_congestion_events,
             direct_path_udp_bytes_delta = all_paths.direct_udp_bytes,
             relay_path_udp_bytes_delta = all_paths.relay_udp_bytes,
             aoa_path_udp_bytes_delta = all_paths.aoa_udp_bytes,
@@ -779,6 +781,7 @@ impl TelemetryRecorder {
             local_lost_packets_delta = delta.lost_packets,
             local_lost_bytes_delta = delta.lost_bytes,
             local_congestion_events_delta = delta.congestion_events,
+            local_spurious_congestion_events_delta = delta.spurious_congestion_events,
             current_mtu = network.current_mtu,
             local_plpmtud_probe_loss_delta = delta.lost_plpmtud_probes,
             // Connection-scoped counters, unaffected by path selection gaps and
@@ -799,6 +802,7 @@ impl TelemetryRecorder {
             all_paths_lost_packets_delta = all_paths.lost_packets,
             all_paths_lost_bytes_delta = all_paths.lost_bytes,
             all_paths_congestion_events_delta = all_paths.congestion_events,
+            all_paths_spurious_congestion_events_delta = all_paths.spurious_congestion_events,
             direct_path_udp_bytes_delta = all_paths.direct_udp_bytes,
             relay_path_udp_bytes_delta = all_paths.relay_udp_bytes,
             aoa_path_udp_bytes_delta = all_paths.aoa_udp_bytes,
@@ -1046,6 +1050,12 @@ struct NetworkSnapshot {
     lost_packets: u64,
     lost_bytes: u64,
     congestion_events: u64,
+    /// Losses later withdrawn because an ACK covered the packet.
+    ///
+    /// Separates "the path really dropped this" from "we gave up on it too
+    /// early and backed off for nothing", which is the difference between a
+    /// lossy link and a loss-detection artefact.
+    spurious_congestion_events: u64,
     current_mtu: u16,
     lost_plpmtud_probes: u64,
 }
@@ -1060,6 +1070,7 @@ struct PathObservation {
     lost_packets: u64,
     lost_bytes: u64,
     congestion_events: u64,
+    spurious_congestion_events: u64,
 }
 
 impl PathObservation {
@@ -1099,6 +1110,7 @@ impl PathObservation {
                     lost_packets: stats.lost_packets,
                     lost_bytes: stats.lost_bytes,
                     congestion_events: stats.congestion_events,
+                    spurious_congestion_events: stats.spurious_congestion_events,
                 });
         }
         by_path.into_values().collect()
@@ -1166,6 +1178,13 @@ impl PathAggregate {
                 path.congestion_events,
                 previous.map(|p| p.congestion_events),
             ));
+            delta.spurious_congestion_events =
+                delta
+                    .spurious_congestion_events
+                    .saturating_add(sub_from_optional(
+                        path.spurious_congestion_events,
+                        previous.map(|p| p.spurious_congestion_events),
+                    ));
         }
         self.previous
             .extend(paths.iter().map(|path| (path.path_id, *path)));
@@ -1188,6 +1207,7 @@ struct PathAggregateDelta {
     lost_packets: u64,
     lost_bytes: u64,
     congestion_events: u64,
+    spurious_congestion_events: u64,
     direct_udp_bytes: u64,
     relay_udp_bytes: u64,
     aoa_udp_bytes: u64,
@@ -1217,6 +1237,7 @@ impl NetworkSnapshot {
             lost_packets: stats.lost_packets,
             lost_bytes: stats.lost_bytes,
             congestion_events: stats.congestion_events,
+            spurious_congestion_events: stats.spurious_congestion_events,
             current_mtu: stats.current_mtu,
             lost_plpmtud_probes: stats.lost_plpmtud_probes,
         }
@@ -1235,6 +1256,7 @@ impl NetworkSnapshot {
             lost_packets: 0,
             lost_bytes: 0,
             congestion_events: 0,
+            spurious_congestion_events: 0,
             current_mtu: 0,
             lost_plpmtud_probes: 0,
         }
@@ -1248,6 +1270,7 @@ impl NetworkSnapshot {
             lost_packets: self.lost_packets,
             lost_bytes: self.lost_bytes,
             congestion_events: self.congestion_events,
+            spurious_congestion_events: self.spurious_congestion_events,
             lost_plpmtud_probes: self.lost_plpmtud_probes,
         })
     }
@@ -1274,6 +1297,9 @@ impl NetworkSnapshot {
             congestion_events: current
                 .congestion_events
                 .saturating_sub(previous.congestion_events),
+            spurious_congestion_events: current
+                .spurious_congestion_events
+                .saturating_sub(previous.spurious_congestion_events),
             lost_plpmtud_probes: current
                 .lost_plpmtud_probes
                 .saturating_sub(previous.lost_plpmtud_probes),
@@ -1289,6 +1315,7 @@ struct PathCounters {
     lost_packets: u64,
     lost_bytes: u64,
     congestion_events: u64,
+    spurious_congestion_events: u64,
     lost_plpmtud_probes: u64,
 }
 
@@ -1300,6 +1327,7 @@ struct PathCountersDelta {
     lost_packets: u64,
     lost_bytes: u64,
     congestion_events: u64,
+    spurious_congestion_events: u64,
     lost_plpmtud_probes: u64,
 }
 
@@ -1605,6 +1633,7 @@ mod tests {
             lost_packets: lost,
             lost_bytes: lost * 1_200,
             congestion_events: 0,
+            spurious_congestion_events: 0,
         }
     }
 
@@ -1627,6 +1656,30 @@ mod tests {
         assert_eq!(second.lost_packets, 0);
         // Path 1 sent nothing this interval, so it is not counted as active.
         assert_eq!(second.active_path_count, 1);
+    }
+
+    /// Spurious congestion events are what separate "the link dropped it" from
+    /// "we declared it lost too early and backed off for nothing". They have to
+    /// aggregate across paths like every other counter, and must not be
+    /// confused with `congestion_events` — the relay investigation turns on
+    /// telling those two apart.
+    #[test]
+    fn path_aggregate_sums_spurious_congestion_separately() {
+        let mut aggregate = PathAggregate::default();
+        let with_events = |id: u8, congestion: u64, spurious: u64| PathObservation {
+            congestion_events: congestion,
+            spurious_congestion_events: spurious,
+            ..path_observation(id, 1_000, 0)
+        };
+
+        let first = aggregate.observe(&[with_events(0, 3, 1), with_events(1, 1, 4)]);
+        assert_eq!(first.congestion_events, 4);
+        assert_eq!(first.spurious_congestion_events, 5);
+
+        // Only path 0 gains events; the delta must reflect that, not the totals.
+        let second = aggregate.observe(&[with_events(0, 5, 6), with_events(1, 1, 4)]);
+        assert_eq!(second.congestion_events, 2);
+        assert_eq!(second.spurious_congestion_events, 5);
     }
 
     #[test]
@@ -1772,6 +1825,7 @@ mod tests {
             lost_packets: 2,
             lost_bytes: 2_400,
             congestion_events: 1,
+            spurious_congestion_events: 1,
             current_mtu: 1_200,
             lost_plpmtud_probes: 1,
         };
@@ -1781,6 +1835,7 @@ mod tests {
             lost_packets: 3,
             lost_bytes: 3_600,
             congestion_events: 2,
+            spurious_congestion_events: 4,
             lost_plpmtud_probes: 2,
             ..base
         };
@@ -1793,6 +1848,7 @@ mod tests {
                 lost_packets: 1,
                 lost_bytes: 1_200,
                 congestion_events: 1,
+                spurious_congestion_events: 3,
                 lost_plpmtud_probes: 1,
             }
         );
