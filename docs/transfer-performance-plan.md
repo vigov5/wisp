@@ -58,7 +58,7 @@ neither end's disk is close to mattering. Every branch with a number attached:
 | D1 relay | reopened; removing the relay from the dial is +3.2% and **-89% packet loss** — real, repeated, not yet safe to ship |
 | D2 parallelism | premise inverted: the existing multi-path is a small net loss |
 | D3 sender prepare | not the bottleneck — not read-starved, not UI-bound, not CPU-saturated |
-| D4 export | **closed**, no bottleneck: receiver disk write is free |
+| D4 export | **closed** on desktop receive: export is 25 ms, 0.25% of wall time, and the telemetry split already exists; Android-side SAF export unmeasured |
 | D5 AOA | not started; its USB/GC profile precondition is unmet |
 | E1 window | **closed**: inert in the app on both tether and relay |
 | E2 congestion | **closed**: BBR3 halves loss and tail RTT in the harness but is 23% slower in the app with a 6.4 MiB/s outlier — the original stutter, reproduced |
@@ -1709,8 +1709,29 @@ discards them — overlapping ranges, n=5 each — against a desktop write basel
 of 601 MiB/s. Receiver CPU adds ~3 cpu-s over a plain sink for the whole blob
 layer, which is 1.75 cores over a 12 s transfer on a many-core machine. Nothing
 to optimise here on this path; reopen if a slower receiver ever shows otherwise.
-The third bullet, splitting protocol-completed from file-ready in telemetry and
-UI, is a product change rather than a performance one and is unaffected.
+
+**The third bullet is already satisfied in telemetry.** The five phases are
+emitted separately, so protocol-completed and file-ready are distinguishable
+today without any new instrumentation. Median over ten runs on the desktop
+receiver:
+
+| phase | median | max |
+| --- | --- | --- |
+| `control_handshake` | 5 ms | 8 ms |
+| `decision_wait` | 1 ms | 2 ms |
+| `fetch_store` | 10,012 ms | 42,741 ms |
+| **`export`** | **25 ms** | 31 ms |
+| `final_ack` | 6 ms | 62 ms |
+
+Export is **0.25% of wall time**. Time-to-file-ready and protocol-completed are
+the same number to within a rounding error on this path, which is why D4 has
+nothing to optimise. What remains of that bullet is the **UI** half — surfacing
+the distinction to the user — and that is a product decision, not a measurement.
+
+The one case where this could still bite is the mirror path: a **desktop ->
+Android** transfer puts export on the phone through SAF, where the bytes land at
+finalize with the save running in the background after completion. That export
+is unmeasured and is the only reason to keep D4 open at all.
 
 ### D5. AOA copy and GC
 
