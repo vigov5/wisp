@@ -13,6 +13,11 @@ iroh-blobs.workspace = true
 flume.workspace = true
 mdns-sd.workspace = true
 netdev = "0.40"
+# Only for the `debug.wisp.cc` benchmark override in `quic_keepalive`: iroh
+# re-exports the `ControllerFactory` trait but not the concrete controllers.
+# Already in the graph via iroh, so this adds a dependency edge and no code;
+# it must track iroh's noq-proto version or the trait will not match.
+noq-proto = "1.1"
 rand.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true

@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use iroh::endpoint::{QuicTransportConfig, VarInt};
+use std::sync::Arc;
+
+use iroh::endpoint::{ControllerFactory, QuicTransportConfig, VarInt};
 use wisp_core::blobs::receive::BlobTransportProfile;
 
 /// Per-stream flow-control receive window advertised by this endpoint.
@@ -95,6 +97,62 @@ fn send_window_bytes() -> u64 {
     }
 }
 
+/// Congestion controller override, read from `debug.wisp.cc` on Android.
+///
+/// Shipping default is unchanged — absent property means iroh's own default,
+/// CUBIC, and nothing is installed. The knob exists because E2 requires a
+/// benchmark-only override rather than a changed default, and because the
+/// controller in noq-proto 1.1 is **BBR3**, not the BBR that was enabled in
+/// `d386240` and reverted in `05c9e4d` for phone-to-phone Wi-Fi stutter. That
+/// reversal was of a different algorithm, so BBR3 needs measuring on its own —
+/// and the stutter symptom lives in p10/CV on Wi-Fi, not in the median on a
+/// steady tether, so a trial has to cover both links.
+fn congestion_override() -> Option<Arc<dyn ControllerFactory + Send + Sync>> {
+    match property_string("debug.wisp.cc")?.as_str() {
+        "bbr3" => Some(Arc::new(noq_proto::congestion::Bbr3Config::default())),
+        "cubic" => Some(Arc::new(noq_proto::congestion::CubicConfig::default())),
+        _ => None,
+    }
+}
+
+/// The controller name reported in telemetry, so a sweep cannot record the
+/// wrong configuration against its own numbers.
+fn congestion_controller_name() -> &'static str {
+    match property_string("debug.wisp.cc").as_deref() {
+        Some("bbr3") => "bbr3",
+        _ => "cubic",
+    }
+}
+
+#[cfg(target_os = "android")]
+fn property_string(name: &str) -> Option<String> {
+    use std::ffi::{CStr, CString, c_char, c_int};
+
+    const PROP_VALUE_MAX: usize = 92;
+    unsafe extern "C" {
+        fn __system_property_get(name: *const c_char, value: *mut c_char) -> c_int;
+    }
+
+    let name = CString::new(name).ok()?;
+    let mut buffer = [0u8; PROP_VALUE_MAX + 1];
+    let written = unsafe { __system_property_get(name.as_ptr(), buffer.as_mut_ptr().cast()) };
+    if written <= 0 {
+        return None;
+    }
+    let value = CStr::from_bytes_until_nul(&buffer)
+        .ok()?
+        .to_str()
+        .ok()?
+        .trim()
+        .to_owned();
+    (!value.is_empty()).then_some(value)
+}
+
+#[cfg(not(target_os = "android"))]
+fn property_string(_name: &str) -> Option<String> {
+    None
+}
+
 pub(crate) fn blob_transport_profile() -> BlobTransportProfile {
     // Must report the window in force, not the compiled-in default, or the
     // telemetry disagrees with the transport during a sweep.
@@ -102,7 +160,7 @@ pub(crate) fn blob_transport_profile() -> BlobTransportProfile {
         u64::from(stream_receive_window_bytes()),
         u64::from(VarInt::MAX),
         send_window_bytes(),
-        "cubic",
+        congestion_controller_name(),
     )
 }
 
@@ -144,12 +202,15 @@ pub(crate) fn build_transport_config() -> QuicTransportConfig {
     let stream_receive_window = VarInt::from_u32(stream_receive_window_bytes());
     let send_window = send_window_bytes();
 
-    QuicTransportConfig::builder()
+    let mut builder = QuicTransportConfig::builder()
         .default_path_max_idle_timeout(Duration::from_millis(6_000))
         .default_path_keep_alive_interval(Duration::from_millis(4_500))
         .stream_receive_window(stream_receive_window)
-        .send_window(send_window)
-        .build()
+        .send_window(send_window);
+    if let Some(factory) = congestion_override() {
+        builder = builder.congestion_controller_factory(factory);
+    }
+    builder.build()
 }
 
 #[cfg(test)]
@@ -183,6 +244,15 @@ mod tests {
                 "cubic",
             ),
         );
+    }
+
+    /// Off Android there is no property store, so no controller is installed
+    /// and iroh's default (CUBIC) stands — the override must never change a
+    /// desktop build, and the reported name must agree with that.
+    #[test]
+    fn congestion_override_is_absent_without_the_property() {
+        assert!(super::congestion_override().is_none());
+        assert_eq!(super::congestion_controller_name(), "cubic");
     }
 
     /// The default must stay exactly where it was until the app-side
