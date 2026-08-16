@@ -1733,8 +1733,15 @@ attached, and not the Wi-Fi link the first pass used as its denominator:
 | link baseline | done — **37.27 MiB/s** TCP over the tether, four runs; Wi-Fi is 12.50 (B1) |
 | disk and hash baselines | done — desktop 601 MiB/s write, 2,879 MiB/s hash; phone reads the payload at 276-287 MiB/s (B1) |
 | raw QUIC transport baseline | done — **27.70 MiB/s** memory source (n=10), **23.60** from file (n=13), from the phone (B1) |
-| historical H and builds A-E | **not run** |
+| historical H and builds A-E | **not run**, and now deprioritised — see below |
 | which change won, and by how much | attributed by unit cost x measured event rate (B2), not by the build matrix |
+
+On the matrix: it varies P0.1/P0.2/P0.3, which B2 already puts at 0.34% and
+0.07% of wall time, and the session that measured D1-D3 found no term above the
+transport worth more than a few percent. Running it would cost several hours of
+build-and-reinstall cycles to resolve sub-1% effects on a rig whose run-to-run
+spread is 9 MiB/s. It stays open as a gate criterion but should not be the next
+thing anyone does; the loss and stability numbers are where the headroom is.
 
 The superseded first-pass figures were 27.7 MiB/s TCP, 24.4 MiB/s raw QUIC and
 23.0 MiB/s app, all on iroh 0.97 and all against Wi-Fi.
@@ -1764,9 +1771,10 @@ The table above is kept for history; the current numbers are in B1's
   bandwidth limit — the phone reads the payload at 276-287 MiB/s — so it is a
   pipelining question in the send path, which is exactly D3's subject.
 
-Ranking on this path is therefore **D3 first, then the QUIC/crypto gap** (26%
-against TCP, the largest single term but also the least likely to be cheap),
-then D2/D4 for the remaining 12%. D1 is closed.
+Ranking on this path was **D3 first** on these numbers. Everything below
+supersedes that: D3 was measured and is not read-bound, D2's premise was
+measured and inverted, and D1 reopened. See `Where this actually landed` at the
+end of Gate 3.
 
 ### Gate 3 — Choosing the right optimization branch
 
@@ -1779,12 +1787,39 @@ then D2/D4 for the remaining 12%. D1 is closed.
 
 Tuning from a later phase does not merge until its gate is met.
 
-**Current routing, phone → desktop over USB tether, iroh 1.0.3:** D1 closed
-(relay 0.0% in 17 of 18 runs); **D3 first** at 15% of the transport number;
-QUIC/crypto is larger still at 26% of TCP but is not our code; D2/D4 share the
-remaining 12%. Whenever a link baseline is quoted here it must be measured on
-the interface the sender actually selected for those runs — check the path
-events, do not assume Wi-Fi.
+**Current routing, phone → desktop over USB tether, iroh 1.0.3** — superseded
+twice in one session, so read the dated conclusion at the end of this gate
+rather than any earlier ranking. Whenever a link baseline is quoted here it must
+be measured on the interface the sender actually selected for those runs — check
+the path events, do not assume Wi-Fi.
+
+#### Where this actually landed
+
+Every branch that had a number attached to it has now been measured on this
+path, and none of them is large:
+
+| branch | status | measured effect |
+| --- | --- | --- |
+| D1 relay | **reopened**, one lever confirmed | removing the relay from the dial: +3.2% median, **-89% packet loss**, 8 of 10 paired rounds; not yet safe to ship |
+| D2 parallelism | premise answered | the existing multi-path is a small net *loss*, not a win; nothing to add at the stream layer |
+| D3 sender prepare | answered, not the bottleneck | not read-starved (7 of 9 runs stall-free), not UI-bound (Flutter 13%+3% of a core), not CPU-saturated (1.6 of 8 cores) |
+| D4 export | untouched | receiver disk write is free (24.10 vs 24.60 MiB/s), so the premise is weak |
+| E1 window | **closed** | no effect in the app on either path; `stream_receive_window` is the wrong knob and `send_window` is inert in the product |
+| P0.4 opt-level | answered | ~8% of raw QUIC, in AEAD and transport Rust code, not BLAKE3 |
+
+The honest summary for phone → desktop: **there is no single large win left above
+the transport.** The app sits at 75% of raw QUIC and 56% of TCP, neither end is
+CPU-saturated, neither end's disk matters, and the surviving levers are worth a
+few percent each. Further tuning on this path should be justified by the loss
+and stability numbers, which are still poor, rather than by throughput.
+
+A methodological result worth more than any of the above: **three separate
+effects looked large under sequential A/B and shrank or vanished when the arms
+were interleaved** — the baseline send-window sweep, the app send-window sweep,
+and the first relay experiment. This link drifts enough between minutes that arm
+ordering alone manufactures double-digit differences. Interleave, report paired
+wins, and treat any unpaired comparison on this rig as a hypothesis rather than
+a result.
 
 #### What D3 turned out to be: not the read
 
