@@ -1,7 +1,10 @@
-# Relay path carries a large share of payload while a direct path is selected and healthy
+# Superseded draft: relay striping on iroh 0.97 (historical record — do not file)
 
-Draft of an upstream report for `n0-computer/iroh`. Measured against iroh 0.97.0
-with iroh-blobs 0.99, noq 0.17, noq-proto 0.16.
+This was a draft upstream report for `n0-computer/iroh`, measured against iroh
+0.97.0 with iroh-blobs 0.99, noq 0.17, noq-proto 0.16. **Its diagnosis is wrong
+and it must not be filed.** It is kept only because it holds the measurements
+taken before the 1.0 upgrade, which `docs/transfer-performance-plan.md` cites;
+read it as a record of what 0.97 did, not as an account of why.
 
 > **DO NOT FILE AS WRITTEN — superseded.** This draft's central claim, that the
 > relay bias cannot be configured down, is wrong: relay is already registered as
