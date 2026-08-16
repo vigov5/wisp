@@ -1121,24 +1121,32 @@ multiplies loss **on the direct path** by 8-12x — and the two paths do not eve
 share a physical link here, since the relay leaves over Wi-Fi while direct runs
 over the USB tether. So this is not link contention.
 
-The shape that fits is **spurious loss detection from cross-path reordering**: a
-packet sent over a 150 ms relay path arrives long after its neighbours on a 2 ms
-direct path, and if loss detection is not strictly per-path, the direct path's
-packets get declared lost and retransmitted. That would also explain the
-otherwise odd pairing of a large loss reduction with only a +3.2% throughput
-gain — most of the "loss" is wasted retransmission and congestion backoff rather
-than genuinely dropped data. Stated as a hypothesis; it needs a look at how
-noq-proto scopes loss detection across paths, which is the same layer the relay
-residue at the top of this document pointed at.
+The obvious explanation would be **spurious loss detection from cross-path
+reordering** — a packet on a 150 ms relay path arriving long after its
+neighbours on a 2 ms direct path, with loss detection not strictly per-path.
+**Reading noq-proto 1.1.1 refutes that.** Everything involved is keyed by
+`PathId`: packet number spaces (`spaces[space].for_path(path)`), the congestion
+controller (owned per `PathData`), and loss detection itself
+(`detect_lost_packets(now, pn_space, path_id, ..)`, using that path's own RTT
+for the time threshold). There is even a `detect_spurious_loss` that withdraws a
+loss when a later ACK covers it. Cross-path reordering cannot produce this.
+
+So the mechanism is **open**. What is established is only the correlation: with
+a relay path present the direct path loses 8-12x more packets, on a different
+physical interface, for a +3.2% throughput cost. Candidates not yet tested — the
+connection-level `send_window` is shared across paths while each path has its
+own cwnd, so two paths may put more total bytes in flight than the tether
+absorbs; and `spurious_congestion_events` is already in noq's stats but is not
+plumbed into our telemetry, which would settle whether this loss is real.
 
 **Not yet a shippable change.** Removing the relay from the dial once a direct
 path exists trades away the fallback that makes a transfer survive the direct
 path dying mid-flight, and nothing here measures that failure mode. The
 experiment disables the relay for the whole connection, which is not the same as
-dropping it after direct is established. If the reordering hypothesis holds the
-right fix is upstream — keep the relay as a genuine backup carrying no bulk and
-scoped out of the direct path's loss detection — rather than removing the
-failover to buy a loss number.
+dropping it after direct is established. With the mechanism unexplained, the
+cheap next step is to plumb `spurious_congestion_events` through the telemetry:
+if the extra loss is spurious the fix is upstream, and if it is real the shared
+`send_window` across paths is the first thing to test.
 
 
 This comes before AOA and general QUIC tuning because upstream issue #4286 already
