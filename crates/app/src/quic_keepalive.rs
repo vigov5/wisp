@@ -23,30 +23,41 @@ const STREAM_RECEIVE_WINDOW_BYTES: u32 = 8 * 1024 * 1024;
 #[cfg(not(target_os = "android"))]
 const STREAM_RECEIVE_WINDOW_BYTES: u32 = 16 * 1024 * 1024;
 
-/// Override for [`STREAM_RECEIVE_WINDOW_BYTES`], in MiB, read from the
-/// `debug.wisp.stream_win_mib` system property on Android.
+/// Bytes the sender may keep in flight, independent of the receive window.
 ///
-/// This exists because the right window is path-dependent and one static value
-/// cannot serve both cases. Sized for the relay (ceiling = window / RTT at
-/// ~100 ms) the window is appropriate; on a USB tether whose idle RTT is ~2 ms
-/// the same value is ~840x the bandwidth-delay product, and measured sender RTT
-/// runs p50 82 ms / max 487 ms with cwnd reaching 25 MB. Sweeping the window is
-/// how we find out whether capping it trades away throughput.
+/// Derived as `8 x` the stream window until it was measured. That coupling was
+/// an accident: raising the receive window for the relay's sake also raised the
+/// in-flight cap to 64 MiB, and the two knobs answer different questions.
+/// `stream_receive_window` is advertised for streams this endpoint *receives*,
+/// so on a phone → desktop transfer it does not govern the bulk at all;
+/// `send_window` is what bounds queueing on the way out.
 ///
-/// Debug-only knob, same mechanism as `debug.wisp.log`: absent or unparseable
-/// leaves the compiled-in value, and the value is clamped so a typo cannot
-/// produce a degenerate config.
+/// Left at the derived value for now. A 2 MiB cap measures better on both paths
+/// tested — on the tether -5% throughput for 99.8% less loss and a much tighter
+/// spread, on the relay no established throughput cost for ~80% less loss — but
+/// that is `quic_baseline`, and the app has to agree before the default moves.
+/// Use `debug.wisp.send_win_kib` to test it. Do not pick 1 MiB on the tether
+/// numbers alone: it is the best of the sweep there and costs ~27% on the relay,
+/// whose bandwidth-delay product is about 0.9 MiB.
+fn default_send_window_bytes() -> u64 {
+    8u64 * u64::from(STREAM_RECEIVE_WINDOW_BYTES)
+}
+
+/// Reads a `u32` from an Android system property, clamped to `range`.
+///
+/// Debug-only, same mechanism as `debug.wisp.log`: absent or unparseable leaves
+/// the caller's default, and clamping stops a typo producing a degenerate
+/// config. Returns `None` off Android, where there is no property store.
 #[cfg(target_os = "android")]
-fn stream_window_override_mib() -> Option<u32> {
+fn property_u32(name: &str, lo: u32, hi: u32) -> Option<u32> {
     use std::ffi::{CStr, CString, c_char, c_int};
 
-    const PROP_NAME: &str = "debug.wisp.stream_win_mib";
     const PROP_VALUE_MAX: usize = 92;
     unsafe extern "C" {
         fn __system_property_get(name: *const c_char, value: *mut c_char) -> c_int;
     }
 
-    let name = CString::new(PROP_NAME).ok()?;
+    let name = CString::new(name).ok()?;
     let mut buffer = [0u8; PROP_VALUE_MAX + 1];
     let written = unsafe { __system_property_get(name.as_ptr(), buffer.as_mut_ptr().cast()) };
     if written <= 0 {
@@ -57,30 +68,40 @@ fn stream_window_override_mib() -> Option<u32> {
         .to_str()
         .ok()?
         .trim();
-    value.parse::<u32>().ok().map(|mib| mib.clamp(1, 64))
+    value.parse::<u32>().ok().map(|v| v.clamp(lo, hi))
 }
 
 #[cfg(not(target_os = "android"))]
-fn stream_window_override_mib() -> Option<u32> {
+fn property_u32(_name: &str, _lo: u32, _hi: u32) -> Option<u32> {
     None
 }
 
-/// The window actually used, after any debug override.
+/// The stream receive window actually used, after any debug override.
 fn stream_receive_window_bytes() -> u32 {
-    match stream_window_override_mib() {
+    match property_u32("debug.wisp.stream_win_mib", 1, 64) {
         Some(mib) => mib * 1024 * 1024,
         None => STREAM_RECEIVE_WINDOW_BYTES,
+    }
+}
+
+/// The send window actually used, after any debug override.
+///
+/// In KiB rather than MiB so the sweep can reach the sub-MiB range where the
+/// path's bandwidth-delay product actually lives.
+fn send_window_bytes() -> u64 {
+    match property_u32("debug.wisp.send_win_kib", 64, 262_144) {
+        Some(kib) => u64::from(kib) * 1024,
+        None => default_send_window_bytes(),
     }
 }
 
 pub(crate) fn blob_transport_profile() -> BlobTransportProfile {
     // Must report the window in force, not the compiled-in default, or the
     // telemetry disagrees with the transport during a sweep.
-    let window = stream_receive_window_bytes();
     BlobTransportProfile::new(
-        u64::from(window),
+        u64::from(stream_receive_window_bytes()),
         u64::from(VarInt::MAX),
-        8u64 * u64::from(window),
+        send_window_bytes(),
         "cubic",
     )
 }
@@ -103,9 +124,9 @@ pub(crate) fn blob_transport_profile() -> BlobTransportProfile {
 /// **Throughput**
 /// - `stream_receive_window` — see [`STREAM_RECEIVE_WINDOW_BYTES`]; the single
 ///   biggest win on the relay path.
-/// - `send_window` — raised to `8 ×` the stream window (mirroring quinn's
-///   default send/stream ratio) so the serving side can keep the larger receive
-///   window full and isn't the new bottleneck.
+/// - `send_window` — see [`default_send_window_bytes`]. Independent of the
+///   stream window: it bounds bytes in flight on the way out, where the stream
+///   window governs streams this endpoint receives.
 ///
 /// Congestion control is left at iroh's default (**CUBIC**). BBR was tried but
 /// made phone-to-phone Wi-Fi throughput visibly stutter: its ProbeBW gain
@@ -118,11 +139,10 @@ pub(crate) fn blob_transport_profile() -> BlobTransportProfile {
 /// every path; `receive_window` (connection-level) stays at iroh's
 /// `VarInt::MAX` default, so it never limits.
 pub(crate) fn build_transport_config() -> QuicTransportConfig {
-    // `from_u32` is infallible for our values (both well under VarInt::MAX), and
-    // `send_window` is a plain u64 — 8× the stream window.
-    let window = stream_receive_window_bytes();
-    let stream_receive_window = VarInt::from_u32(window);
-    let send_window = 8u64 * u64::from(window);
+    // `from_u32` is infallible for our values (well under VarInt::MAX);
+    // `send_window` is a plain u64 and no longer derived from the stream window.
+    let stream_receive_window = VarInt::from_u32(stream_receive_window_bytes());
+    let send_window = send_window_bytes();
 
     QuicTransportConfig::builder()
         .default_path_max_idle_timeout(Duration::from_millis(6_000))
@@ -136,7 +156,7 @@ pub(crate) fn build_transport_config() -> QuicTransportConfig {
 mod tests {
     use super::{
         STREAM_RECEIVE_WINDOW_BYTES, blob_transport_profile, build_transport_config,
-        stream_receive_window_bytes,
+        default_send_window_bytes, send_window_bytes, stream_receive_window_bytes,
     };
 
     /// Off Android there is no property to read, so the compiled-in value must
@@ -146,18 +166,33 @@ mod tests {
         assert_eq!(stream_receive_window_bytes(), STREAM_RECEIVE_WINDOW_BYTES);
     }
 
-    /// The profile is what telemetry reports; it has to agree with the window
+    /// The profile is what telemetry reports; it has to agree with the windows
     /// actually in force, or a sweep records the wrong configuration against
     /// its own numbers.
     #[test]
-    fn profile_reports_the_window_in_force() {
+    fn profile_reports_the_windows_in_force() {
         use iroh::endpoint::VarInt;
         use wisp_core::blobs::receive::BlobTransportProfile;
 
-        let window = u64::from(stream_receive_window_bytes());
         assert_eq!(
             blob_transport_profile(),
-            BlobTransportProfile::new(window, u64::from(VarInt::MAX), 8 * window, "cubic"),
+            BlobTransportProfile::new(
+                u64::from(stream_receive_window_bytes()),
+                u64::from(VarInt::MAX),
+                send_window_bytes(),
+                "cubic",
+            ),
+        );
+    }
+
+    /// The default must stay exactly where it was until the app-side
+    /// measurement lands: decoupling the knobs is not meant to change behaviour.
+    #[test]
+    fn send_window_default_is_unchanged() {
+        assert_eq!(send_window_bytes(), default_send_window_bytes());
+        assert_eq!(
+            default_send_window_bytes(),
+            8 * u64::from(STREAM_RECEIVE_WINDOW_BYTES)
         );
     }
 
