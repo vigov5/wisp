@@ -61,7 +61,7 @@ neither end's disk is close to mattering. Every branch with a number attached:
 | D4 export | **closed**, no bottleneck: receiver disk write is free |
 | D5 AOA | not started; its USB/GC profile precondition is unmet |
 | E1 window | **closed**: inert in the app on both tether and relay |
-| E2 congestion | BBR3 halves loss and removes the bufferbloat for 2.7% of median; worth an app trial |
+| E2 congestion | **closed**: BBR3 halves loss and tail RTT in the harness but is 23% slower in the app with a 6.4 MiB/s outlier — the original stutter, reproduced |
 | E3 MTU | **closed**: PMTU discovery works, 1200 -> 1452, zero lost probes |
 | P0.4 opt-level | ~8% of raw QUIC, in AEAD and transport code, not BLAKE3 |
 | build matrix | deprioritised: it varies changes B2 measured at 0.34% and 0.07% of wall time |
@@ -1815,13 +1815,35 @@ loss recovery, not on average alone". On that rule **BBR3 is the better
 controller here** — it gives up 2.7% of median throughput to halve loss and
 eliminate the bufferbloat.
 
-Not sufficient to change the default. It is `quic_baseline` rather than the app,
-and E1 established that a transport knob which moves the baseline can be inert
-in the product; it is one path (tether) and n=5; and the original BBR complaint
-was phone-to-phone Wi-Fi stutter, which is untested here. What it does establish
-is that the standing "BBR was tried and rejected" note should not block a BBR3
-trial — the next step is the same A/B in the app, on Wi-Fi as well as the
-tether, with the stutter symptom explicitly looked for.
+**The app reverses it. Do not adopt BBR3.** The same A/B run through the
+application, `debug.wisp.cc`, five interleaved rounds over the tether:
+
+| | median | range | lost | `rtt_p90` median | paired wins |
+| --- | --- | --- | --- | --- | --- |
+| CUBIC | **28.32 MiB/s** | 20.8-35.5 | 26 | 135.0 ms | 3 of 5 |
+| BBR3 | 22.95 MiB/s | **6.4**-33.0 | 10 | **17.1 ms** | 2 of 5 |
+
+BBR3 keeps the latency and loss advantages it showed in the baseline — tail RTT
+falls from 135 ms to 17 ms and loss from 26 to 10 — and it is still **23% slower
+on median with a catastrophic tail**. One run in five came in at 6.41 MiB/s, a
+4.4x collapse below its own median. Gate 1 wants p10 at 70% of median; BBR3's
+worst run is **28%** of its median, against CUBIC's 73%.
+
+That 6.41 MiB/s run is the symptom that caused the original revert. The plan
+recorded BBR as making throughput "visibly stutter" on release phone-to-phone
+runs, and this is that failure reproducing on a *steady USB cable* with BBR3 —
+so the concern was not specific to the old algorithm or to Wi-Fi. The standing
+rejection stands, now on BBR3-specific evidence rather than inherited.
+
+Keep the knob: BBR3 is the right choice if latency under load ever matters more
+than throughput, and it is a clean way to reproduce the stutter for debugging.
+It is not the right default for a file-transfer app.
+
+**Third time the baseline did not predict the app.** E1's send window moved
+`quic_baseline` substantially and was inert in the product; the relay result
+shrank from +22% to +3.2% under a cleaner lever; and now a controller that wins
+on every criterion in the harness loses on the one that matters in the app.
+Measure transport changes in the product before believing them.
 
 Provider-side evidence now exists on the Android sender: one 64 MiB direct run
 recorded 4,813 lost packets, about 6.99 MB of lost bytes, 71 congestion events and
