@@ -1106,12 +1106,39 @@ first pass suggested, and it does not rehabilitate the relay-residue section's
 conclusion. That section's finding stands as written: one 12.1% run finishing
 mid-pack is weak evidence either way.
 
+**The loss is on the direct path, not the relay.** Splitting
+`local_lost_packets_delta` (selected path) from `all_paths_lost_packets_delta`:
+
+| arm | selected (direct) | all paths | off-selected (relay) |
+| --- | --- | --- | --- |
+| relay in dial, batch 1 | **246** | 296 | 50 |
+| relay in dial, batch 2 | **152** | 199 | 47 |
+| relay removed, batch 1 | 30 | 30 | 0 |
+| relay removed, batch 2 | 13 | 13 | 0 |
+
+Only about 50 packets per batch are lost *on* the relay. The relay's presence
+multiplies loss **on the direct path** by 8-12x — and the two paths do not even
+share a physical link here, since the relay leaves over Wi-Fi while direct runs
+over the USB tether. So this is not link contention.
+
+The shape that fits is **spurious loss detection from cross-path reordering**: a
+packet sent over a 150 ms relay path arrives long after its neighbours on a 2 ms
+direct path, and if loss detection is not strictly per-path, the direct path's
+packets get declared lost and retransmitted. That would also explain the
+otherwise odd pairing of a large loss reduction with only a +3.2% throughput
+gain — most of the "loss" is wasted retransmission and congestion backoff rather
+than genuinely dropped data. Stated as a hypothesis; it needs a look at how
+noq-proto scopes loss detection across paths, which is the same layer the relay
+residue at the top of this document pointed at.
+
 **Not yet a shippable change.** Removing the relay from the dial once a direct
 path exists trades away the fallback that makes a transfer survive the direct
 path dying mid-flight, and nothing here measures that failure mode. The
 experiment disables the relay for the whole connection, which is not the same as
-dropping it after direct is established. Design that carefully or the 89% loss
-win buys a class of transfers that now fail outright.
+dropping it after direct is established. If the reordering hypothesis holds the
+right fix is upstream — keep the relay as a genuine backup carrying no bulk and
+scoped out of the direct path's loss detection — rather than removing the
+failover to buy a loss number.
 
 
 This comes before AOA and general QUIC tuning because upstream issue #4286 already
