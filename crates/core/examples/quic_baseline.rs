@@ -31,10 +31,11 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use iroh::EndpointAddr;
 use iroh::endpoint::{QuicTransportConfig, VarInt};
 use iroh::{Endpoint, RelayMode, endpoint::presets};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-use wisp_core::util::{decode_ticket, make_ticket_offline};
+use wisp_core::util::{decode_ticket, make_ticket_from_addr, make_ticket_offline};
 
 const ALPN: &[u8] = b"wisp/quic-baseline/0";
 const CHUNK: usize = 1024 * 1024;
@@ -96,14 +97,25 @@ fn report_windows(windows: &[u64]) {
     );
 }
 
-async fn bind(send_window_kib: Option<u64>) -> Result<Endpoint> {
-    Endpoint::builder(presets::N0)
+async fn bind(send_window_kib: Option<u64>, relay: bool) -> Result<Endpoint> {
+    let builder = Endpoint::builder(presets::N0)
         .alpns(vec![ALPN.to_vec()])
-        .relay_mode(RelayMode::Disabled)
-        .transport_config(transport_config(send_window_kib))
-        .bind()
-        .await
-        .context("bind endpoint")
+        .relay_mode(if relay {
+            RelayMode::Default
+        } else {
+            RelayMode::Disabled
+        })
+        .transport_config(transport_config(send_window_kib));
+    // A relay-only ticket is not enough to measure the relay: iroh exchanges
+    // observed addresses over the relay and hole-punches, so the bytes end up
+    // on a direct path and the run reports the LAN's throughput as the relay's.
+    // Removing the IP transports entirely leaves nothing to punch to.
+    let builder = if relay {
+        builder.clear_ip_transports()
+    } else {
+        builder
+    };
+    builder.bind().await.context("bind endpoint")
 }
 
 /// `--to-file PATH` makes the sink write what it receives, mirroring the
@@ -114,9 +126,26 @@ async fn bind(send_window_kib: Option<u64>) -> Result<Endpoint> {
 /// Writes go through a bounded channel to a writer task for the same reason the
 /// file source does: a write inline in the read loop measures its own lack of
 /// pipelining rather than the disk.
-async fn run_sink(to_file: Option<&str>) -> Result<()> {
-    let endpoint = bind(None).await?;
-    let ticket = make_ticket_offline(&endpoint).context("build ticket")?;
+async fn run_sink(to_file: Option<&str>, relay: bool) -> Result<()> {
+    let endpoint = bind(None, relay).await?;
+    // A relay-only ticket is the only reliable way to force the relay path:
+    // iroh reopens relay paths and hole-punches whenever a direct address is
+    // known, so asking it to prefer relay does not hold. Publishing an address
+    // with no direct IPs leaves the peer nothing else to dial.
+    let ticket = if relay {
+        endpoint.online().await;
+        let addr = endpoint.addr();
+        let relay_url = addr
+            .relay_urls()
+            .next()
+            .cloned()
+            .context("no relay URL after waiting for the endpoint to come online")?;
+        println!("RELAY {relay_url}");
+        make_ticket_from_addr(EndpointAddr::new(addr.id).with_relay_url(relay_url))
+            .context("build relay-only ticket")?
+    } else {
+        make_ticket_offline(&endpoint).context("build ticket")?
+    };
     println!("TICKET {ticket}");
     println!("waiting for one connection");
 
@@ -194,9 +223,10 @@ async fn run_source(
     mib: usize,
     from_file: Option<&str>,
     send_window_kib: Option<u64>,
+    relay: bool,
 ) -> Result<()> {
     let addr = decode_ticket(ticket).context("decode ticket")?;
-    let endpoint = bind(send_window_kib).await?;
+    let endpoint = bind(send_window_kib, relay).await?;
     let connection = endpoint.connect(addr, ALPN).await.context("connect")?;
     let mut stream = connection.open_uni().await.context("open uni stream")?;
 
@@ -261,17 +291,24 @@ async fn run_source(
     // RTT under load is the point of the send-window sweep: a window far above
     // the path's bandwidth-delay product shows up here as inflated RTT, not as
     // lower throughput.
-    let (rtt_ms, cwnd, lost) = connection
-        .paths()
+    // Report the path kind, not just its stats: a relay-only ticket stops the
+    // *initial* dial from going direct, but iroh still exchanges addresses over
+    // the relay and hole-punches, so a "relay" run can quietly finish on a
+    // direct path. Without this the numbers look like a fast relay.
+    let paths = connection.paths();
+    let (rtt_ms, cwnd, lost, kind) = paths
         .iter()
         .find(|p| p.is_selected())
         .map(|p| {
             let s = p.stats();
-            (s.rtt.as_secs_f64() * 1000.0, s.cwnd, s.lost_packets)
+            let kind = if p.is_relay() { "relay" } else { "direct" };
+            (s.rtt.as_secs_f64() * 1000.0, s.cwnd, s.lost_packets, kind)
         })
-        .unwrap_or((0.0, 0, 0));
+        .unwrap_or((0.0, 0, 0, "none"));
+    let relay_paths = paths.iter().filter(|p| p.is_relay()).count();
+    let total_paths = paths.len();
     println!(
-        "source: {mib} MiB in {secs:.2}s = {:.1} MiB/s  rtt={rtt_ms:.1}ms cwnd={cwnd} lost={lost}",
+        "source: {mib} MiB in {secs:.2}s = {:.1} MiB/s  path={kind} paths={total_paths} relay_paths={relay_paths} rtt={rtt_ms:.1}ms cwnd={cwnd} lost={lost}",
         mib as f64 / secs
     );
 
@@ -289,7 +326,7 @@ async fn main() -> Result<()> {
                 .position(|a| a == "--to-file")
                 .and_then(|i| args.get(i + 1))
                 .map(String::as_str);
-            run_sink(to_file).await
+            run_sink(to_file, args.iter().any(|a| a == "--relay")).await
         }
         Some("source") => {
             let ticket = args
@@ -315,10 +352,11 @@ async fn main() -> Result<()> {
                 .map(|v| v.parse::<u64>())
                 .transpose()
                 .context("--send-window-kib expects a number")?;
-            run_source(ticket, mib, from_file, send_window_kib).await
+            let relay = args.iter().any(|a| a == "--relay");
+            run_source(ticket, mib, from_file, send_window_kib, relay).await
         }
         _ => bail!(
-            "usage: quic_baseline sink [--to-file PATH] | quic_baseline source <ticket> [--mib N] [--from-file PATH] [--send-window-kib N]"
+            "usage: quic_baseline sink [--to-file PATH] | quic_baseline source <ticket> [--mib N] [--from-file PATH] [--send-window-kib N] [--relay]"
         ),
     }
 }

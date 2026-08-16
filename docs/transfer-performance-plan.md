@@ -1748,14 +1748,45 @@ for 31% lower RTT under load and a 99.8% cut in lost packets. It also collapses
 the spread — the default's 20.3-26.7 MiB/s becomes 20.8-21.8, which is the
 p10/median stability the acceptance criteria actually grade.
 
-Two things this does not establish. **Relay is unmeasured**: 2 MiB at a 100 ms
-relay RTT implies a 20 MiB/s ceiling, comfortably above what relay paths carry
-here, so no regression is *expected* — but that is arithmetic, not a
-measurement, and it needs one before shipping. And this is `quic_baseline`, not
-the app; the app should be re-measured with the same cap before the constant
-changes. The knob for doing that already exists as `debug.wisp.stream_win_mib`,
-though note it moves *both* windows together, so a proper app-side test wants
-`send_window` decoupled first.
+One thing this does not establish: it is `quic_baseline`, not the app. The app
+should be re-measured with the same cap before the constant changes. The knob
+for doing that exists as `debug.wisp.stream_win_mib`, but note it moves *both*
+windows together, so a proper app-side test wants `send_window` decoupled first.
+
+#### Measured on the relay: 2 MiB is safe, 1 MiB is not
+
+The relay arm is now measured rather than argued. Forcing it takes more than a
+relay-only ticket — iroh exchanges observed addresses over the relay and
+hole-punches, so the bytes finish on a direct path and the run reports the LAN's
+throughput as the relay's. It did exactly that here, at 26 MiB/s and
+`path=direct`, which is why `quic_baseline --relay` now also calls
+`clear_ip_transports()`: with no IP transport there is nothing to punch to.
+
+Real relay numbers, 64 MiB payload, three runs each, `path=relay paths=1`:
+
+| `send_window` | throughput | RTT | packets lost |
+| --- | --- | --- | --- |
+| 64 MiB (today) | 7.3 / 6.6 / 5.7 MiB/s | 148-173 ms | 2591 / 1013 / 1736 |
+| 2 MiB | 5.8 / 5.7 / 6.6 MiB/s | 145-177 ms | 381 / 164 / 401 |
+| 1 MiB | 4.8 / 4.8 / 4.8 MiB/s | 154-161 ms | **0 / 0 / 0** |
+
+**1 MiB binds the relay and is disqualified.** Three runs within 0.09 s of each
+other at 4.8 MiB/s, with zero loss, is the signature of a flow-control limit
+rather than a network one — the window, not the path, is setting the rate. That
+is ~27% below the default.
+
+**2 MiB does not cost measurable relay throughput.** Its range (5.7-6.6)
+overlaps the default's (5.7-7.3) almost completely, so at n=3 no difference is
+established; what *is* clear is loss, down about 80%. Combined with the tether
+result, 2 MiB is the only value tested that helps one path without hurting the
+other.
+
+This supersedes the arithmetic in the previous section, which was wrong twice
+over: it assumed a 100 ms relay RTT when the measured value is ~155 ms, and it
+only checked 2 MiB. Had 1 MiB been chosen on that reasoning — its tether numbers
+are the most attractive of the sweep, 13.5 ms RTT and zero loss — it would have
+cut relay throughput by a quarter. Relay BDP here is about 0.9 MiB, so a 1 MiB
+window sits right on top of it.
 
 #### The receiving end is not where the remaining 12% goes
 
