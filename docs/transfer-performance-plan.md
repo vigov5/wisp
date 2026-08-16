@@ -17,6 +17,42 @@ The document uses three distinct states:
 - **Performance verified:** there is a baseline, a reproducible A/B, and numbers
   that meet the threshold.
 
+### Status as of 2026-08-16 — phone to desktop is measured out
+
+Read this before any section below, several of which record superseded
+conclusions in place.
+
+On the one path this plan has measured properly — Android sender to desktop
+receiver, iroh 1.0.3, over a USB tether — **there is no single large win left
+above the transport.** The app runs at 75% of raw QUIC and 56% of TCP, neither
+end is CPU-saturated (1.6 of 8 cores on the phone, 1.75 on the desktop), and
+neither end's disk is close to mattering. Every branch with a number attached:
+
+| item | outcome |
+| --- | --- |
+| D1 relay | reopened; removing the relay from the dial is +3.2% and **-89% packet loss** — real, repeated, not yet safe to ship |
+| D2 parallelism | premise inverted: the existing multi-path is a small net loss |
+| D3 sender prepare | not the bottleneck — not read-starved, not UI-bound, not CPU-saturated |
+| D4 export | **closed**, no bottleneck: receiver disk write is free |
+| D5 AOA | not started; its USB/GC profile precondition is unmet |
+| E1 window | **closed**: inert in the app on both tether and relay |
+| E2 congestion | BBR3 halves loss and removes the bufferbloat for 2.7% of median; worth an app trial |
+| E3 MTU | **closed**: PMTU discovery works, 1200 -> 1452, zero lost probes |
+| P0.4 opt-level | ~8% of raw QUIC, in AEAD and transport code, not BLAKE3 |
+| build matrix | deprioritised: it varies changes B2 measured at 0.34% and 0.07% of wall time |
+
+The remaining headroom is **loss and stability, not throughput**, and the open
+question there is why a relay path in the dial makes the *direct* path lose
+8-20x more packets in bursts. Three explanations have been tested and refuted;
+the surviving candidate needs per-path send timestamps this telemetry lacks.
+
+Two cautions for anyone extending this work. **Interleave every A/B**: three
+separate effects looked large under sequential arms and shrank or vanished when
+paired, on a link that drifts ~9 MiB/s between minutes. And **a correct byte
+count does not prove the run used the path you think** — a stray receiver
+holding the presence port makes the app fall back to the USB-cable transport and
+move the whole payload with no QUIC telemetry at all.
+
 The changes at commit `8a33818` are only **implemented and functionally
 verified**. They are optimization hypotheses that have never been A/B'd; P0 is not
 called "complete" until Phase B can attribute an effect to each change.
@@ -1641,7 +1677,25 @@ nothing here".
 - Keep atomic records and conflict/path validation.
 - Separate protocol-completed from user-visible file-ready in telemetry and UI.
 
+**Closed on its own condition: no bottleneck shown.** The gate is an export
+baseline showing a problem, and the measurement says there is none. A sink that
+writes every byte and `fsync`s runs at 24.10 MiB/s against 24.60 for one that
+discards them — overlapping ranges, n=5 each — against a desktop write baseline
+of 601 MiB/s. Receiver CPU adds ~3 cpu-s over a plain sink for the whole blob
+layer, which is 1.75 cores over a 12 s transfer on a many-core machine. Nothing
+to optimise here on this path; reopen if a slower receiver ever shows otherwise.
+The third bullet, splitting protocol-completed from file-ready in telemetry and
+UI, is a product change rather than a performance one and is unaffected.
+
 ### D5. AOA copy and GC
+
+**Not started, and its precondition has not been met.** The gate is a USB/GC
+profile confirming the copies matter, and no such profile exists — every
+measurement in this document is the tether or the relay, not AOA. Worth noting
+one thing learned in passing that bears on it: a run can complete over the
+USB-cable transport carrying the full payload with **zero** QUIC telemetry, so
+any AOA profiling needs its own instrumentation rather than the transfer
+telemetry used everywhere else here.
 
 Only once a USB/GC profile confirms it:
 
