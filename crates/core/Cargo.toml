@@ -30,6 +30,12 @@ walkdir.workspace = true
 [dev-dependencies]
 # `quic_baseline` (examples/) is a benchmark binary, not library code.
 anyhow.workspace = true
+# Only for the E2 congestion-control A/B in `quic_baseline`: iroh re-exports the
+# `ControllerFactory` trait but not the concrete `CubicConfig` / `Bbr3Config`.
+# A dev-dependency keeps it out of the shipped dependency graph, which is what
+# the plan requires of a benchmark-only override. Must track iroh's own
+# noq-proto version or the trait will not match.
+noq-proto = "1.1"
 filetime = "0.2"
 tempfile = "3.27.0"
 tracing-subscriber.workspace = true

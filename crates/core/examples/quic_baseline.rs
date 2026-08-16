@@ -28,11 +28,12 @@
 //! baseline built on quinn's 1.25 MB default stream window would be slower than
 //! the app it is meant to bound, which would make it useless.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
-use iroh::endpoint::{QuicTransportConfig, VarInt};
+use iroh::endpoint::{ControllerFactory, QuicTransportConfig, VarInt};
 use iroh::{Endpoint, RelayMode, endpoint::presets};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use wisp_core::util::{decode_ticket, make_ticket_from_addr, make_ticket_offline};
@@ -54,17 +55,35 @@ const STREAM_RECEIVE_WINDOW_BYTES: u32 = 16 * 1024 * 1024;
 /// desktop's window and only `send_window` constrains the sender. A sweep of
 /// 8-64 MiB send window on a link whose bandwidth-delay product is ~78 KB never
 /// binds at all, which is why it came back flat.
-fn transport_config(send_window_kib: Option<u64>) -> QuicTransportConfig {
+/// `--cc bbr3` swaps the congestion controller for E2.
+///
+/// Benchmark-only, exactly as the plan requires: the shipped default stays
+/// CUBIC and nothing here touches `wisp_app::quic_keepalive`. Note the earlier
+/// BBR trial that was reverted for phone-to-phone stutter was a *different*
+/// controller — noq-proto 1.1 ships **BBR3**, so that result does not carry
+/// over and this needs measuring afresh.
+fn congestion_factory(cc: &str) -> Option<Arc<dyn ControllerFactory + Send + Sync>> {
+    match cc {
+        "bbr3" => Some(Arc::new(noq_proto::congestion::Bbr3Config::default())),
+        "cubic" => Some(Arc::new(noq_proto::congestion::CubicConfig::default())),
+        _ => None,
+    }
+}
+
+fn transport_config(send_window_kib: Option<u64>, cc: Option<&str>) -> QuicTransportConfig {
     let send_window = match send_window_kib {
         Some(kib) => kib * 1024,
         None => 8u64 * u64::from(STREAM_RECEIVE_WINDOW_BYTES),
     };
-    QuicTransportConfig::builder()
+    let mut builder = QuicTransportConfig::builder()
         .default_path_max_idle_timeout(Duration::from_millis(6_000))
         .default_path_keep_alive_interval(Duration::from_millis(4_500))
         .stream_receive_window(VarInt::from_u32(STREAM_RECEIVE_WINDOW_BYTES))
-        .send_window(send_window)
-        .build()
+        .send_window(send_window);
+    if let Some(factory) = cc.and_then(congestion_factory) {
+        builder = builder.congestion_controller_factory(factory);
+    }
+    builder.build()
 }
 
 /// Prints the same stability shape the analyzer reports for a real transfer:
@@ -97,7 +116,7 @@ fn report_windows(windows: &[u64]) {
     );
 }
 
-async fn bind(send_window_kib: Option<u64>, relay: bool) -> Result<Endpoint> {
+async fn bind(send_window_kib: Option<u64>, relay: bool, cc: Option<&str>) -> Result<Endpoint> {
     let builder = Endpoint::builder(presets::N0)
         .alpns(vec![ALPN.to_vec()])
         .relay_mode(if relay {
@@ -105,7 +124,7 @@ async fn bind(send_window_kib: Option<u64>, relay: bool) -> Result<Endpoint> {
         } else {
             RelayMode::Disabled
         })
-        .transport_config(transport_config(send_window_kib));
+        .transport_config(transport_config(send_window_kib, cc));
     // A relay-only ticket is not enough to measure the relay: iroh exchanges
     // observed addresses over the relay and hole-punches, so the bytes end up
     // on a direct path and the run reports the LAN's throughput as the relay's.
@@ -126,8 +145,8 @@ async fn bind(send_window_kib: Option<u64>, relay: bool) -> Result<Endpoint> {
 /// Writes go through a bounded channel to a writer task for the same reason the
 /// file source does: a write inline in the read loop measures its own lack of
 /// pipelining rather than the disk.
-async fn run_sink(to_file: Option<&str>, relay: bool) -> Result<()> {
-    let endpoint = bind(None, relay).await?;
+async fn run_sink(to_file: Option<&str>, relay: bool, cc: Option<&str>) -> Result<()> {
+    let endpoint = bind(None, relay, cc).await?;
     // A relay-only ticket is the only reliable way to force the relay path:
     // iroh reopens relay paths and hole-punches whenever a direct address is
     // known, so asking it to prefer relay does not hold. Publishing an address
@@ -224,9 +243,10 @@ async fn run_source(
     from_file: Option<&str>,
     send_window_kib: Option<u64>,
     relay: bool,
+    cc: Option<&str>,
 ) -> Result<()> {
     let addr = decode_ticket(ticket).context("decode ticket")?;
-    let endpoint = bind(send_window_kib, relay).await?;
+    let endpoint = bind(send_window_kib, relay, cc).await?;
     let connection = endpoint.connect(addr, ALPN).await.context("connect")?;
     let mut stream = connection.open_uni().await.context("open uni stream")?;
 
@@ -316,6 +336,13 @@ async fn run_source(
     Ok(())
 }
 
+fn cc_arg(args: &[String]) -> Option<&str> {
+    args.iter()
+        .position(|a| a == "--cc")
+        .and_then(|i| args.get(i + 1))
+        .map(String::as_str)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -326,7 +353,7 @@ async fn main() -> Result<()> {
                 .position(|a| a == "--to-file")
                 .and_then(|i| args.get(i + 1))
                 .map(String::as_str);
-            run_sink(to_file, args.iter().any(|a| a == "--relay")).await
+            run_sink(to_file, args.iter().any(|a| a == "--relay"), cc_arg(&args)).await
         }
         Some("source") => {
             let ticket = args
@@ -353,10 +380,18 @@ async fn main() -> Result<()> {
                 .transpose()
                 .context("--send-window-kib expects a number")?;
             let relay = args.iter().any(|a| a == "--relay");
-            run_source(ticket, mib, from_file, send_window_kib, relay).await
+            run_source(
+                ticket,
+                mib,
+                from_file,
+                send_window_kib,
+                relay,
+                cc_arg(&args),
+            )
+            .await
         }
         _ => bail!(
-            "usage: quic_baseline sink [--to-file PATH] | quic_baseline source <ticket> [--mib N] [--from-file PATH] [--send-window-kib N] [--relay]"
+            "usage: quic_baseline sink [--to-file PATH] | quic_baseline source <ticket> [--mib N] [--from-file PATH] [--send-window-kib N] [--relay] [--cc cubic|bbr3]"
         ),
     }
 }

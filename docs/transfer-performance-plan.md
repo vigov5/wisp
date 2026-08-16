@@ -1690,6 +1690,37 @@ average throughput past the threshold.
 - Do not auto-select a controller from the direct/relay label alone without
   per-device and per-path data.
 
+**Measured: BBR3 wins on every criterion this section names except average.**
+
+The controller in noq-proto 1.1 is **BBR3**, not the BBR enabled in `d386240`
+and reverted in `05c9e4d`. That reversal was of a different algorithm, so it
+does not carry over. `quic_baseline --cc cubic|bbr3` is a benchmark-only
+override (noq-proto is a dev-dependency; `quic_keepalive` is untouched). Five
+alternating rounds, 256 MiB over the tether:
+
+| | median | range | p10/p50 | packets lost, 5 runs | RTT under load |
+| --- | --- | --- | --- | --- | --- |
+| CUBIC | **26.30 MiB/s** | 24.8-27.6 | 82/85/92/61/92% | **16,563** | spikes to 38 and 88 ms |
+| BBR3 | 25.60 MiB/s | 22.4-25.8 | 94/93/85/71/90% | **7,221** | 2.5-5.2 ms throughout |
+
+CUBIC is 2.7% faster on median and wins 4 of 5 paired rounds. It pays for that
+with 2.3x the packet loss, a cwnd reaching 8.3 MB against BBR3's 2.4 MB, and
+RTT excursions to 88 ms on a link whose idle RTT is ~2 ms. BBR3 holds the RTT at
+the link's real value and has the better p10/p50 in 4 of 5 rounds.
+
+This section's own rule is to decide on "utilization, p10/p50, CV, stalls and
+loss recovery, not on average alone". On that rule **BBR3 is the better
+controller here** — it gives up 2.7% of median throughput to halve loss and
+eliminate the bufferbloat.
+
+Not sufficient to change the default. It is `quic_baseline` rather than the app,
+and E1 established that a transport knob which moves the baseline can be inert
+in the product; it is one path (tether) and n=5; and the original BBR complaint
+was phone-to-phone Wi-Fi stutter, which is untested here. What it does establish
+is that the standing "BBR was tried and rejected" note should not block a BBR3
+trial — the next step is the same A/B in the app, on Wi-Fi as well as the
+tether, with the stutter symptom explicitly looked for.
+
 Provider-side evidence now exists on the Android sender: one 64 MiB direct run
 recorded 4,813 lost packets, about 6.99 MB of lost bytes, 71 congestion events and
 a final RTT over 3 seconds. That is enough to prioritize recovery classification
