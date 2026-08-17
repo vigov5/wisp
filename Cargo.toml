@@ -35,6 +35,42 @@ codegen-units = 1
 strip = true
 panic = "abort"
 
+# Debug-info split: our own crates carry full debug info (breakpoints, locals,
+# named types), dependencies only line tables — enough for `file:line` in a
+# backtrace, without the type/variable DWARF that dominates target/ size and
+# link time. Dependencies stay cached: their profile is fixed from here on, so
+# only the first build after this change recompiles them.
+[profile.dev]
+debug = "full"
+
+[profile.dev.package."*"]
+debug = "line-tables-only"
+
+# Build scripts and proc macros are never stepped through.
+[profile.dev.build-override]
+debug = false
+
+# The `*` glob above also matches our crates when they are consumed as a path
+# dependency instead of being built directly (`cargo build -p wisp`), so pin
+# them back explicitly — a named override always beats the glob.
+[profile.dev.package.wisp]
+debug = "full"
+
+[profile.dev.package.wisp-app]
+debug = "full"
+
+[profile.dev.package.wisp-core]
+debug = "full"
+
+[profile.dev.package.wisp-server]
+debug = "full"
+
+[profile.dev.package.wisp-wire]
+debug = "full"
+
+[profile.dev.package.wisp-web-receiver]
+debug = "full"
+
 [workspace.package]
 edition = "2024"
 version = "2.0.1"

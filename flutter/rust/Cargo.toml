@@ -49,8 +49,34 @@ opt-level = 3
 # deps compile at opt-level=0 and on-device hashing/crypto runs ~25x slower
 # (BLAKE3 measured 28 MB/s debug vs 747 MB/s optimized), making debug transfers
 # painfully slow. The bridge crate itself stays unoptimized for fast rebuilds.
+#
+# `debug = "line-tables-only"` keeps `file:line` in backtraces from dep frames
+# but drops the type/variable DWARF, which is most of the .so size and link
+# time. Deps stay cached — this profile is fixed, so only the first build after
+# this change recompiles them.
 [profile.dev.package."*"]
 opt-level = 3
+debug = "line-tables-only"
+
+# The bridge crate itself (a workspace member) keeps full debug info.
+[profile.dev]
+debug = "full"
+
+[profile.dev.build-override]
+debug = false
+
+# wisp-app / wisp-core are path dependencies here, not workspace members, so the
+# `*` glob above would strip their debug info too. Pin them to full debug while
+# keeping opt-level = 3: they hold the transfer loop, and at opt-level = 0
+# on-device debug transfers get noticeably slower. Drop opt-level to 0 here
+# temporarily if you need clean step-debugging through those crates.
+[profile.dev.package.wisp-app]
+opt-level = 3
+debug = "full"
+
+[profile.dev.package.wisp-core]
+opt-level = 3
+debug = "full"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
