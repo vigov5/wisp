@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
 import android.net.VpnService
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbConstants
@@ -29,6 +30,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Direct phone-to-phone transfer over a USB cable via the Android Open
@@ -92,6 +94,9 @@ class UsbAoaChannel(private val context: Context) {
         private const val IDX_SERIAL = 5
 
         private const val ACTION_USB_PERMISSION = "dev.vigov5.wisp.USB_PERMISSION"
+
+        // Debug-only raw-link benchmark (see [registerBenchReceiver]).
+        private const val ACTION_AOA_BENCH = "dev.vigov5.wisp.AOA_BENCH"
 
         // Kept distinct from the host's device-permission action: both receivers
         // are alive at once on a phone that has played either role, and a shared
@@ -161,6 +166,8 @@ class UsbAoaChannel(private val context: Context) {
     private var permissionReceiver: BroadcastReceiver? = null
     private var accessoryReceiver: BroadcastReceiver? = null
     private var accessoryPermissionReceiver: BroadcastReceiver? = null
+    private var benchReceiver: BroadcastReceiver? = null
+    private val benchRunning = AtomicBoolean(false)
     // One in-flight accessory permission dialog at a time: the open loop polls
     // every 200ms and would otherwise stack a dialog per tick.
     private val accessoryPermissionRequested = AtomicBoolean(false)
@@ -252,6 +259,7 @@ class UsbAoaChannel(private val context: Context) {
         )
 
         registerAccessoryReceiver()
+        registerBenchReceiver()
         AoaBridge.channel = this
     }
 
@@ -264,6 +272,8 @@ class UsbAoaChannel(private val context: Context) {
         accessoryReceiver = null
         accessoryPermissionReceiver?.let { runCatching { context.unregisterReceiver(it) } }
         accessoryPermissionReceiver = null
+        benchReceiver?.let { runCatching { context.unregisterReceiver(it) } }
+        benchReceiver = null
         accessoryPermissionRequested.set(false)
         eventSink = null
         if (AoaBridge.channel === this) AoaBridge.channel = null
@@ -878,6 +888,199 @@ class UsbAoaChannel(private val context: Context) {
         }
     }
 
+    // --- Debug-only raw-link benchmark ---------------------------------------
+
+    /**
+     * Measures the AOA pipe on its own: no TUN, no framing, no QUIC. This exists
+     * to answer the one question that gates any buffer tuning — is the ceiling
+     * the USB transport, or the stack above it? Tuning `BULK_BATCH_BYTES` or the
+     * copies before knowing that is guesswork.
+     *
+     * Driven entirely over adb so the two phones never need coordinate tapping:
+     *
+     *     B="am broadcast -a dev.vigov5.wisp.AOA_BENCH -p dev.vigov5.wisp"
+     *     adb -s SINK   shell $B --es mode status
+     *     adb -s SINK   shell $B --es mode sink --ei secs 90
+     *     adb -s SOURCE shell $B --es mode send --ei mb 256 --ei chunk 16384
+     *
+     * Results land in `adb logcat -s WispAoa`. Registered only on a debuggable
+     * build, so a release APK exposes no bench receiver at all.
+     */
+    private fun registerBenchReceiver() {
+        if (benchReceiver != null) return
+        if ((context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) == 0) return
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                when (val mode = intent.getStringExtra("mode")) {
+                    "status" -> benchStatus()
+                    "connect" -> benchConnect()
+                    "sink" -> benchSink(intent.getIntExtra("secs", 90))
+                    "send" -> benchSend(
+                        intent.getIntExtra("mb", 256),
+                        intent.getIntExtra("chunk", BULK_BATCH_BYTES),
+                    )
+                    "stop" -> benchStop()
+                    else -> Log.w(TAG, "bench: unknown mode '$mode'")
+                }
+            }
+        }
+        benchReceiver = receiver
+        val filter = IntentFilter(ACTION_AOA_BENCH)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            context.registerReceiver(receiver, filter)
+        }
+        Log.i(TAG, "bench: receiver armed (debuggable build)")
+    }
+
+    private fun benchStatus() {
+        Log.i(
+            TAG,
+            "bench status: link=${link?.role ?: "none"} " +
+                "tunnel=${if (tunnelFd != null) "up" else "down"} " +
+                "running=${benchRunning.get()} " +
+                "devices=${usbManager.deviceList.size} " +
+                "accessories=${usbManager.accessoryList?.size ?: 0}",
+        )
+    }
+
+    private fun benchConnect() {
+        val current = link
+        if (current != null) {
+            Log.i(TAG, "bench connect: already up role=${current.role}")
+            return
+        }
+        if (findFirstDevice() != null) {
+            Log.i(TAG, "bench connect: a USB device is on the bus, connecting as host")
+            connectHost(BenchResult("connectHost"))
+        } else {
+            Log.i(TAG, "bench connect: no bus device, connecting as accessory")
+            openAccessoryWithRetry { ok, err ->
+                Log.i(TAG, "bench connect: accessory ok=$ok err=$err")
+            }
+        }
+    }
+
+    /**
+     * Both ends refuse to run while the tunnel is up: bench bytes and real QUIC
+     * traffic would share the pipe and the number would mean nothing.
+     */
+    private fun benchGuard(what: String): AoaLink? {
+        val current = link
+        if (current == null) {
+            Log.w(TAG, "bench $what: no link — run 'connect' first")
+            return null
+        }
+        if (tunnelFd != null) {
+            Log.w(TAG, "bench $what: tunnel is up; stop it first or the result is meaningless")
+            return null
+        }
+        if (!benchRunning.compareAndSet(false, true)) {
+            Log.w(TAG, "bench $what: another bench is already running")
+            return null
+        }
+        return current
+    }
+
+    private fun benchSink(secs: Int) {
+        val current = benchGuard("sink") ?: return
+        val counter = AtomicLong(0)
+        current.benchBytes = counter
+        Log.i(TAG, "bench sink: counting for up to ${secs}s on role=${current.role}")
+        Thread {
+            try {
+                // Don't start the clock until the first byte lands, or the idle
+                // wait for the peer would be charged against the throughput.
+                val deadline = System.nanoTime() + secs * 1_000_000_000L
+                while (counter.get() == 0L && System.nanoTime() < deadline) Thread.sleep(5)
+                val start = System.nanoTime()
+                var last = 0L
+                var lastChangeAt = start
+                var idleTicks = 0
+                while (System.nanoTime() < deadline) {
+                    Thread.sleep(500)
+                    val cur = counter.get()
+                    val now = System.nanoTime()
+                    if (cur == last) {
+                        // Four quiet ticks means the source has stopped.
+                        if (++idleTicks >= 4) break
+                        continue
+                    }
+                    idleTicks = 0
+                    val inst = (cur - last) / 1e6 / ((now - lastChangeAt) / 1e9)
+                    Log.i(TAG, "bench sink: %.2f MB/s inst (total %.1f MB)".format(inst, cur / 1e6))
+                    last = cur
+                    lastChangeAt = now
+                }
+                val elapsed = (lastChangeAt - start) / 1e9
+                if (last == 0L || elapsed <= 0.0) {
+                    Log.w(TAG, "bench sink RESULT: no bytes arrived")
+                } else {
+                    Log.i(
+                        TAG,
+                        "bench sink RESULT: %.1f MB in %.2fs = %.2f MB/s"
+                            .format(last / 1e6, elapsed, last / 1e6 / elapsed),
+                    )
+                }
+            } finally {
+                current.benchBytes = null
+                benchRunning.set(false)
+            }
+        }.apply { isDaemon = true; name = "aoa-bench-sink" }.start()
+    }
+
+    private fun benchSend(mb: Int, chunk: Int) {
+        val current = benchGuard("send") ?: return
+        Thread {
+            // One buffer, reused: the bench must measure the pipe, not our
+            // allocator. Any per-chunk allocation here would be measuring the
+            // very thing the sink/source comparison is meant to isolate.
+            val buf = ByteArray(chunk) { (it and 0xFF).toByte() }
+            val total = mb.toLong() * 1_000_000L
+            var sent = 0L
+            val start = System.nanoTime()
+            Log.i(TAG, "bench send: ${mb}MB in ${chunk}B chunks on role=${current.role}")
+            try {
+                while (sent < total) {
+                    val n = minOf(chunk.toLong(), total - sent).toInt()
+                    current.write(buf, 0, n)
+                    sent += n
+                }
+                val elapsed = (System.nanoTime() - start) / 1e9
+                Log.i(
+                    TAG,
+                    "bench send RESULT: chunk=%d %.1f MB in %.2fs = %.2f MB/s"
+                        .format(chunk, sent / 1e6, elapsed, sent / 1e6 / elapsed),
+                )
+            } catch (t: Throwable) {
+                val elapsed = (System.nanoTime() - start) / 1e9
+                Log.w(
+                    TAG,
+                    "bench send FAILED after %.1f MB in %.2fs: %s"
+                        .format(sent / 1e6, elapsed, t.toString()),
+                )
+            } finally {
+                benchRunning.set(false)
+            }
+        }.apply { isDaemon = true; name = "aoa-bench-send" }.start()
+    }
+
+    private fun benchStop() {
+        link?.benchBytes = null
+        benchRunning.set(false)
+        Log.i(TAG, "bench: stopped")
+    }
+
+    private class BenchResult(private val what: String) : MethodChannel.Result {
+        override fun success(result: Any?) = Log.i(TAG, "bench $what: ok=$result").let {}
+        override fun error(code: String, message: String?, details: Any?) =
+            Log.w(TAG, "bench $what: error $code: $message").let {}
+
+        override fun notImplemented() = Log.w(TAG, "bench $what: notImplemented").let {}
+    }
+
     // --- Shared link plumbing ----------------------------------------------
 
     private fun installLink(newLink: AoaLink) {
@@ -940,6 +1143,11 @@ class UsbAoaChannel(private val context: Context) {
         abstract fun readInto(buf: ByteArray): Int
         abstract fun close()
 
+        // Debug bench tap. When set, the read loop only counts bytes — no
+        // `copyOf`, no consumer — so the number is the USB pipe alone and not
+        // the framing/TUN/QUIC stack above it. Null on every release build.
+        @Volatile
+        var benchBytes: AtomicLong? = null
 
         // [onClosed] carries why the loop ended. A silent teardown here is
         // indistinguishable from a cable pull at the UI, which is exactly the
@@ -958,7 +1166,12 @@ class UsbAoaChannel(private val context: Context) {
                         }
                         if (n > 0) {
                             bytes += n
-                            onData(buf.copyOf(n))
+                            val bench = benchBytes
+                            if (bench != null) {
+                                bench.addAndGet(n.toLong())
+                            } else {
+                                onData(buf.copyOf(n))
+                            }
                         }
                     }
                 } catch (t: Throwable) {
