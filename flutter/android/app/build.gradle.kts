@@ -60,6 +60,20 @@ android {
 
     buildTypes {
         release {
+            // R8 code shrinking + optimised resource shrinking (Play Console
+            // recommends both to cut download size and runtime memory). Resource
+            // shrinking requires minify to be on; AGP 8.x uses the optimised
+            // resource shrinker by default. Keep rules live in proguard-rules.pro
+            // — the Rust core is a dart:ffi .so so R8 never touches it, and the
+            // Android components are manifest-declared (auto-kept), so the risk
+            // surface is small. NB: verify a release build on a device after
+            // changing keep rules; R8 issues only show at runtime.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             // Use the release signing config when key.properties is present
             // (CI + properly-set-up local dev); otherwise fall back to debug
             // signing so `flutter run --release` keeps working without a
