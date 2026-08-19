@@ -58,10 +58,21 @@ class UsbAoa {
   /// [UsbAoaTunnelUp], [UsbAoaTunnelClosed], and [UsbAoaClosed].
   static Stream<UsbAoaEvent> events() {
     if (!isSupported) return const Stream.empty();
-    return _eventStream ??= _events.receiveBroadcastStream().map(_decodeEvent);
+    return _eventStream ??= _events
+        .receiveBroadcastStream()
+        .map(_decodeEvent)
+        .where((e) => e != null)
+        .cast<UsbAoaEvent>();
   }
 
-  static UsbAoaEvent _decodeEvent(dynamic raw) {
+  /// Returns null for anything that isn't a recognised state change, so it is
+  /// dropped rather than decoded.
+  ///
+  /// This must never fall back to [UsbAoaClosed]: the native side also uses
+  /// this sink for raw inbound bytes, so a catch-all would report the link as
+  /// closed the moment the peer sent a packet — tearing the UI back to step 1
+  /// while the link was in fact healthy.
+  static UsbAoaEvent? _decodeEvent(dynamic raw) {
     if (raw is Map) {
       switch (raw['event']) {
         case 'connected':
@@ -74,7 +85,7 @@ class UsbAoa {
           return const UsbAoaTunnelClosed();
       }
     }
-    return const UsbAoaClosed();
+    return null;
   }
 
   /// The current link role ("host"/"accessory") or null when not connected.

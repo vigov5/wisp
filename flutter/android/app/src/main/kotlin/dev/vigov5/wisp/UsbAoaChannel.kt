@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import android.system.Os
 import android.system.OsConstants
 import android.system.StructPollfd
@@ -54,6 +55,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 class UsbAoaChannel(private val context: Context) {
 
     companion object {
+        // This class drives USB state machines across two phones, so a failure
+        // on one end is only diagnosable from its own logcat. `adb logcat -s
+        // WispAoa` gives the whole link lifecycle on that device.
+        private const val TAG = "WispAoa"
+
         const val METHOD_CHANNEL = "dev.vigov5.wisp/usb_aoa"
         const val EVENT_CHANNEL = "dev.vigov5.wisp/usb_aoa/events"
 
@@ -86,6 +92,13 @@ class UsbAoaChannel(private val context: Context) {
         private const val IDX_SERIAL = 5
 
         private const val ACTION_USB_PERMISSION = "dev.vigov5.wisp.USB_PERMISSION"
+
+        // Kept distinct from the host's device-permission action: both receivers
+        // are alive at once on a phone that has played either role, and a shared
+        // action would let an accessory grant drive the host handshake (and vice
+        // versa) off the wrong broadcast.
+        private const val ACTION_USB_ACCESSORY_PERMISSION =
+            "dev.vigov5.wisp.USB_ACCESSORY_PERMISSION"
 
         // bulkTransfer / stream read budget per call. Raised to 64KB so the
         // inbound bulk read drains more per syscall now that frames can be up to
@@ -147,6 +160,10 @@ class UsbAoaChannel(private val context: Context) {
     private var eventSink: EventChannel.EventSink? = null
     private var permissionReceiver: BroadcastReceiver? = null
     private var accessoryReceiver: BroadcastReceiver? = null
+    private var accessoryPermissionReceiver: BroadcastReceiver? = null
+    // One in-flight accessory permission dialog at a time: the open loop polls
+    // every 200ms and would otherwise stack a dialog per tick.
+    private val accessoryPermissionRequested = AtomicBoolean(false)
     // Guards against two concurrent accessory-open attempts (broadcast auto-open
     // racing the explicit connectAccessory call).
     private val accessoryConnecting = AtomicBoolean(false)
@@ -163,6 +180,10 @@ class UsbAoaChannel(private val context: Context) {
     // link. iroh then runs over the TUN exactly as on Wi-Fi.
     @Volatile
     private var inboundConsumer: ((ByteArray) -> Unit)? = null
+    // Inbound packets discarded because the peer's tunnel came up before ours.
+    // Only used to log the first one per window, so it needs no synchronisation.
+    @Volatile
+    private var preTunnelDrops = 0L
     @Volatile
     private var tunnelFd: ParcelFileDescriptor? = null
     private var tunnelReader: Thread? = null
@@ -241,6 +262,9 @@ class UsbAoaChannel(private val context: Context) {
         permissionReceiver = null
         accessoryReceiver?.let { runCatching { context.unregisterReceiver(it) } }
         accessoryReceiver = null
+        accessoryPermissionReceiver?.let { runCatching { context.unregisterReceiver(it) } }
+        accessoryPermissionReceiver = null
+        accessoryPermissionRequested.set(false)
         eventSink = null
         if (AoaBridge.channel === this) AoaBridge.channel = null
     }
@@ -248,7 +272,9 @@ class UsbAoaChannel(private val context: Context) {
     // Auto-connect as accessory the moment the cable switches us into accessory
     // mode — even when the page is already open (the launch intent only fires on
     // a cold start). This removes the manual "Connect as accessory" tap on the
-    // receiving phone; the attach broadcast also carries the permission grant.
+    // receiving phone. NB: unlike a launch through the manifest intent-filter,
+    // this broadcast carries no permission grant, so the open path has to request
+    // it (see [requestAccessoryPermission]).
     private fun registerAccessoryReceiver() {
         if (accessoryReceiver != null) return
         val receiver = object : BroadcastReceiver() {
@@ -324,7 +350,7 @@ class UsbAoaChannel(private val context: Context) {
             return
         }
         Thread {
-            var lastError: String? = "no accessory attached"
+            var lastError: String? = null
             try {
                 repeat(ACCESSORY_OPEN_ATTEMPTS) {
                     if (link != null) {
@@ -334,12 +360,23 @@ class UsbAoaChannel(private val context: Context) {
                     val accessory = usbManager.accessoryList?.firstOrNull()
                     when {
                         accessory == null -> lastError = "no accessory attached"
-                        !usbManager.hasPermission(accessory) -> lastError = "no accessory permission yet"
+                        !usbManager.hasPermission(accessory) -> {
+                            lastError = "no accessory permission yet"
+                            // Only a launch through the manifest intent-filter
+                            // carries an implicit grant; a runtime-registered
+                            // attach broadcast does not. So when the system
+                            // chooser was dismissed, pre-empted by another
+                            // accessory app, or never shown (we were already in
+                            // accessory mode), polling alone can never succeed —
+                            // ask for the permission ourselves.
+                            requestAccessoryPermission(accessory)
+                        }
                         else -> {
+                            var threw: String? = null
                             val fd = try {
                                 usbManager.openAccessory(accessory)
                             } catch (t: Throwable) {
-                                lastError = t.message ?: "openAccessory threw"
+                                threw = t.message ?: "openAccessory threw"
                                 null
                             }
                             if (fd != null) {
@@ -347,16 +384,64 @@ class UsbAoaChannel(private val context: Context) {
                                 onResult?.invoke(true, null)
                                 return@Thread
                             }
-                            if (lastError == null) lastError = "openAccessory returned null"
+                            lastError = threw ?: "openAccessory returned null"
                         }
                     }
                     Thread.sleep(ACCESSORY_OPEN_RETRY_MS)
                 }
-                onResult?.invoke(false, lastError)
+                Log.w(TAG, "accessory open gave up after $ACCESSORY_OPEN_ATTEMPTS attempts: $lastError")
+                onResult?.invoke(false, lastError ?: "no accessory attached")
             } finally {
                 accessoryConnecting.set(false)
             }
         }.apply { isDaemon = true; name = "aoa-accessory-open" }.start()
+    }
+
+    /**
+     * Ask the user for permission on [accessory].
+     *
+     * The dialog outlives the [openAccessoryWithRetry] window (3s of polling vs.
+     * however long the user takes to tap), so this does not block or extend that
+     * loop: the grant arrives on the broadcast and re-drives the open from
+     * scratch. The link then comes up asynchronously and Dart hears about it via
+     * the "connected" event, which clears the error the loop already reported.
+     */
+    private fun requestAccessoryPermission(accessory: UsbAccessory) {
+        if (!accessoryPermissionRequested.compareAndSet(false, true)) return
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            PendingIntent.FLAG_MUTABLE
+        } else {
+            0
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                if (intent.action != ACTION_USB_ACCESSORY_PERMISSION) return
+                runCatching { context.unregisterReceiver(this) }
+                if (accessoryPermissionReceiver === this) accessoryPermissionReceiver = null
+                accessoryPermissionRequested.set(false)
+                val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                Log.i(TAG, "accessory permission ${if (granted) "granted" else "denied"}")
+                if (granted) {
+                    tryOpenAttachedAccessory()
+                }
+            }
+        }
+        accessoryPermissionReceiver = receiver
+        Log.i(TAG, "requesting accessory permission")
+        val filter = IntentFilter(ACTION_USB_ACCESSORY_PERMISSION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            context.registerReceiver(receiver, filter)
+        }
+        val pending = PendingIntent.getBroadcast(
+            context,
+            0,
+            Intent(ACTION_USB_ACCESSORY_PERMISSION).setPackage(context.packageName),
+            flags,
+        )
+        usbManager.requestPermission(accessory, pending)
     }
 
     // --- IP-over-AOA tunnel (path A) ---------------------------------------
@@ -394,6 +479,7 @@ class UsbAoaChannel(private val context: Context) {
     }
 
     private fun launchTunnelService() {
+        Log.i(TAG, "starting tunnel service: role=${link?.role}")
         // Plain startService (not startForegroundService): we are foreground
         // here (user just consented), and VpnService.establish() raises the
         // system VPN notification itself, so no app foreground notification is
@@ -435,6 +521,10 @@ class UsbAoaChannel(private val context: Context) {
             reassembler.feed(bytes)
             runCatching { tunOut.flush() }
         }
+        if (preTunnelDrops > 0) {
+            Log.i(TAG, "tunnel up; dropped $preTunnelDrops inbound packets while waiting")
+        }
+        preTunnelDrops = 0
 
         val reader = Thread {
             val fd = pfd.fileDescriptor
@@ -476,13 +566,14 @@ class UsbAoaChannel(private val context: Context) {
                     val out = batch.toByteArray()
                     current.write(out, 0, out.size)
                 }
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
                 // link/tun closed (fd closed in endTunnel), or a transient bulk
                 // error. A bulk hiccup is NOT a disconnect, so don't tear the
                 // whole link down here (doing so killed the VPN the instant a
                 // single write timed out). A real cable pull is caught by the
                 // DEVICE_DETACHED broadcast (accessory-mode device) and the Dart
                 // liveness poll.
+                Log.i(TAG, "tun reader ended: ${t.javaClass.simpleName}: ${t.message}")
             } finally {
                 mainHandler.post { eventSink?.success(mapOf("event" to "tunnelClosed")) }
             }
@@ -502,6 +593,7 @@ class UsbAoaChannel(private val context: Context) {
     }
 
     private fun endTunnel() {
+        if (tunnelFd != null) Log.i(TAG, "tunnel down: role=${link?.role}")
         stopKeepalive()
         inboundConsumer = null
         tunnelReader?.interrupt()
@@ -626,7 +718,14 @@ class UsbAoaChannel(private val context: Context) {
     private fun startHostHandshake(device: UsbDevice, result: MethodChannel.Result) {
         Thread {
             try {
+                Log.i(
+                    TAG,
+                    "host handshake: vid=0x%04X pid=0x%04X".format(device.vendorId, device.productId),
+                )
                 if (device.vendorId == GOOGLE_VID && ACCESSORY_PIDS.contains(device.productId)) {
+                    // Already in accessory mode: no fresh AOA switch, so the peer
+                    // gets no new attach broadcast to grant permission from.
+                    Log.i(TAG, "peer already in accessory mode; connecting directly")
                     openHostLink(device)
                     mainHandler.post { result.success(true) }
                     return@Thread
@@ -650,6 +749,7 @@ class UsbAoaChannel(private val context: Context) {
                 openHostLink(accessoryDevice)
                 mainHandler.post { result.success(true) }
             } catch (t: Throwable) {
+                Log.w(TAG, "host connect failed: ${t.message}")
                 mainHandler.post {
                     result.error("HOST_CONNECT_FAILED", t.message, null)
                 }
@@ -783,9 +883,11 @@ class UsbAoaChannel(private val context: Context) {
     private fun installLink(newLink: AoaLink) {
         closeLink()
         link = newLink
+        Log.i(TAG, "link up: role=${newLink.role}")
         newLink.startReadLoop(
             onData = { data -> dispatchInbound(data) },
-            onClosed = {
+            onClosed = { reason ->
+                Log.i(TAG, "link down: role=${newLink.role} reason=$reason")
                 stopTunnelService()
                 mainHandler.post {
                     eventSink?.success(mapOf("event" to "closed"))
@@ -796,14 +898,25 @@ class UsbAoaChannel(private val context: Context) {
         mainHandler.post { eventSink?.success(mapOf("event" to "connected", "role" to newLink.role)) }
     }
 
-    // Inbound AOA bytes go to the tunnel reassembler when the IP tunnel is up,
-    // otherwise to the Dart event sink (spike / raw byte surface).
+    // Inbound AOA bytes go to the tunnel reassembler when the IP tunnel is up.
+    //
+    // Before that they are dropped: the peer brings its tunnel up first and
+    // starts pumping IP packets while this side is still on "Start VPN", and
+    // those packets belong to a tunnel we cannot yet deliver them to. Nothing in
+    // Dart consumes a raw-byte surface, and forwarding them to the event sink
+    // both posted to the main thread per packet and made the Dart decoder
+    // mistake them for a link teardown. The peer's QUIC retransmits whatever is
+    // lost in this window.
     private fun dispatchInbound(data: ByteArray) {
         val consumer = inboundConsumer
         if (consumer != null) {
             consumer(data)
-        } else {
-            mainHandler.post { eventSink?.success(data) }
+            return
+        }
+        // Logged once per pre-tunnel window (not per packet — this runs at line
+        // rate). Seeing this means the peer's tunnel is up and ours is not.
+        if (preTunnelDrops++ == 0L) {
+            Log.i(TAG, "dropping inbound packets: peer is pumping but our tunnel is not up yet")
         }
     }
 
@@ -827,20 +940,32 @@ class UsbAoaChannel(private val context: Context) {
         abstract fun readInto(buf: ByteArray): Int
         abstract fun close()
 
-        fun startReadLoop(onData: (ByteArray) -> Unit, onClosed: () -> Unit) {
+
+        // [onClosed] carries why the loop ended. A silent teardown here is
+        // indistinguishable from a cable pull at the UI, which is exactly the
+        // ambiguity that makes half-open links hard to diagnose.
+        fun startReadLoop(onData: (ByteArray) -> Unit, onClosed: (String) -> Unit) {
             Thread {
                 val buf = ByteArray(READ_BUF)
+                var reason = "closed locally"
+                var bytes = 0L
                 try {
                     while (!isClosed()) {
                         val n = readInto(buf)
-                        if (n < 0) break
-                        if (n > 0) onData(buf.copyOf(n))
+                        if (n < 0) {
+                            reason = "read returned $n after $bytes bytes"
+                            break
+                        }
+                        if (n > 0) {
+                            bytes += n
+                            onData(buf.copyOf(n))
+                        }
                     }
-                } catch (_: Throwable) {
-                    // fall through to onClosed
+                } catch (t: Throwable) {
+                    reason = "${t.javaClass.simpleName}: ${t.message} after $bytes bytes"
                 } finally {
                     close()
-                    onClosed()
+                    onClosed(reason)
                 }
             }.apply { isDaemon = true }.start()
         }
