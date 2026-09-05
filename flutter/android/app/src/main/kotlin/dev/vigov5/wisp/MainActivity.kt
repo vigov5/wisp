@@ -3,6 +3,7 @@ package dev.vigov5.wisp
 import android.Manifest
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -54,6 +55,7 @@ class MainActivity : FlutterFragmentActivity() {
         private const val REQUEST_CODE_PICK_SAVE_FOLDER = 2003
         private const val REQUEST_CODE_POST_NOTIF = 4801
         private const val OPEN_TAG = "WispOpenFolder"
+        private const val SHARE_TAG = "WispShare"
 
         // Minimum bytes copied between two "onPickProgress" events.  Throttles
         // the platform-channel chatter during a multi-GB copy to ~1 event per
@@ -180,13 +182,9 @@ class MainActivity : FlutterFragmentActivity() {
     private fun extractSharedText(intent: Intent?): String? {
         if (intent == null) return null
         if (intent.action != Intent.ACTION_SEND) return null
-        val hasStream = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java) != null
-        } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) != null
-        }
-        if (hasStream) return null
+        // Same URI source as the file pipeline, so a ClipData-only file share
+        // is never mistaken for a text share (and vice versa).
+        if (sharedUris(intent).isNotEmpty()) return null
         val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
         return text?.takeIf { it.isNotEmpty() }
     }
@@ -320,7 +318,46 @@ class MainActivity : FlutterFragmentActivity() {
     // caller can distinguish "no share" from "empty share".
     private fun extractSharedFilesFromIntent(intent: Intent?): List<String>? {
         if (intent == null) return null
-        val uris: List<Uri> = when (intent.action) {
+        if (intent.action != Intent.ACTION_SEND &&
+            intent.action != Intent.ACTION_SEND_MULTIPLE
+        ) return null
+        val uris = sharedUris(intent)
+        Log.i(SHARE_TAG, "share intent ${intent.action}: ${uris.size} uri(s)")
+        var failed = 0
+        val paths = uris.mapNotNull { uri ->
+            copyUriToCache(uri).also { if (it == null) failed++ }
+        }
+        if (failed > 0) {
+            Log.w(SHARE_TAG, "share intent: $failed of ${uris.size} uri(s) could not be read")
+        }
+        return paths
+    }
+
+    // The URIs a share intent carries, preferring ClipData over EXTRA_STREAM.
+    //
+    // ClipData is the authoritative list: the platform mirrors EXTRA_STREAM
+    // into it (Intent.migrateExtraStreamToClipData) precisely because that is
+    // what carries the read grants, and a sender may populate only ClipData.
+    // Google Photos does exactly that once a selection gets large — sharing 3
+    // photos arrived with both, sharing 91 arrived with a 91-item ClipData and
+    // no usable EXTRA_STREAM, so an EXTRA_STREAM-only reader silently saw an
+    // empty share and dropped the whole batch on the floor.  EXTRA_STREAM
+    // remains the fallback for senders that skip ClipData.
+    private fun sharedUris(intent: Intent): List<Uri> {
+        val clip = intent.clipData
+        if (clip != null && clip.itemCount > 0) {
+            // Only readable stream URIs.  A shared link arrives as a ClipData
+            // item whose URI is the http(s) address itself; treating that as a
+            // file would swallow the text share and produce nothing.
+            val fromClip = (0 until clip.itemCount)
+                .mapNotNull { clip.getItemAt(it).uri }
+                .filter {
+                    it.scheme == ContentResolver.SCHEME_CONTENT ||
+                        it.scheme == ContentResolver.SCHEME_FILE
+                }
+            if (fromClip.isNotEmpty()) return fromClip
+        }
+        return when (intent.action) {
             Intent.ACTION_SEND -> {
                 val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
@@ -330,7 +367,7 @@ class MainActivity : FlutterFragmentActivity() {
                 }
                 if (uri != null) listOf(uri) else emptyList()
             }
-            Intent.ACTION_SEND_MULTIPLE -> {
+            else -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableArrayListExtra(
                         Intent.EXTRA_STREAM,
@@ -343,9 +380,7 @@ class MainActivity : FlutterFragmentActivity() {
                         .orEmpty()
                 }
             }
-            else -> return null
         }
-        return uris.mapNotNull { copyUriToCache(it) }
     }
 
     private fun handleKeepaliveCall(call: MethodCall, result: MethodChannel.Result) {
