@@ -30,6 +30,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -93,6 +94,15 @@ class MainActivity : FlutterFragmentActivity() {
     // Not reference counted: `setMulticastLockHeld` is idempotent so repeated
     // lifecycle callbacks cannot leak or over-release it.
     private var multicastLock: WifiManager.MulticastLock? = null
+
+    // Monotonic suffix that keeps every cached copy in its own directory.
+    // A millisecond timestamp alone is not unique: a large batch copies small
+    // images far faster than 1 ms, so several land in the same directory, and
+    // any two sharing a display name (or both falling back to "picked_file"
+    // when DISPLAY_NAME is unavailable) resolve to one path — the second
+    // silently overwrites the first and the draft carries a duplicate entry
+    // instead of the file the user picked.
+    private val pickedCopySeq = AtomicLong(0L)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -570,10 +580,7 @@ class MainActivity : FlutterFragmentActivity() {
             // Copy the entire folder tree into the app cache so that Rust can
             // read it via ordinary filesystem APIs. External storage paths are
             // blocked by Android scoped storage for native (non-SAF) callers.
-            val destDir = File(
-                File(File(cacheDir, "wisp_picked"), System.currentTimeMillis().toString()),
-                rootDoc.name.ifBlank { "folder" },
-            )
+            val destDir = File(newPickedDir(), rootDoc.name.ifBlank { "folder" })
             // Off the main thread, same as the file pick above.  Folder size is
             // discovered while copying, so progress is indeterminate (totalBytes
             // = 0) — the bar spins but still shows bytes copied so far.
@@ -626,16 +633,22 @@ class MainActivity : FlutterFragmentActivity() {
         super.onActivityResult(requestCode, resultCode, data)
     }
 
+    // A fresh, never-reused directory under the shared `wisp_picked` cache
+    // root (which Dart clears wholesale via clearPickedCache).
+    private fun newPickedDir(): File = File(
+        File(cacheDir, "wisp_picked"),
+        "${System.currentTimeMillis()}-${pickedCopySeq.getAndIncrement()}",
+    )
+
     // Streams a content URI to the app cache directory to avoid encoding
     // large files as bytes through the Flutter platform channel.  [onBytes]
     // is invoked with the running byte count for this file after every chunk
     // so the caller can report copy progress.
     private fun copyUriToCache(uri: Uri, onBytes: (Long) -> Unit = {}): String? {
         return try {
-            val fileName = resolveFileName(uri) ?: "picked_file"
-            val dir = File(File(cacheDir, "wisp_picked"), System.currentTimeMillis().toString())
+            val fileName = sanitizeFileName(resolveFileName(uri))
+            val dir = newPickedDir()
             dir.mkdirs()
-            // Use a timestamped subdirectory so repeated picks of the same name don't collide.
             val cacheFile = File(dir, fileName)
             contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(cacheFile).use { output ->
@@ -690,6 +703,19 @@ class MainActivity : FlutterFragmentActivity() {
         } catch (_: Exception) {
             null
         }
+    }
+
+    // Providers occasionally hand back a display name carrying path
+    // separators (or nothing at all).  Flatten it so the copy always lands
+    // directly inside the per-item directory created above rather than
+    // failing on a missing parent.
+    private fun sanitizeFileName(name: String?): String {
+        val flattened = name
+            ?.replace('\\', '_')
+            ?.replace('/', '_')
+            ?.trim()
+            ?.trimStart('.')
+        return if (flattened.isNullOrBlank()) "picked_file" else flattened
     }
 
     private fun resolveFileName(uri: Uri): String? {
