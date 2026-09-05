@@ -236,3 +236,82 @@ class AndroidMediaStore {
     'apk': 'application/vnd.android.package-archive',
   };
 }
+
+/// One destination the platform opened for an incoming file.
+@immutable
+class AndroidReceiveDestination {
+  const AndroidReceiveDestination({
+    required this.transferPath,
+    required this.fdPath,
+  });
+
+  /// The file's path within the transfer, as the offer listed it.
+  final String transferPath;
+
+  /// A `/proc/self/fd/<n>` path opened for writing.
+  final String fdPath;
+}
+
+/// Destinations created ahead of an incoming transfer so the receiver can write
+/// each file straight into the user's Downloads.
+///
+/// Scoped storage gives the app nowhere writable there by path, which is why a
+/// receive used to land in the app cache and be copied over afterwards — two
+/// copies of the transfer on disk at once. A MediaStore entry marked pending is
+/// invisible to other apps until it is published, which is exactly the
+/// guarantee a partially written file needs.
+extension AndroidReceiveDestinations on AndroidMediaStore {
+  static const _channel = MethodChannel('dev.vigov5.wisp/file_picker');
+
+  /// Creates one pending destination per [transferPaths] entry.
+  ///
+  /// An empty result means the platform could not provide them and the receiver
+  /// should fall back to writing into its own directory. That happens below
+  /// Android 10, and for any error along the way.
+  static Future<List<AndroidReceiveDestination>> create(
+    List<String> transferPaths,
+  ) async {
+    if (!Platform.isAndroid || transferPaths.isEmpty) return const [];
+    try {
+      final raw = await _channel.invokeMethod<List<dynamic>>(
+        'createReceiveDestinations',
+        {'paths': transferPaths},
+      );
+      return (raw ?? const [])
+          .whereType<Map<dynamic, dynamic>>()
+          .map((entry) {
+            final transferPath = entry['transferPath'] as String?;
+            final fdPath = entry['fdPath'] as String?;
+            if (transferPath == null || fdPath == null) return null;
+            return AndroidReceiveDestination(
+              transferPath: transferPath,
+              fdPath: fdPath,
+            );
+          })
+          .nonNulls
+          .toList(growable: false);
+    } catch (error) {
+      debugPrint('[receiver] could not create destinations: $error');
+      return const [];
+    }
+  }
+
+  /// Closes the descriptors. Publishing makes the files visible; otherwise the
+  /// pending entries are deleted, so an abandoned transfer leaves nothing.
+  /// Returns transfer path → final `content://` URI for published files.
+  static Future<Map<String, String>> finish({required bool publish}) async {
+    if (!Platform.isAndroid) return const {};
+    try {
+      final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'finishReceiveDestinations',
+        {'publish': publish},
+      );
+      return (raw ?? const {}).map(
+        (key, value) => MapEntry(key as String, value as String),
+      );
+    } catch (error) {
+      debugPrint('[receiver] could not finish destinations: $error');
+      return const {};
+    }
+  }
+}

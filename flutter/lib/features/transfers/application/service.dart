@@ -232,7 +232,14 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
       );
     }
     try {
-      await source.respondToOffer(accept: true);
+      await source.respondToOffer(
+        accept: true,
+        transferPaths:
+            offer?.manifest.items
+                .map((item) => item.path)
+                .toList(growable: false) ??
+            const <String>[],
+      );
     } catch (_) {
       _textDelivery = null;
       _savedText = null;

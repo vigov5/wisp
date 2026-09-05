@@ -134,7 +134,10 @@ abstract class RustLibApi extends BaseApi {
     required String removedPath,
   });
 
-  Future<void> crateApiReceiverRespondToReceiverOffer({required bool accept});
+  Future<void> crateApiReceiverRespondToReceiverOffer({
+    required bool accept,
+    required List<ReceiveDestinationData> destinations,
+  });
 
   Stream<DiagnosticsCheckData> crateApiDiagnosticsRunConnectionTest({
     String? serverUrl,
@@ -662,12 +665,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   );
 
   @override
-  Future<void> crateApiReceiverRespondToReceiverOffer({required bool accept}) {
+  Future<void> crateApiReceiverRespondToReceiverOffer({
+    required bool accept,
+    required List<ReceiveDestinationData> destinations,
+  }) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_bool(accept, serializer);
+          sse_encode_list_receive_destination_data(destinations, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -680,7 +687,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_user_facing_error_data,
         ),
         constMeta: kCrateApiReceiverRespondToReceiverOfferConstMeta,
-        argValues: [accept],
+        argValues: [accept, destinations],
         apiImpl: this,
       ),
     );
@@ -689,7 +696,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiReceiverRespondToReceiverOfferConstMeta =>
       const TaskConstMeta(
         debugName: "respond_to_receiver_offer",
-        argNames: ["accept"],
+        argNames: ["accept", "destinations"],
       );
 
   @override
@@ -1251,6 +1258,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ReceiveDestinationData> dco_decode_list_receive_destination_data(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_receive_destination_data)
+        .toList();
+  }
+
+  @protected
   List<ReceiverTransferFile> dco_decode_list_receiver_transfer_file(
     dynamic raw,
   ) {
@@ -1414,6 +1431,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return QrPairingInfoData(
       ticket: dco_decode_String(arr[0]),
       lanIps: dco_decode_list_String(arr[1]),
+    );
+  }
+
+  @protected
+  ReceiveDestinationData dco_decode_receive_destination_data(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return ReceiveDestinationData(
+      transferPath: dco_decode_String(arr[0]),
+      fdPath: dco_decode_String(arr[1]),
     );
   }
 
@@ -2005,6 +2034,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ReceiveDestinationData> sse_decode_list_receive_destination_data(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ReceiveDestinationData>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_receive_destination_data(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<ReceiverTransferFile> sse_decode_list_receiver_transfer_file(
     SseDeserializer deserializer,
   ) {
@@ -2253,6 +2296,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_ticket = sse_decode_String(deserializer);
     var var_lanIps = sse_decode_list_String(deserializer);
     return QrPairingInfoData(ticket: var_ticket, lanIps: var_lanIps);
+  }
+
+  @protected
+  ReceiveDestinationData sse_decode_receive_destination_data(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_transferPath = sse_decode_String(deserializer);
+    var var_fdPath = sse_decode_String(deserializer);
+    return ReceiveDestinationData(
+      transferPath: var_transferPath,
+      fdPath: var_fdPath,
+    );
   }
 
   @protected
@@ -2949,6 +3005,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_receive_destination_data(
+    List<ReceiveDestinationData> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_receive_destination_data(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_receiver_transfer_file(
     List<ReceiverTransferFile> self,
     SseSerializer serializer,
@@ -3175,6 +3243,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.ticket, serializer);
     sse_encode_list_String(self.lanIps, serializer);
+  }
+
+  @protected
+  void sse_encode_receive_destination_data(
+    ReceiveDestinationData self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.transferPath, serializer);
+    sse_encode_String(self.fdPath, serializer);
   }
 
   @protected

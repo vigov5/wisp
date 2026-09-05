@@ -38,11 +38,16 @@ use super::telemetry::BlobTransferTelemetry;
 /// boundaries, because that is the finest granularity a range request can name.
 const CHUNK_GROUP_BYTES: u64 = 16 * 1024;
 
-/// Suffix for a file that is still being written. A partial file is only as
-/// trustworthy as its verified prefix, and its whole-file hash is not confirmed
-/// until the last chunk arrives, so it must not sit at the destination name
-/// where the user - or a resumed run - would take it for a finished file.
-const PARTIAL_SUFFIX: &str = ".wisp-part";
+/// Directory under the transfer's record dir where files are built.
+///
+/// A partial file is only as trustworthy as its verified prefix, and its
+/// whole-file hash is not confirmed until the last chunk arrives, so it cannot
+/// sit at the destination where the user - or a resumed run - would take it for
+/// a finished file. Keeping partials here rather than beside the destination
+/// also means an abandoned transfer leaves nothing in the user's folder: the
+/// leftovers are inside `.wisp/`, which is where the transfer's other resume
+/// state already lives.
+pub(crate) const PARTS_DIR: &str = "parts";
 
 /// One file to fetch, and where it goes.
 #[derive(Debug, Clone)]
@@ -51,6 +56,15 @@ pub(crate) struct StreamTarget {
     pub(crate) transfer_path: String,
     /// Where the finished file goes.
     pub(crate) destination: PathBuf,
+    /// Where it is built first. Renamed onto [`Self::destination`] once the
+    /// last chunk verifies; both live on the same volume, so that is atomic.
+    /// Unused when [`Self::platform_descriptor`] is set.
+    pub(crate) partial: PathBuf,
+    /// True when [`Self::destination`] is a descriptor the platform opened for
+    /// writing. It is already the final location, so the file is written in
+    /// place: there is nothing to rename, and the platform is responsible for
+    /// keeping it out of sight until the transfer reports success.
+    pub(crate) platform_descriptor: bool,
     /// Size from the manifest, used for progress accounting.
     pub(crate) size: u64,
 }
@@ -149,27 +163,37 @@ async fn stream_one(
 ) -> Result<()> {
     let context = || format!("{} ({hash})", target.transfer_path);
 
-    // A file left at its real name by an earlier attempt is finished: it only
-    // got that name after its last chunk was verified.
-    if tokio::fs::metadata(&target.destination).await.is_ok() {
-        trace!(path = %target.transfer_path, "destination already complete, skipping");
-        return Ok(());
-    }
-
-    if let Some(parent) = target.destination.parent() {
+    // Where the bytes actually go. A descriptor is written in place; a path is
+    // built under the record dir and renamed at the end.
+    let sink = if target.platform_descriptor {
+        &target.destination
+    } else {
+        // A file already at its real name is finished: it only got that name
+        // after its last chunk verified. (A descriptor always exists, so this
+        // can only be asked of a path.)
+        if tokio::fs::metadata(&target.destination).await.is_ok() {
+            trace!(path = %target.transfer_path, "destination already complete, skipping");
+            return Ok(());
+        }
+        if let Some(parent) = target.destination.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|source| BlobError::fetch(context(), source))?;
+        }
+        &target.partial
+    };
+    if let Some(parent) = sink.parent() {
         tokio::fs::create_dir_all(parent)
             .await
             .map_err(|source| BlobError::fetch(context(), source))?;
     }
-
-    let partial = partial_path(&target.destination);
-    let resume_at = resumable_prefix_len(&partial).await;
+    let resume_at = resumable_prefix_len(sink).await;
 
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(false)
-        .open(&partial)
+        .open(sink)
         .await
         .map_err(|source| BlobError::fetch(context(), source))?;
     // Anything past the last whole chunk group cannot be named by a range
@@ -253,21 +277,17 @@ async fn stream_one(
 
     // Every chunk was verified on arrival and the stream ran to completion, so
     // the file is whole and can take its real name.
-    tokio::fs::rename(&partial, &target.destination)
-        .await
-        .map_err(|source| BlobError::fetch(context(), source))?;
+    if !target.platform_descriptor {
+        tokio::fs::rename(sink, &target.destination)
+            .await
+            .map_err(|source| BlobError::fetch(context(), source))?;
+    }
     Ok(())
 }
 
 async fn write_leaf(file: &mut tokio::fs::File, offset: u64, data: &Bytes) -> std::io::Result<()> {
     file.seek(SeekFrom::Start(offset)).await?;
     file.write_all(data).await
-}
-
-fn partial_path(destination: &Path) -> PathBuf {
-    let mut name = destination.as_os_str().to_os_string();
-    name.push(PARTIAL_SUFFIX);
-    PathBuf::from(name)
 }
 
 /// How much of a partial file can be kept: its length rounded down to a whole
@@ -293,18 +313,10 @@ mod tests {
         ))
     }
 
-    #[test]
-    fn partial_files_are_named_beside_their_destination() {
-        assert_eq!(
-            partial_path(Path::new("/out/photos/cat.jpg")),
-            PathBuf::from("/out/photos/cat.jpg.wisp-part")
-        );
-    }
-
     #[tokio::test]
     async fn a_missing_partial_resumes_from_the_start() {
         assert_eq!(
-            resumable_prefix_len(Path::new("/nope/absent.wisp-part")).await,
+            resumable_prefix_len(Path::new("/nope/absent.part")).await,
             0
         );
     }
@@ -316,7 +328,7 @@ mod tests {
     -> std::result::Result<(), std::io::Error> {
         let dir = unique_dir("wisp-partial");
         tokio::fs::create_dir_all(&dir).await?;
-        let partial = dir.join("f.wisp-part");
+        let partial = dir.join("f.part");
 
         tokio::fs::write(&partial, vec![0u8; (CHUNK_GROUP_BYTES + 7) as usize]).await?;
         assert_eq!(resumable_prefix_len(&partial).await, CHUNK_GROUP_BYTES);

@@ -443,7 +443,9 @@ pub async fn receive(out_dir: PathBuf, conflict: String, server_url: Option<Stri
                                 render_offer(&event);
                                 let accepted = confirm_accept()?;
                                 let decision = if accepted {
-                                    OfferDecision::Accept
+                                    // The CLI writes to a real directory, so
+                                    // the receiver resolves destinations itself.
+                                    OfferDecision::Accept(Default::default())
                                 } else {
                                     OfferDecision::Decline
                                 };

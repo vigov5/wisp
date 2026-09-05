@@ -75,7 +75,7 @@ async fn respond_to_offer_fails_without_pending_offer() -> AppResult<()> {
         return Ok(());
     };
     let error = service
-        .respond_to_offer(OfferDecision::Accept)
+        .respond_to_offer(OfferDecision::Accept(Default::default()))
         .await
         .unwrap_err();
     assert!(matches!(error, AppError::NoPendingOffer));

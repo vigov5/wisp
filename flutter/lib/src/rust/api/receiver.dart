@@ -10,7 +10,7 @@ import 'transfer.dart';
 
 // These functions are ignored because they are not marked as `pub`: `current_service_endpoint`, `current_service`, `ensure_receiver_service`, `existing_service_for_config`, `map_connection_path`, `map_event`, `map_file_row`, `map_pairing_state`, `map_phase`, `map_qr_pairing_info`, `map_registration`, `map_snapshot`, `pairing_registration`, `replace_pairing_task`, `replace_updates_task`, `sanitize_text_file_name`, `scan_nearby_with_receiver`, `set_discoverable`, `unique_text_path`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `BridgeReceiverConfig`, `BridgeReceiverState`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 Future<ReceiverRegistration> registerReceiver({
   String? serverUrl,
@@ -67,8 +67,22 @@ Stream<ReceiverTransferEvent> startReceiverTransferListener({
   deviceType: deviceType,
 );
 
-Future<void> respondToReceiverOffer({required bool accept}) =>
-    RustLib.instance.api.crateApiReceiverRespondToReceiverOffer(accept: accept);
+/// Accepts or declines the pending offer.
+///
+/// `destinations` maps a transfer path to a `/proc/self/fd/<n>` path the
+/// platform has opened for writing. Android fills it in: scoped storage gives
+/// the app nowhere writable in the user's Downloads, so the platform creates
+/// each file in MediaStore up front and the receiver writes straight into it,
+/// instead of staging the transfer in the app cache and copying it over
+/// afterwards. Everywhere else it is empty and the receiver picks destinations
+/// under its own output directory.
+Future<void> respondToReceiverOffer({
+  required bool accept,
+  required List<ReceiveDestinationData> destinations,
+}) => RustLib.instance.api.crateApiReceiverRespondToReceiverOffer(
+  accept: accept,
+  destinations: destinations,
+);
 
 Future<void> cancelReceiverTransfer() =>
     RustLib.instance.api.crateApiReceiverCancelReceiverTransfer();
@@ -101,6 +115,32 @@ class QrPairingInfoData {
           runtimeType == other.runtimeType &&
           ticket == other.ticket &&
           lanIps == other.lanIps;
+}
+
+/// One destination the platform opened for an incoming file.
+class ReceiveDestinationData {
+  /// The file's path within the transfer, as the offer listed it.
+  final String transferPath;
+
+  /// A `/proc/self/fd/<n>` path opened for writing. It must stay open until
+  /// the transfer finishes: the receiver reopens it as it writes.
+  final String fdPath;
+
+  const ReceiveDestinationData({
+    required this.transferPath,
+    required this.fdPath,
+  });
+
+  @override
+  int get hashCode => transferPath.hashCode ^ fdPath.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ReceiveDestinationData &&
+          runtimeType == other.runtimeType &&
+          transferPath == other.transferPath &&
+          fdPath == other.fdPath;
 }
 
 class ReceiverConnectionPath {

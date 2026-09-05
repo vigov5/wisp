@@ -243,7 +243,10 @@ class _FailingOfferResponseSource extends FakeReceiverServiceSource {
   final bool throwOnDecline;
 
   @override
-  Future<void> respondToOffer({required bool accept}) async {
+  Future<void> respondToOffer({
+    required bool accept,
+    List<String> transferPaths = const [],
+  }) async {
     await super.respondToOffer(accept: accept);
     if ((accept && throwOnAccept) || (!accept && throwOnDecline)) {
       throw Exception('respond failed');

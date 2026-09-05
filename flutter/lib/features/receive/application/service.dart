@@ -45,7 +45,10 @@ class ReceiverServiceController extends Notifier<ReceiverServiceState> {
         .setDiscoverable(enabled: enabled);
   }
 
-  Future<void> respondToOffer({required bool accept}) {
+  Future<void> respondToOffer({
+    required bool accept,
+    List<String> transferPaths = const [],
+  }) {
     return ref
         .read(receiverServiceSourceProvider)
         .respondToOffer(accept: accept);

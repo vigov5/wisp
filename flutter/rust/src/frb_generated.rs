@@ -634,10 +634,15 @@ fn wire__crate__api__receiver__respond_to_receiver_offer_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_accept = <bool>::sse_decode(&mut deserializer);
+            let api_destinations =
+                <Vec<crate::api::receiver::ReceiveDestinationData>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, crate::api::error::UserFacingErrorData>((move || {
-                    let output_ok = crate::api::receiver::respond_to_receiver_offer(api_accept)?;
+                    let output_ok = crate::api::receiver::respond_to_receiver_offer(
+                        api_accept,
+                        api_destinations,
+                    )?;
                     Ok(output_ok)
                 })(
                 ))
@@ -1211,6 +1216,20 @@ impl SseDecode for Vec<u8> {
     }
 }
 
+impl SseDecode for Vec<crate::api::receiver::ReceiveDestinationData> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::receiver::ReceiveDestinationData>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::receiver::ReceiverTransferFile> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1457,6 +1476,18 @@ impl SseDecode for crate::api::receiver::QrPairingInfoData {
         return crate::api::receiver::QrPairingInfoData {
             ticket: var_ticket,
             lan_ips: var_lanIps,
+        };
+    }
+}
+
+impl SseDecode for crate::api::receiver::ReceiveDestinationData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_transferPath = <String>::sse_decode(deserializer);
+        let mut var_fdPath = <String>::sse_decode(deserializer);
+        return crate::api::receiver::ReceiveDestinationData {
+            transfer_path: var_transferPath,
+            fd_path: var_fdPath,
         };
     }
 }
@@ -2207,6 +2238,27 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::receiver::QrPairingInfoData>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::receiver::ReceiveDestinationData {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.transfer_path.into_into_dart().into_dart(),
+            self.fd_path.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::receiver::ReceiveDestinationData
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::receiver::ReceiveDestinationData>
+    for crate::api::receiver::ReceiveDestinationData
+{
+    fn into_into_dart(self) -> crate::api::receiver::ReceiveDestinationData {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::receiver::ReceiverConnectionPath {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -2930,6 +2982,16 @@ impl SseEncode for Vec<u8> {
     }
 }
 
+impl SseEncode for Vec<crate::api::receiver::ReceiveDestinationData> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::receiver::ReceiveDestinationData>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::receiver::ReceiverTransferFile> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3118,6 +3180,14 @@ impl SseEncode for crate::api::receiver::QrPairingInfoData {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.ticket, serializer);
         <Vec<String>>::sse_encode(self.lan_ips, serializer);
+    }
+}
+
+impl SseEncode for crate::api::receiver::ReceiveDestinationData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.transfer_path, serializer);
+        <String>::sse_encode(self.fd_path, serializer);
     }
 }
 

@@ -40,7 +40,7 @@ pub(super) struct ReceiverRuntime {
 
 #[derive(Debug)]
 pub(super) enum OfferResolution {
-    Accept,
+    Accept(wisp_core::transfer::AcceptedDestinations),
     Decline,
     Cancel,
 }
@@ -406,14 +406,15 @@ impl ReceiverRuntime {
         let run = pending_offer.run;
 
         let offer_id = run.offer_id;
-        let resolution = if matches!(decision, OfferDecision::Accept) {
-            self.offer_state = OfferState::Receiving {
-                offer_id,
-                cancel_tx: run.cancel_tx.clone(),
-            };
-            OfferResolution::Accept
-        } else {
-            OfferResolution::Decline
+        let resolution = match decision {
+            OfferDecision::Accept(destinations) => {
+                self.offer_state = OfferState::Receiving {
+                    offer_id,
+                    cancel_tx: run.cancel_tx.clone(),
+                };
+                OfferResolution::Accept(destinations)
+            }
+            OfferDecision::Decline => OfferResolution::Decline,
         };
         run.decision_tx
             .send(resolution)

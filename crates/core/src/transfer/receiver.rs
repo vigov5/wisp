@@ -18,7 +18,7 @@ use crate::{
         BlobDownloadSession, BlobDownloadUpdate, BlobDownloadUpdateStream, BlobReceiver,
         BlobTransportProfile,
     },
-    blobs::stream::StreamTarget,
+    blobs::stream::{PARTS_DIR, StreamTarget},
     blobs::telemetry::{
         PhaseOutcome, TelemetryRole, TransferPhase as TelemetryPhase, benchmark_run_id, emit_phase,
     },
@@ -61,8 +61,28 @@ pub struct ReceiverRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReceiverDecision {
-    Accept,
+    /// Accept, optionally telling the receiver where each file must go.
+    ///
+    /// Android supplies these: scoped storage has no writable path in the
+    /// user's Downloads, so the platform creates each destination up front and
+    /// hands over a write descriptor. Bytes then land in their final home
+    /// instead of being staged somewhere the app can write and copied over
+    /// afterwards, which is what made a receive cost two copies there.
+    Accept(AcceptedDestinations),
     Decline,
+}
+
+/// Destinations the platform opened on the receiver's behalf, keyed by
+/// transfer path. Empty means "work them out under the output dir as usual".
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AcceptedDestinations {
+    pub descriptors: BTreeMap<String, PathBuf>,
+}
+
+impl AcceptedDestinations {
+    pub fn is_empty(&self) -> bool {
+        self.descriptors.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,6 +187,11 @@ pub struct ExpectedTransferFile {
     pub path: String,
     pub size: u64,
     pub destination: PathBuf,
+    /// True when [`Self::destination`] is a descriptor the platform opened for
+    /// writing rather than a path this process owns. It is already the final
+    /// location, so it is written in place instead of being built elsewhere and
+    /// renamed, and the platform - not the conflict policy - decided its name.
+    pub platform_descriptor: bool,
 }
 
 impl ReceiverSession {
@@ -351,7 +376,7 @@ async fn run_session(
         }
     };
 
-    let expected_transfer_files = build_expected_transfer_files(&manifest, expected_files)?;
+    let mut expected_transfer_files = build_expected_transfer_files(&manifest, expected_files)?;
     let receiver_offer = ReceiverOffer {
         session_id: session_id.clone(),
         collection_hash: offer.collection_hash,
@@ -512,6 +537,15 @@ async fn run_session(
         });
     }
 
+    // Destinations were resolved under the output dir before the offer went
+    // out, because that is where a conflict has to be caught. Accepting can
+    // override them: on Android the platform creates each file in MediaStore
+    // and hands back a write descriptor, which is already the final location
+    // and already named by the platform.
+    if let ReceiverDecision::Accept(accepted) = &decision {
+        apply_platform_destinations(&mut expected_transfer_files, accepted)?;
+    }
+
     // --- Phase 4: Data Transfer ---
     fs::create_dir_all(&record_dir)
         .await
@@ -605,11 +639,17 @@ async fn run_session(
         // Destinations are already resolved (Phase 2), so the download can
         // write each file where it belongs instead of staging the whole
         // collection in a store first.
+        let parts_dir = record_dir.join(PARTS_DIR);
         let stream_targets = expected_transfer_files
             .iter()
             .map(|file| StreamTarget {
                 transfer_path: file.path.clone(),
+                // Built inside the record dir so an abandoned transfer leaves
+                // nothing in the user's folder; the rename at the end is within
+                // one volume, since the record dir lives under the output dir.
+                partial: parts_dir.join(&file.path),
                 destination: file.destination.clone(),
+                platform_descriptor: file.platform_descriptor,
                 size: file.size,
             })
             .collect::<Vec<_>>();
@@ -1280,6 +1320,38 @@ async fn record_streamed_collection(
     Ok(())
 }
 
+/// Replaces resolved destinations with the descriptors the platform opened.
+///
+/// A transfer path the platform did not cover keeps the destination worked out
+/// under the output dir, so a partial map degrades to the ordinary behaviour
+/// for the rest rather than failing.
+fn apply_platform_destinations(
+    expected: &mut [ExpectedTransferFile],
+    accepted: &AcceptedDestinations,
+) -> Result<()> {
+    if accepted.is_empty() {
+        return Ok(());
+    }
+    for file in expected.iter_mut() {
+        let Some(destination) = accepted.descriptors.get(&file.path) else {
+            continue;
+        };
+        if !destination.is_absolute() {
+            return Err(TransferError::other(
+                "applying platform destinations",
+                std::io::Error::other(format!(
+                    "destination for {} is not absolute: {}",
+                    file.path,
+                    destination.display()
+                )),
+            ));
+        }
+        file.destination = destination.clone();
+        file.platform_descriptor = true;
+    }
+    Ok(())
+}
+
 async fn build_expected_files(
     manifest: &OfferManifest,
     out_dir: &Path,
@@ -1297,6 +1369,7 @@ async fn build_expected_files(
                 path: file.path.clone(),
                 size: file.size,
                 destination,
+                platform_descriptor: false,
             },
         );
     }

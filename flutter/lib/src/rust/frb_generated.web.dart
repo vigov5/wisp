@@ -133,6 +133,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<ReceiveDestinationData> dco_decode_list_receive_destination_data(
+    dynamic raw,
+  );
+
+  @protected
   List<ReceiverTransferFile> dco_decode_list_receiver_transfer_file(
     dynamic raw,
   );
@@ -206,6 +211,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   QrPairingInfoData dco_decode_qr_pairing_info_data(dynamic raw);
+
+  @protected
+  ReceiveDestinationData dco_decode_receive_destination_data(dynamic raw);
 
   @protected
   ReceiverConnectionPath dco_decode_receiver_connection_path(dynamic raw);
@@ -415,6 +423,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<ReceiveDestinationData> sse_decode_list_receive_destination_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<ReceiverTransferFile> sse_decode_list_receiver_transfer_file(
     SseDeserializer deserializer,
   );
@@ -498,6 +511,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   QrPairingInfoData sse_decode_qr_pairing_info_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ReceiveDestinationData sse_decode_receive_destination_data(
     SseDeserializer deserializer,
   );
 
@@ -765,6 +783,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_receive_destination_data(
+    List<ReceiveDestinationData> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_receiver_transfer_file(
     List<ReceiverTransferFile> self,
     SseSerializer serializer,
@@ -863,6 +887,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_qr_pairing_info_data(
     QrPairingInfoData self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_receive_destination_data(
+    ReceiveDestinationData self,
     SseSerializer serializer,
   );
 

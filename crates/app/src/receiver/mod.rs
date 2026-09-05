@@ -13,6 +13,8 @@ use std::time::Duration;
 use iroh::{Endpoint, endpoint::presets, protocol::Router};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
+pub use wisp_core::transfer::AcceptedDestinations;
+
 use crate::blob_dispatcher::BlobDispatcher;
 use crate::error::{AppError, AppResult};
 use crate::types::{
@@ -79,7 +81,10 @@ pub struct ReceiverSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OfferDecision {
-    Accept,
+    /// Accept, optionally supplying where each file must go. The platform
+    /// fills these in on Android — see
+    /// [`wisp_core::transfer::AcceptedDestinations`].
+    Accept(AcceptedDestinations),
     Decline,
 }
 

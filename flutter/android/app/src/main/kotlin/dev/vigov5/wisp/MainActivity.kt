@@ -61,6 +61,7 @@ class MainActivity : FlutterFragmentActivity() {
         private const val OPEN_TAG = "WispOpenFolder"
         private const val SHARE_TAG = "WispShare"
         private const val PICK_TAG = "WispPick"
+        private const val RECEIVE_TAG = "WispReceive"
 
         // Ceiling on descriptors held open for copy-free sends.  Android
         // gives a process ~1024 file descriptors and the rest of the app
@@ -153,6 +154,9 @@ class MainActivity : FlutterFragmentActivity() {
         // descriptors again; leaving them open would just hold the underlying
         // files (and the fd slots) for the life of the process.
         releaseSendSources()
+        // A transfer cannot outlive the engine either, so any destination still
+        // pending here belongs to one that will never finish.
+        releaseReceiveDestinations(publish = false)
         super.onDestroy()
     }
 
@@ -269,6 +273,14 @@ class MainActivity : FlutterFragmentActivity() {
                 "releaseSendSources" -> {
                     releaseSendSources()
                     result.success(null)
+                }
+                "createReceiveDestinations" -> {
+                    val paths = call.argument<List<String>>("paths") ?: emptyList()
+                    result.success(createReceiveDestinations(paths))
+                }
+                "finishReceiveDestinations" -> {
+                    val publish = call.argument<Boolean>("publish") ?: false
+                    result.success(releaseReceiveDestinations(publish))
                 }
                 "saveToSafUri" -> saveToSafUri(call, result)
                 "openSavedFolder" -> openSavedFolder(call, result)
@@ -947,6 +959,115 @@ class MainActivity : FlutterFragmentActivity() {
             } catch (_: IOException) {
             }
         }
+    }
+
+    // One incoming file's destination, created before the transfer starts and
+    // held open while it runs.
+    //
+    // MediaStore keeps a `IS_PENDING` entry invisible to other apps, which is
+    // exactly the guarantee a partially written file needs — so the receiver
+    // can write straight into the user's Downloads rather than filling the app
+    // cache and copying afterwards, which is what made a receive cost two
+    // copies of the transfer.
+    private data class ReceiveDestination(
+        val transferPath: String,
+        val uri: Uri,
+        val pfd: ParcelFileDescriptor,
+    )
+
+    private val receiveDestLock = Any()
+    private val openReceiveDestinations = mutableListOf<ReceiveDestination>()
+
+    // Creates a pending MediaStore entry per incoming file and returns the
+    // descriptor path the core should write to.
+    //
+    // Returns an empty list if anything goes wrong, which the Dart side reads
+    // as "resolve destinations yourself" — the receiver then writes into the
+    // app cache and the files are copied over once the transfer completes, as
+    // they always were.  Only the default Downloads/Wisp target is handled
+    // here: a user-chosen SAF folder has no equivalent of `IS_PENDING`, so a
+    // partial file would be visible there, and it keeps the copy path.
+    private fun createReceiveDestinations(paths: List<String>): List<Map<String, Any?>> {
+        releaseReceiveDestinations(publish = false)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return emptyList()
+        val created = mutableListOf<Map<String, Any?>>()
+        try {
+            for (path in paths) {
+                val parts = path.replace('\\', '/').split('/').filter { it.isNotBlank() }
+                if (parts.isEmpty()) return abortPartialDestinations()
+                val fileName = sanitizeFileName(parts.last())
+                val subDir = parts.dropLast(1).joinToString("/")
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+                    put(
+                        MediaStore.Downloads.RELATIVE_PATH,
+                        "Download/Wisp${if (subDir.isNotEmpty()) "/$subDir" else ""}",
+                    )
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val uri = contentResolver.insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, values,
+                ) ?: return abortPartialDestinations()
+                // "rw" rather than "w": the core seeks when it resumes, and it
+                // reads the current length to know where to resume from.
+                val pfd = contentResolver.openFileDescriptor(uri, "rw")
+                if (pfd == null) {
+                    contentResolver.delete(uri, null, null)
+                    return abortPartialDestinations()
+                }
+                synchronized(receiveDestLock) {
+                    openReceiveDestinations.add(ReceiveDestination(path, uri, pfd))
+                }
+                created.add(
+                    mapOf("transferPath" to path, "fdPath" to "/proc/self/fd/${pfd.fd}"),
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(RECEIVE_TAG, "could not pre-create destinations: ${e.message}")
+            return abortPartialDestinations()
+        }
+        Log.i(RECEIVE_TAG, "created ${created.size} pending destination(s)")
+        return created
+    }
+
+    private fun abortPartialDestinations(): List<Map<String, Any?>> {
+        releaseReceiveDestinations(publish = false)
+        return emptyList()
+    }
+
+    // Closes every held descriptor.  On success the pending flag is cleared and
+    // the files become visible; otherwise the entries are deleted, so a failed
+    // transfer leaves nothing behind.  Returns transfer path -> final URI for
+    // the published files.
+    private fun releaseReceiveDestinations(publish: Boolean): Map<String, String> {
+        val held = synchronized(receiveDestLock) {
+            if (openReceiveDestinations.isEmpty()) return emptyMap()
+            openReceiveDestinations.toList().also { openReceiveDestinations.clear() }
+        }
+        val published = mutableMapOf<String, String>()
+        for (dest in held) {
+            try {
+                dest.pfd.close()
+            } catch (_: IOException) {
+            }
+            try {
+                if (publish) {
+                    contentResolver.update(
+                        dest.uri,
+                        ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) },
+                        null, null,
+                    )
+                    published[dest.transferPath] = dest.uri.toString()
+                } else {
+                    contentResolver.delete(dest.uri, null, null)
+                }
+            } catch (e: Exception) {
+                Log.w(RECEIVE_TAG, "could not ${if (publish) "publish" else "discard"} ${dest.uri}: ${e.message}")
+            }
+        }
+        Log.i(RECEIVE_TAG, "${if (publish) "published" else "discarded"} ${held.size} destination(s)")
+        return published
     }
 
     // A fresh, never-reused directory under the shared `wisp_picked` cache

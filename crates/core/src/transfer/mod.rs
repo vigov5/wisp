@@ -11,8 +11,8 @@ pub mod types;
 pub use error::TransferError;
 pub use progress::{ProgressTracker, SpeedCalculator};
 pub use receiver::{
-    ReceiverControl, ReceiverDecision, ReceiverEvent, ReceiverEventStream, ReceiverOffer,
-    ReceiverOfferItem, ReceiverRequest, ReceiverSession, ReceiverStart,
+    AcceptedDestinations, ReceiverControl, ReceiverDecision, ReceiverEvent, ReceiverEventStream,
+    ReceiverOffer, ReceiverOfferItem, ReceiverRequest, ReceiverSession, ReceiverStart,
 };
 pub use sender::{SendRequest, Sender, SenderEvent, SenderEventStream, SenderRun};
 pub use types::{

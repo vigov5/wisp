@@ -312,7 +312,10 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
   }
 
   @override
-  Future<void> respondToOffer({required bool accept}) async {
+  Future<void> respondToOffer({
+    required bool accept,
+    List<String> transferPaths = const [],
+  }) async {
     lastRespondToOfferAccept = accept;
     respondToOfferCalls += 1;
   }

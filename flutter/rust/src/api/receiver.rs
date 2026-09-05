@@ -4,7 +4,8 @@ use std::sync::{Arc, LazyLock, Mutex};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use wisp_app::{
-    identity as app_identity, ConflictPolicy, ConnectionPath as AppConnectionPath, OfferDecision,
+    identity as app_identity, AcceptedDestinations, ConflictPolicy,
+    ConnectionPath as AppConnectionPath, OfferDecision,
     PairingCodeState, QrPairingInfo as AppQrPairingInfo, ReceiverConfig,
     ReceiverEvent as AppReceiverEvent, ReceiverOfferEvent as AppReceiverOfferEvent,
     ReceiverOfferFile as AppReceiverOfferFile, ReceiverOfferPhase as AppReceiverOfferPhase,
@@ -298,8 +299,28 @@ pub fn start_receiver_transfer_listener(
     })
 }
 
+/// One destination the platform opened for an incoming file.
+#[derive(Debug, Clone)]
+pub struct ReceiveDestinationData {
+    /// The file's path within the transfer, as the offer listed it.
+    pub transfer_path: String,
+    /// A `/proc/self/fd/<n>` path opened for writing. It must stay open until
+    /// the transfer finishes: the receiver reopens it as it writes.
+    pub fd_path: String,
+}
+
+/// Accepts or declines the pending offer.
+///
+/// `destinations` maps a transfer path to a `/proc/self/fd/<n>` path the
+/// platform has opened for writing. Android fills it in: scoped storage gives
+/// the app nowhere writable in the user's Downloads, so the platform creates
+/// each file in MediaStore up front and the receiver writes straight into it,
+/// instead of staging the transfer in the app cache and copying it over
+/// afterwards. Everywhere else it is empty and the receiver picks destinations
+/// under its own output directory.
 pub fn respond_to_receiver_offer(
     accept: bool,
+    destinations: Vec<ReceiveDestinationData>,
 ) -> Result<(), crate::api::error::UserFacingErrorData> {
     RUNTIME.block_on(async move {
         let Some(service) = current_service() else {
@@ -311,7 +332,12 @@ pub fn respond_to_receiver_offer(
         let action_label = if accept { "accept" } else { "decline" };
         service
             .respond_to_offer(if accept {
-                OfferDecision::Accept
+                OfferDecision::Accept(AcceptedDestinations {
+                    descriptors: destinations
+                        .into_iter()
+                        .map(|d| (d.transfer_path, std::path::PathBuf::from(d.fd_path)))
+                        .collect(),
+                })
             } else {
                 OfferDecision::Decline
             })

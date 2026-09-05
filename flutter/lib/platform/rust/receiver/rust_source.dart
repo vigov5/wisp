@@ -88,6 +88,11 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
   /// at its exact final URI (immune to MediaStore collision renames).
   final Map<String, String> _savedReceivedUris = {};
 
+  /// True while the current transfer is writing into destinations the platform
+  /// opened, in which case there is nothing to copy once it finishes — only the
+  /// pending entries to publish (or discard, if it failed).
+  bool _writingToPlatformDestinations = false;
+
   /// The `content://` URI a received file was saved to, or `null` if it hasn't
   /// finished saving yet (the Android save runs in the background after the
   /// `completed` event) or wasn't part of the last transfer. [relativePath] is
@@ -217,8 +222,42 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
   }
 
   @override
-  Future<void> respondToOffer({required bool accept}) {
-    return rust_receiver.respondToReceiverOffer(accept: accept);
+  Future<void> respondToOffer({
+    required bool accept,
+    List<String> transferPaths = const [],
+  }) async {
+    // Only the default Downloads/Wisp target: a user-chosen SAF folder has no
+    // equivalent of MediaStore's pending flag, so a half-written file would be
+    // visible there. That case keeps writing to the cache and copying over.
+    final destinations = accept && androidReceiveCacheDir != null && androidSaveUri == null
+        ? await AndroidReceiveDestinations.create(transferPaths)
+        : const <AndroidReceiveDestination>[];
+    _writingToPlatformDestinations = destinations.isNotEmpty;
+    if (_writingToPlatformDestinations) {
+      debugPrint(
+        '[receiver] writing ${destinations.length} file(s) straight to their '
+        'final destination',
+      );
+    }
+    try {
+      await rust_receiver.respondToReceiverOffer(
+        accept: accept,
+        destinations: destinations
+            .map(
+              (d) => rust_receiver.ReceiveDestinationData(
+                transferPath: d.transferPath,
+                fdPath: d.fdPath,
+              ),
+            )
+            .toList(growable: false),
+      );
+    } catch (_) {
+      if (_writingToPlatformDestinations) {
+        _writingToPlatformDestinations = false;
+        await AndroidReceiveDestinations.finish(publish: false);
+      }
+      rethrow;
+    }
   }
 
   @override
@@ -399,10 +438,8 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
         if (!_transferController.isClosed) {
           _transferController.add(event);
         }
-        if (Platform.isAndroid &&
-            androidReceiveCacheDir != null &&
-            event.phase == rust_receiver.ReceiverTransferPhase.completed) {
-          unawaited(_saveFilesToMediaStore(event, androidReceiveCacheDir!));
+        if (Platform.isAndroid && androidReceiveCacheDir != null) {
+          unawaited(_finishAndroidReceive(event));
         }
       },
       onError: (error) {
@@ -457,6 +494,43 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
       return ReceiverErrorAction.openSettings;
     }
     return ReceiverErrorAction.openConnectionTest;
+  }
+
+  /// Settles an Android transfer once it reaches a terminal phase.
+  ///
+  /// When the files were written straight into platform destinations there is
+  /// nothing to copy: success publishes the pending MediaStore entries, and
+  /// anything else discards them so a failed transfer leaves nothing behind.
+  /// Otherwise the receiver wrote into its own cache and the files still have
+  /// to be copied over.
+  Future<void> _finishAndroidReceive(
+    rust_receiver.ReceiverTransferEvent event,
+  ) async {
+    final completed =
+        event.phase == rust_receiver.ReceiverTransferPhase.completed;
+    if (_writingToPlatformDestinations) {
+      const terminal = {
+        rust_receiver.ReceiverTransferPhase.completed,
+        rust_receiver.ReceiverTransferPhase.failed,
+        rust_receiver.ReceiverTransferPhase.cancelled,
+      };
+      if (!terminal.contains(event.phase)) return;
+      _writingToPlatformDestinations = false;
+      final published = await AndroidReceiveDestinations.finish(
+        publish: completed,
+      );
+      _savedReceivedUris
+        ..clear()
+        ..addAll(published);
+      debugPrint(
+        '[receiver] Android ${completed ? "published" : "discarded"} '
+        '${published.length} destination(s)',
+      );
+      return;
+    }
+    if (completed) {
+      await _saveFilesToMediaStore(event, androidReceiveCacheDir!);
+    }
   }
 
   /// Moves all received files from [cacheRoot] to the final destination:

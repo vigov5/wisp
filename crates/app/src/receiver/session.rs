@@ -285,7 +285,7 @@ impl ReceiverSession {
         let core_decision_tx = control.decision_tx;
         tokio::spawn(async move {
             let decision = match decision_rx.await.unwrap_or(OfferResolution::Cancel) {
-                OfferResolution::Accept => CoreReceiverDecision::Accept,
+                OfferResolution::Accept(destinations) => CoreReceiverDecision::Accept(destinations),
                 OfferResolution::Decline | OfferResolution::Cancel => CoreReceiverDecision::Decline,
             };
             let _ = core_decision_tx.send(decision);

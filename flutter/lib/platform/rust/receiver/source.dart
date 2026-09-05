@@ -21,7 +21,15 @@ abstract class ReceiverServiceSource {
 
   Future<void> setDiscoverable({required bool enabled});
 
-  Future<void> respondToOffer({required bool accept});
+  /// Accepts or declines the pending offer.
+  ///
+  /// [transferPaths] is the offer's file list. Android uses it to create each
+  /// destination before the transfer starts, so the bytes land in their final
+  /// home rather than being staged and copied; other platforms ignore it.
+  Future<void> respondToOffer({
+    required bool accept,
+    List<String> transferPaths = const [],
+  });
 
   /// Saves received inline text as a `.txt` to the user-visible destination and
   /// returns the saved name + folder. On desktop the Rust download root is
