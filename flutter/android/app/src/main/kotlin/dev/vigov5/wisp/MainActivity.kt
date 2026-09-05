@@ -346,10 +346,23 @@ class MainActivity : FlutterFragmentActivity() {
                 if (call.method == "start") {
                     ensureNotificationPermission()
                 }
-                val intent = Intent(this, TransferKeepaliveService::class.java)
-                    .putExtra(TransferKeepaliveService.EXTRA_TITLE, title)
-                    .putExtra(TransferKeepaliveService.EXTRA_BODY, body)
-                ContextCompat.startForegroundService(this, intent)
+                // Progress ticks ("update", ~1/s for the whole transfer) only
+                // change the notification text — re-post it directly on the
+                // running service.  Routing them through
+                // startForegroundService() instead armed a fresh ~5s
+                // "must call startForeground()" deadline every second, and a
+                // large send (a ~91-photo share) is precisely when the main
+                // thread is least likely to meet one: missing it is a hard
+                // process kill with
+                // ForegroundServiceDidNotStartInTimeException.
+                val updated = call.method == "update" &&
+                    TransferKeepaliveService.postUpdate(this, title, body)
+                if (!updated) {
+                    val intent = Intent(this, TransferKeepaliveService::class.java)
+                        .putExtra(TransferKeepaliveService.EXTRA_TITLE, title)
+                        .putExtra(TransferKeepaliveService.EXTRA_BODY, body)
+                    ContextCompat.startForegroundService(this, intent)
+                }
                 result.success(null)
             }
             "stop" -> {
