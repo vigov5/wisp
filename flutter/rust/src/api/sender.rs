@@ -5,8 +5,8 @@ use futures_lite::StreamExt;
 use wisp_app::{
     send::SendCancelHandle, AppError, CandidatePath as AppCandidatePath,
     ConnectionPath as AppConnectionPath, ConnectionPathKind as AppConnectionPathKind, SendConfig,
-    SendDestination, SendDraft, SendEvent as AppSendEvent, SendPhase as AppSendPhase, SendSession,
-    SendSessionOutcome,
+    SendDestination, SendDraft, SendEvent as AppSendEvent, SendInput, SendPhase as AppSendPhase,
+    SendSession, SendSessionOutcome,
 };
 use wisp_core::transfer::{TransferPhase, TransferSnapshot};
 
@@ -32,18 +32,40 @@ pub enum SendTransferPhase {
     Failed,
 }
 
+/// One picked source, as Dart hands it to the core.
+#[derive(Debug, Clone)]
+pub struct SendSourceData {
+    /// The path the core opens.  On Android a SAF pick travels here as
+    /// `/proc/self/fd/<n>` so the file never has to be copied into the app
+    /// cache first; the descriptor is held open natively for the whole
+    /// transfer, because the blob store reopens this path lazily as it serves.
+    pub path: String,
+    /// The name the receiver should see for a descriptor source.  Required
+    /// there, since `/proc/self/fd/<n>` ends in the fd number rather than a
+    /// file name.  `None` marks an ordinary path, which names itself.
+    pub fd_display_name: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SendTransferRequest {
     pub code: String,
-    pub paths: Vec<String>,
+    pub sources: Vec<SendSourceData>,
     pub server_url: Option<String>,
     pub device_name: String,
     pub device_type: String,
     pub ticket: Option<String>,
     pub lan_destination_label: Option<String>,
-    /// Text-only send.  When set, `paths` is ignored and the text is shared
+    /// Text-only send.  When set, `sources` is ignored and the text is shared
     /// inline (≤ 16 KB) or as a synthetic `.txt` for larger payloads.
     pub inline_text: Option<String>,
+}
+
+fn map_source(source: SendSourceData) -> SendInput {
+    let path = PathBuf::from(source.path);
+    match source.fd_display_name {
+        Some(name) => SendInput::FileDescriptor { path, name },
+        None => SendInput::Path(path),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -103,10 +125,7 @@ pub fn start_send_transfer(
     };
     let draft = match request.inline_text {
         Some(text) => SendDraft::new_text(config, text),
-        None => SendDraft::new(
-            config,
-            request.paths.into_iter().map(PathBuf::from).collect(),
-        ),
+        None => SendDraft::new(config, request.sources.into_iter().map(map_source).collect()),
     };
 
     let destination = match request

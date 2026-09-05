@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/transfers/application/connection_path.dart';
+import 'native_source.dart';
 import '../src/rust/api/error.dart' as rust_error;
 import '../src/rust/api/sender.dart' as rust_sender;
 import '../src/rust/api/transfer.dart' as rust_transfer;
@@ -20,7 +21,7 @@ abstract class SendTransferSource {
 class SendTransferRequestData {
   const SendTransferRequestData({
     required this.code,
-    required this.paths,
+    required this.sources,
     required this.deviceName,
     required this.deviceType,
     this.serverUrl,
@@ -30,7 +31,7 @@ class SendTransferRequestData {
   });
 
   final String code;
-  final List<String> paths;
+  final List<SendSource> sources;
   final String deviceName;
   final String deviceType;
   final String? serverUrl;
@@ -245,7 +246,14 @@ class LocalSendTransferSource implements SendTransferSource {
     return startTransferFn(
       request: rust_sender.SendTransferRequest(
         code: request.code,
-        paths: request.paths,
+        sources: request.sources
+            .map(
+              (source) => rust_sender.SendSourceData(
+                path: source.path,
+                fdDisplayName: source.fdDisplayName,
+              ),
+            )
+            .toList(growable: false),
         serverUrl: request.serverUrl,
         deviceName: request.deviceName,
         deviceType: request.deviceType,

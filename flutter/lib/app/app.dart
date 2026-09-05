@@ -23,6 +23,8 @@ import '../platform/android/keepalive_lifecycle_observer.dart';
 import '../platform/android/multicast_lock_channel.dart';
 import '../features/usb_cable/application/usb_cable_controller.dart';
 import '../platform/share_intent.dart';
+import '../features/send/application/send_selection_picker.dart';
+import '../platform/native_source.dart';
 import '../platform/desktop_integration.dart';
 import '../platform/windows_context_menu.dart';
 import '../platform/rust/receiver/source.dart';
@@ -42,7 +44,7 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
   late final GoRouter _router;
   late final ReceiverServiceSource _receiverService;
   late final KeepaliveLifecycleObserver _keepaliveObserver;
-  StreamSubscription<List<String>>? _shareIntentSub;
+  StreamSubscription<List<NativeSource>>? _shareIntentSub;
   StreamSubscription<String>? _shareTextSub;
   StreamSubscription<List<String>>? _windowsSendSub;
   StreamSubscription<void>? _windowsSurfaceSub;
@@ -101,9 +103,9 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
   void _wireShareIntent() {
     if (!ShareIntent.isSupported) return;
     unawaited(
-      ShareIntent.getInitialSharedFiles().then((paths) {
+      ShareIntent.getInitialSharedFiles().then((sources) {
         if (!mounted) return;
-        _openSendDraftWith(paths);
+        _openSendDraftWith(sources);
       }),
     );
     unawaited(
@@ -112,9 +114,9 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
         _openSendTextDraftWith(text);
       }),
     );
-    _shareIntentSub = ShareIntent.onSharedFiles.listen((paths) {
+    _shareIntentSub = ShareIntent.onSharedFiles.listen((sources) {
       if (!mounted) return;
-      _openSendDraftWith(paths);
+      _openSendDraftWith(sources);
     });
     _shareTextSub = ShareIntent.onSharedText.listen((text) {
       if (!mounted) return;
@@ -147,7 +149,12 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
   // forwarded launches aggregate into one draft); otherwise a fresh draft is
   // opened.
   void _handleWindowsSendPaths(List<String> paths) {
-    final files = _sendPickedFilesFromPaths(paths);
+    final files = _sendPickedFilesFromSources(
+      paths
+          .where((path) => path.trim().isNotEmpty)
+          .map(NativeSource.fromPath)
+          .toList(growable: false),
+    );
     if (files.isEmpty) return;
     // Surface the window: on a warm-start forward it may be minimized to the
     // taskbar or hidden in the tray, and opening the draft alone won't show it.
@@ -221,29 +228,24 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
     await repository.markContextMenuPrompted();
   }
 
-  void _openSendDraftWith(List<String> paths) {
-    final files = _sendPickedFilesFromPaths(paths);
+  void _openSendDraftWith(List<NativeSource> sources) {
+    final files = _sendPickedFilesFromSources(sources);
     if (files.isEmpty) return;
     _router.go(AppRoutePaths.sendDraft, extra: files);
   }
 
-  // Converts raw file/folder paths into Send draft entries, using the directory
-  // factory for folders so recursive sends are planned correctly.
-  List<SendPickedFile> _sendPickedFilesFromPaths(List<String> paths) {
-    return paths
-        .where((path) => path.trim().isNotEmpty)
-        .map((path) {
-          if (FileSystemEntity.isDirectorySync(path)) {
-            return SendPickedFile.directory(path);
+  // Converts platform-provided sources into Send draft entries, using the
+  // directory factory for folders so recursive sends are planned correctly.
+  // A descriptor-backed source is never a directory and has no path to stat,
+  // so the folder check is skipped for it.
+  List<SendPickedFile> _sendPickedFilesFromSources(List<NativeSource> sources) {
+    return sources
+        .map((source) {
+          if (!source.fromDescriptor &&
+              FileSystemEntity.isDirectorySync(source.path)) {
+            return SendPickedFile.directory(source.path);
           }
-          final file = File(path);
-          return SendPickedFile(
-            path: path,
-            name: SendPickedFile.fromPath(path).name,
-            sizeBytes: file.existsSync()
-                ? BigInt.from(file.lengthSync())
-                : null,
-          );
+          return sendPickedFileFromNativeSource(source);
         })
         .toList(growable: false);
   }

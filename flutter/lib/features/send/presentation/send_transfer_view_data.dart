@@ -385,7 +385,9 @@ List<SendTransferFileViewData> _filesForState(SendState state) {
   final plan = transfer.plan;
   final snapshot = transfer.snapshot;
   final roots = _buildDisplayRoots(
-    requestPaths: request.paths,
+    requestPaths: request.sources
+        .map((source) => source.path)
+        .toList(growable: false),
     itemPaths: items.map((item) => item.path),
   );
 

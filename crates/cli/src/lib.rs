@@ -14,8 +14,8 @@ use tracing_subscriber::EnvFilter;
 use wisp_app::{
     ConflictPolicy, OfferDecision, ReceiverConfig, ReceiverEvent, ReceiverOfferEvent,
     ReceiverOfferPhase, ReceiverService, SendConfig, SendDestination, SendDraft, SendEvent,
-    SendPhase, SendRun, SendSessionOutcome, TransferPlan, TransferSnapshot, UserFacingError,
-    from_anyhow_error,
+    SendInput, SendPhase, SendRun, SendSessionOutcome, TransferPlan, TransferSnapshot,
+    UserFacingError, from_anyhow_error,
 };
 use wisp_core::util::{confirm_accept, human_size, process_display_device_name};
 
@@ -92,12 +92,12 @@ pub async fn send_with_server(
             device_name: device_name.clone(),
             device_type: "laptop".to_owned(),
         },
-        files,
+        files.into_iter().map(SendInput::from).collect(),
     );
 
     info!(
         code = %code.trim().to_uppercase(),
-        file_count = draft.paths().len(),
+        file_count = draft.inputs().len(),
         device = %device_name,
         rendezvous_override = ?server_url,
         "send.resolving_code"
@@ -136,11 +136,11 @@ pub async fn send_nearby(
             device_name: device_name.clone(),
             device_type: "laptop".to_owned(),
         },
-        files,
+        files.into_iter().map(SendInput::from).collect(),
     );
 
     info!(
-        file_count = draft.paths().len(),
+        file_count = draft.inputs().len(),
         device = %device_name,
         scan_secs = nearby_timeout_secs.max(1),
         "send.nearby_scanning"

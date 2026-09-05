@@ -166,13 +166,13 @@ void main() {
       expect(request?.code, 'ABC123');
       expect(request?.ticket, isNull);
       expect(request?.lanDestinationLabel, isNull);
-      expect(request?.paths, ['/tmp/report.pdf']);
+      expect(request?.sources, [const SendSource(path: '/tmp/report.pdf')]);
       expect(request?.deviceName, 'Wisp');
       expect(request?.serverUrl, isNull);
     },
   );
 
-  test('send controller builds a text request with empty paths', () {
+  test('send controller builds a text request with no sources', () {
     final container = ProviderContainer(
       overrides: [
         initialAppSettingsProvider.overrideWithValue(testAppSettings),
@@ -193,7 +193,7 @@ void main() {
     expect(request, isNotNull);
     expect(controller.canStartSend(), isTrue);
     expect(request?.destinationMode, SendDestinationMode.code);
-    expect(request?.paths, isEmpty);
+    expect(request?.sources, isEmpty);
     expect(request?.inlineText, 'hello world');
   });
 
@@ -274,7 +274,53 @@ void main() {
       expect(request?.ticket, 'ticket-1');
       expect(request?.lanDestinationLabel, 'Laptop');
       expect(request?.code, isNull);
-      expect(request?.paths, ['/tmp/report.pdf']);
+      expect(request?.sources, [const SendSource(path: '/tmp/report.pdf')]);
+    },
+  );
+
+  test(
+    'a descriptor-backed pick reaches the transfer source under its real name',
+    () async {
+      final fakeSource = FakeSendTransferSource();
+      final container = ProviderContainer(
+        overrides: [
+          initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          sendTransferSourceProvider.overrideWithValue(fakeSource),
+        ],
+      );
+      addTearDown(container.dispose);
+      addTearDown(fakeSource.close);
+
+      final controller = container.read(sendControllerProvider.notifier);
+      // What the Android picker produces when it sends a file straight from
+      // its SAF descriptor: the path is the fd, so the name has to ride along
+      // or the receiver ends up with a file called "42".
+      controller.beginDraft([
+        SendPickedFile(
+          path: '/proc/self/fd/42',
+          name: 'holiday.mp4',
+          sizeBytes: BigInt.from(6000000000),
+          fdDisplayName: 'holiday.mp4',
+        ),
+      ]);
+      controller.updateDestinationCode('ABC123');
+
+      final request = controller.buildSendRequest()!;
+      expect(request.sources, [
+        const SendSource(
+          path: '/proc/self/fd/42',
+          fdDisplayName: 'holiday.mp4',
+        ),
+      ]);
+
+      controller.startTransfer(request);
+
+      expect(fakeSource.lastRequest?.sources, [
+        const SendSource(
+          path: '/proc/self/fd/42',
+          fdDisplayName: 'holiday.mp4',
+        ),
+      ]);
     },
   );
 
@@ -304,7 +350,7 @@ void main() {
       final request = controller.buildSendRequest()!;
       final staleRequest = SendRequestData(
         destinationMode: SendDestinationMode.code,
-        paths: request.paths,
+        sources: request.sources,
         deviceName: request.deviceName,
         deviceType: request.deviceType,
         code: 'ZZZ999',

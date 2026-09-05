@@ -144,6 +144,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<SendSourceData> dco_decode_list_send_source_data(dynamic raw);
+
+  @protected
   List<TransferPlanFileData> dco_decode_list_transfer_plan_file_data(
     dynamic raw,
   );
@@ -231,6 +234,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SendConnectionPath dco_decode_send_connection_path(dynamic raw);
+
+  @protected
+  SendSourceData dco_decode_send_source_data(dynamic raw);
 
   @protected
   SendTransferEvent dco_decode_send_transfer_event(dynamic raw);
@@ -422,6 +428,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<SendSourceData> sse_decode_list_send_source_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<TransferPlanFileData> sse_decode_list_transfer_plan_file_data(
     SseDeserializer deserializer,
   );
@@ -533,6 +544,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SendConnectionPath sse_decode_send_connection_path(
     SseDeserializer deserializer,
   );
+
+  @protected
+  SendSourceData sse_decode_send_source_data(SseDeserializer deserializer);
 
   @protected
   SendTransferEvent sse_decode_send_transfer_event(
@@ -767,6 +781,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_send_source_data(
+    List<SendSourceData> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_transfer_plan_file_data(
     List<TransferPlanFileData> self,
     SseSerializer serializer,
@@ -898,6 +918,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_send_connection_path(
     SendConnectionPath self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_send_source_data(
+    SendSourceData self,
     SseSerializer serializer,
   );
 

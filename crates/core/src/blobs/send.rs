@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     future::Future,
-    path::{Path, PathBuf},
+    path::Path,
     pin::Pin,
     sync::Arc,
     time::{Duration, Instant},
@@ -13,6 +13,7 @@ use super::telemetry::{
     BlobProviderTelemetry, TransferEnd, benchmark_run_id, is_enabled as telemetry_enabled,
 };
 use super::util::import_files_with_timings;
+use crate::fs_plan::SendInput;
 use iroh::{
     Endpoint,
     endpoint::Connection,
@@ -160,7 +161,7 @@ pub(crate) struct PreparedFile {
 }
 
 impl PreparedStore {
-    pub(crate) async fn prepare(root_dir: &Path, files: Vec<PathBuf>) -> Result<Self> {
+    pub(crate) async fn prepare(root_dir: &Path, inputs: Vec<SendInput>) -> Result<Self> {
         let store = FsStore::load(root_dir)
             .await
             .map_err(|source| BlobError::store_load(root_dir.to_path_buf(), source))?;
@@ -169,13 +170,14 @@ impl PreparedStore {
         let mut seen_transfer_paths = HashSet::new();
         let mut files_out = Vec::new();
         let mut timings = PrepareTimings::default();
-        for path in files {
-            trace!(input_path = %path.display(), "processing import input path");
-            let imported = import_files_with_timings(&store, path.clone())
+        for input in inputs {
+            let input_display = input.path().display().to_string();
+            trace!(input_path = %input_display, "processing import input path");
+            let imported = import_files_with_timings(&store, input)
                 .await
                 .map_err(|source| {
                     BlobError::import_files(
-                        path.display().to_string(),
+                        input_display.clone(),
                         BlobTextError::new(format!("{source:#}")),
                     )
                 })?;
@@ -383,6 +385,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::blobs::error::BlobError;
+    use crate::fs_plan::SendInput;
 
     use super::PreparedStore;
 
@@ -410,9 +413,12 @@ mod tests {
         std::fs::create_dir_all(&store_root)?;
         std::fs::write(source.join("same.txt"), b"same")?;
 
-        let err = PreparedStore::prepare(&store_root, vec![source.clone(), source])
-            .await
-            .expect_err("expected duplicate transfer path failure");
+        let err = PreparedStore::prepare(
+            &store_root,
+            vec![SendInput::from(source.clone()), SendInput::from(source)],
+        )
+        .await
+        .expect_err("expected duplicate transfer path failure");
         let err_text = format!("{err:#}");
         assert!(err_text.contains("duplicate transfer path in manifest: source/same.txt"));
 
@@ -481,7 +487,7 @@ mod tests {
         std::fs::create_dir_all(&source)?;
         std::fs::create_dir_all(&store_root)?;
         std::fs::write(source.join("hello.txt"), b"world")?;
-        let prepared = PreparedStore::prepare(&store_root, vec![source]).await?;
+        let prepared = PreparedStore::prepare(&store_root, vec![SendInput::from(source)]).await?;
 
         let endpoint = match Endpoint::builder(iroh::endpoint::presets::N0)
             .secret_key(SecretKey::from_bytes(&[3u8; 32]))
@@ -557,7 +563,7 @@ mod tests {
         std::fs::write(source.join("real.txt"), b"real")?;
         symlink("real.txt", source.join("link.txt"))?;
 
-        let err = PreparedStore::prepare(&store_root, vec![source])
+        let err = PreparedStore::prepare(&store_root, vec![SendInput::from(source)])
             .await
             .expect_err("expected nested symbolic link to be rejected");
         match err {

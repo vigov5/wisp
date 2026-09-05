@@ -12,7 +12,7 @@ use tracing::{instrument, trace};
 
 use super::error::{BlobError, BlobTextError, Result as BlobResult};
 use crate::{
-    fs_plan::FsPlanError,
+    fs_plan::{FsPlanError, SendInput},
     transfer::path::{input_root_name, normalize_transfer_path},
 };
 
@@ -30,9 +30,26 @@ pub(super) struct ImportFilesResult {
     pub(super) import_hash: Duration,
 }
 
-#[instrument(skip_all, fields(input_path = %path.display()))]
-pub(crate) fn walk_files(path: PathBuf) -> Result<Vec<(String, PathBuf)>, FsPlanError> {
-    let path = absolute_input_path(path)?;
+#[instrument(skip_all, fields(input_path = %input.path().display()))]
+pub(crate) fn walk_files(input: SendInput) -> Result<Vec<(String, PathBuf)>, FsPlanError> {
+    // A descriptor input is a `/proc/self/fd/<n>` symlink onto a file we hold
+    // open ourselves, so it is followed rather than rejected, and there is
+    // nothing below it to traverse.
+    if input.is_file_descriptor() {
+        let root_name = input.display_name()?;
+        let path = absolute_input_path(input.into_path())?;
+        let metadata = std::fs::metadata(&path).map_err(|source| FsPlanError::ReadMetadata {
+            path: path.clone(),
+            source,
+        })?;
+        if !metadata.is_file() {
+            return Err(FsPlanError::UnsupportedFileType { path });
+        }
+        trace!(file_count = 1, "discovered descriptor file for import");
+        return Ok(vec![(root_name, path)]);
+    }
+
+    let path = absolute_input_path(input.into_path())?;
     let metadata =
         std::fs::symlink_metadata(&path).map_err(|source| FsPlanError::ReadMetadata {
             path: path.clone(),
@@ -110,21 +127,21 @@ fn absolute_input_path(path: PathBuf) -> Result<PathBuf, FsPlanError> {
         .join(path))
 }
 
-#[instrument(skip(store), fields(input_path = %path.display()))]
+#[instrument(skip(store), fields(input_path = %input.path().display()))]
 #[cfg(test)]
-pub(super) async fn import_files(store: &Store, path: PathBuf) -> BlobResult<Vec<ImportedFile>> {
-    Ok(import_files_with_timings(store, path).await?.files)
+pub(super) async fn import_files(store: &Store, input: SendInput) -> BlobResult<Vec<ImportedFile>> {
+    Ok(import_files_with_timings(store, input).await?.files)
 }
 
-#[instrument(skip(store), fields(input_path = %path.display()))]
+#[instrument(skip(store), fields(input_path = %input.path().display()))]
 pub(super) async fn import_files_with_timings(
     store: &Store,
-    path: PathBuf,
+    input: SendInput,
 ) -> BlobResult<ImportFilesResult> {
-    let path_display = path.display().to_string();
+    let path_display = input.path().display().to_string();
     let walk_started = Instant::now();
-    let files =
-        walk_files(path).map_err(|source| BlobError::import_files(path_display.clone(), source))?;
+    let files = walk_files(input)
+        .map_err(|source| BlobError::import_files(path_display.clone(), source))?;
     let walk_metadata = walk_started.elapsed();
 
     let import_started = Instant::now();
@@ -185,6 +202,7 @@ mod tests {
     use iroh_blobs::{api::Store, store::mem::MemStore};
 
     use super::{import_files, walk_files};
+    use crate::fs_plan::SendInput;
 
     type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -212,7 +230,7 @@ mod tests {
         std::fs::write(nested.join("a.txt"), b"aaaa")?;
         let store: Store = MemStore::new().into();
 
-        let imported = import_files(&store, input).await?;
+        let imported = import_files(&store, SendInput::from(input)).await?;
         let transfer_paths = imported
             .iter()
             .map(|file| file.transfer_path.clone())
@@ -236,7 +254,7 @@ mod tests {
         std::fs::write(&file_path, b"hello")?;
         let store: Store = MemStore::new().into();
 
-        let imported = import_files(&store, file_path).await?;
+        let imported = import_files(&store, SendInput::from(file_path)).await?;
         assert_eq!(imported.len(), 1);
         assert_eq!(imported[0].transfer_path, "hello.txt");
         assert_eq!(imported[0].size_bytes, 5);
@@ -254,9 +272,50 @@ mod tests {
         std::fs::write(input.join("real.txt"), b"real")?;
         symlink("real.txt", input.join("link.txt"))?;
 
-        let err = walk_files(input).expect_err("expected symlink rejection");
+        let err = walk_files(SendInput::from(input)).expect_err("expected symlink rejection");
         assert!(err.to_string().contains("symbolic link"));
 
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// The Android send path hands the core `/proc/self/fd/<n>`, which is a
+    /// symlink onto an already-open file.  The plain `Path` walk rejects
+    /// symlinks, so the descriptor variant has to opt out of that check and
+    /// carry the real name instead of the fd number.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn import_follows_a_descriptor_path_and_uses_its_carried_name() -> Result<()> {
+        let root = unique_temp_dir("wisp-import-descriptor");
+        std::fs::create_dir_all(&root)?;
+        let backing = root.join("backing-store-name.bin");
+        std::fs::write(&backing, b"holiday")?;
+        let file = std::fs::File::open(&backing)?;
+        let fd_path = PathBuf::from(format!(
+            "/proc/self/fd/{}",
+            std::os::fd::AsRawFd::as_raw_fd(&file)
+        ));
+        if !fd_path.exists() {
+            // No procfs (macOS): nothing to assert here.
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(());
+        }
+        let store: Store = MemStore::new().into();
+
+        let imported = import_files(
+            &store,
+            SendInput::FileDescriptor {
+                path: fd_path,
+                name: "holiday.mp4".to_owned(),
+            },
+        )
+        .await?;
+
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].transfer_path, "holiday.mp4");
+        assert_eq!(imported[0].size_bytes, 7);
+
+        drop(file);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }

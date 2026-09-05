@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use wisp_app::{
     SelectionItem as AppSelectionItem, SelectionPreview as AppSelectionPreview, SendConfig,
-    SendDraft,
+    SendDraft, SendInput,
 };
 
 use crate::api::error::internal_user_facing_error;
@@ -37,7 +37,12 @@ pub fn append_paths(
     new_paths: Vec<String>,
 ) -> Result<SelectionPreview, crate::api::error::UserFacingErrorData> {
     let mut draft = draft_for_paths(existing_paths);
-    draft.add_paths(new_paths.into_iter().map(PathBuf::from).collect());
+    draft.add_inputs(
+        new_paths
+            .into_iter()
+            .map(|path| SendInput::from(PathBuf::from(path)))
+            .collect(),
+    );
     let preview = draft
         .inspect()
         .map_err(|err| internal_user_facing_error("Failed to inspect paths", err.to_string()))?;
@@ -57,13 +62,16 @@ pub fn remove_path(
 }
 
 fn draft_for_paths(paths: Vec<String>) -> SendDraft {
-    let raw_paths = paths.into_iter().map(PathBuf::from).collect::<Vec<_>>();
+    let inputs = paths
+        .into_iter()
+        .map(|path| SendInput::from(PathBuf::from(path)))
+        .collect::<Vec<_>>();
     SendDraft::new(
         SendConfig {
             device_name: String::new(),
             device_type: "laptop".to_owned(),
         },
-        raw_paths,
+        inputs,
     )
 }
 

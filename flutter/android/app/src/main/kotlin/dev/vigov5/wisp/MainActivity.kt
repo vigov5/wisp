@@ -14,11 +14,14 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.system.Os
+import android.system.OsConstants
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -29,6 +32,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicLong
@@ -56,6 +60,13 @@ class MainActivity : FlutterFragmentActivity() {
         private const val REQUEST_CODE_POST_NOTIF = 4801
         private const val OPEN_TAG = "WispOpenFolder"
         private const val SHARE_TAG = "WispShare"
+        private const val PICK_TAG = "WispPick"
+
+        // Ceiling on descriptors held open for copy-free sends.  Android
+        // gives a process ~1024 file descriptors and the rest of the app
+        // needs its share, so a pick larger than this copies the overflow
+        // into the cache the way every pick used to.
+        private const val MAX_OPEN_SEND_FDS = 256
 
         // Minimum bytes copied between two "onPickProgress" events.  Throttles
         // the platform-channel chatter during a multi-GB copy to ~1 event per
@@ -76,7 +87,7 @@ class MainActivity : FlutterFragmentActivity() {
     // and Flutter awaits this when calling getInitialSharedFiles, so a
     // multi-hundred-megabyte share never blocks the main thread (or the
     // launch screen).
-    private var initialSharedFilesJob: Deferred<List<String>>? = null
+    private var initialSharedFilesJob: Deferred<List<Map<String, Any?>>>? = null
     // Cold-start stash for an ACTION_SEND text/plain share (EXTRA_TEXT, no
     // EXTRA_STREAM).  Handed to Flutter once via getInitialSharedText.
     private var initialSharedText: String? = null
@@ -106,6 +117,20 @@ class MainActivity : FlutterFragmentActivity() {
     // instead of the file the user picked.
     private val pickedCopySeq = AtomicLong(0L)
 
+    // Descriptors held open for sources the core reads straight from their
+    // `content://` URI instead of a cache copy.  The core sees each one as
+    // `/proc/self/fd/<n>` and the blob store references that path rather than
+    // duplicating the bytes — but it reopens the path lazily every time it
+    // serves, so the descriptor has to outlive the whole transfer, not just
+    // the import.  Released together with the cache copies when the draft is
+    // cleared (`releaseSendSources`).
+    //
+    // Guarded by [sendFdLock]: resolves run on Dispatchers.IO (a share intent
+    // can land while a pick is still resolving) while the release comes in on
+    // the main thread.
+    private val sendFdLock = Any()
+    private val openSendFds = mutableListOf<ParcelFileDescriptor>()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         initialSharedFilesJob = extractSharedFilesAsync(intent)
@@ -119,6 +144,10 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onDestroy() {
         usbAoa?.dispose()
         usbAoa = null
+        // The draft dies with the engine, so nothing will send through these
+        // descriptors again; leaving them open would just hold the underlying
+        // files (and the fd slots) for the life of the process.
+        releaseSendSources()
         super.onDestroy()
     }
 
@@ -163,10 +192,10 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     // Returns null when the intent isn't a share intent so the caller can
-    // skip it entirely; otherwise kicks off the URI → cache copy on
+    // skip it entirely; otherwise kicks off the URI resolve on
     // Dispatchers.IO and returns the in-flight Deferred.  Tied to
     // lifecycleScope so the work is cancelled if the activity dies.
-    private fun extractSharedFilesAsync(intent: Intent?): Deferred<List<String>>? {
+    private fun extractSharedFilesAsync(intent: Intent?): Deferred<List<Map<String, Any?>>>? {
         if (intent == null) return null
         if (intent.action != Intent.ACTION_SEND &&
             intent.action != Intent.ACTION_SEND_MULTIPLE
@@ -232,6 +261,10 @@ class MainActivity : FlutterFragmentActivity() {
                     @Suppress("DEPRECATION")
                     startActivityForResult(intent, REQUEST_CODE_PICK_SAVE_FOLDER)
                 }
+                "releaseSendSources" -> {
+                    releaseSendSources()
+                    result.success(null)
+                }
                 "saveToSafUri" -> saveToSafUri(call, result)
                 "openSavedFolder" -> openSavedFolder(call, result)
                 "openFileUri" -> openFileUri(call, result)
@@ -293,10 +326,10 @@ class MainActivity : FlutterFragmentActivity() {
                             try {
                                 result.success(job.await())
                             } catch (_: Exception) {
-                                // Activity destroyed mid-copy (job cancelled)
-                                // or copy threw — surface as empty rather
-                                // than failing the channel call.
-                                result.success(emptyList<String>())
+                                // Activity destroyed mid-resolve (job
+                                // cancelled) or it threw — surface as empty
+                                // rather than failing the channel call.
+                                result.success(emptyList<Map<String, Any?>>())
                             }
                         }
                     }
@@ -311,26 +344,26 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
-    // Pulls file URIs out of an ACTION_SEND / ACTION_SEND_MULTIPLE intent
-    // and copies each one into the app cache via the same `wisp_picked`
-    // tree the file picker uses.  Returns the resulting local paths.
-    // Returns null when the intent isn't a share intent at all so the
-    // caller can distinguish "no share" from "empty share".
-    private fun extractSharedFilesFromIntent(intent: Intent?): List<String>? {
+    // Pulls file URIs out of an ACTION_SEND / ACTION_SEND_MULTIPLE intent and
+    // resolves each one through the same descriptor-first path the file picker
+    // uses, so sharing a multi-GB video out of Photos costs no disk either.
+    // Returns null when the intent isn't a share intent at all so the caller
+    // can distinguish "no share" from "empty share".
+    private fun extractSharedFilesFromIntent(intent: Intent?): List<Map<String, Any?>>? {
         if (intent == null) return null
         if (intent.action != Intent.ACTION_SEND &&
             intent.action != Intent.ACTION_SEND_MULTIPLE
         ) return null
         val uris = sharedUris(intent)
         Log.i(SHARE_TAG, "share intent ${intent.action}: ${uris.size} uri(s)")
-        var failed = 0
-        val paths = uris.mapNotNull { uri ->
-            copyUriToCache(uri).also { if (it == null) failed++ }
+        val sources = resolveSendSources(uris)
+        if (sources.size < uris.size) {
+            Log.w(
+                SHARE_TAG,
+                "share intent: ${uris.size - sources.size} of ${uris.size} uri(s) could not be read",
+            )
         }
-        if (failed > 0) {
-            Log.w(SHARE_TAG, "share intent: $failed of ${uris.size} uri(s) could not be read")
-        }
-        return paths
+        return sources
     }
 
     // The URIs a share intent carries, preferring ClipData over EXTRA_STREAM.
@@ -559,36 +592,32 @@ class MainActivity : FlutterFragmentActivity() {
                 data.data?.let { uris.add(it) }
             }
             // Copy on Dispatchers.IO so a multi-GB pick never blocks the main
-            // thread (which froze the UI / triggered an ANR).  Progress is
-            // streamed back to Flutter via "onPickProgress"; result.success
-            // resumes on the main thread once every file is cached.
+            // Runs on Dispatchers.IO because the fallback copy still can, so a
+            // pick that lands there never blocks the main thread (which froze
+            // the UI / triggered an ANR).  Copy progress is streamed back via
+            // "onPickProgress"; a pick that copies nothing — the common case
+            // now — finishes without emitting any.
             lifecycleScope.launch {
                 val pickResult = withContext(Dispatchers.IO) {
-                    val copyStartedNanos = SystemClock.elapsedRealtimeNanos()
-                    val sizes = uris.map { resolveSize(it) ?: 0L }
-                    val totalBytes = sizes.sum()
-                    var completedBytes = 0L
+                    val startedNanos = SystemClock.elapsedRealtimeNanos()
                     var lastEmit = 0L
-                    val out = ArrayList<String>(uris.size)
-                    for ((index, uri) in uris.withIndex()) {
-                        val base = completedBytes
-                        val path = copyUriToCache(uri) { fileCopied ->
-                            val done = base + fileCopied
-                            if (done - lastEmit >= PROGRESS_EMIT_BYTES) {
-                                lastEmit = done
-                                emitPickProgress(done, totalBytes, index, uris.size)
-                            }
+                    val sources = resolveSendSources(uris) { copied, copyTotal, index ->
+                        if (copied - lastEmit >= PROGRESS_EMIT_BYTES) {
+                            lastEmit = copied
+                            emitPickProgress(copied, copyTotal, index, uris.size)
                         }
-                        if (path != null) out.add(path)
-                        completedBytes += sizes[index]
                     }
-                    emitPickProgress(totalBytes, totalBytes, uris.size, uris.size)
-                    val copyElapsedMicros =
-                        (SystemClock.elapsedRealtimeNanos() - copyStartedNanos) / 1_000L
+                    val bytesCopied = sources
+                        .filter { it["copied"] == true }
+                        .sumOf { it["size"] as Long }
+                    if (bytesCopied > 0L) {
+                        emitPickProgress(bytesCopied, bytesCopied, uris.size, uris.size)
+                    }
                     mapOf(
-                        "paths" to out,
-                        "bytesCopied" to out.sumOf { File(it).length() },
-                        "copyElapsedMicros" to copyElapsedMicros,
+                        "sources" to sources,
+                        "bytesCopied" to bytesCopied,
+                        "copyElapsedMicros" to
+                            (SystemClock.elapsedRealtimeNanos() - startedNanos) / 1_000L,
                     )
                 }
                 result.success(pickResult)
@@ -666,6 +695,124 @@ class MainActivity : FlutterFragmentActivity() {
             return
         }
         super.onActivityResult(requestCode, resultCode, data)
+    }
+
+    // Resolves picked or shared URIs into sources the core can open, handing
+    // back a live descriptor wherever the platform allows one and falling
+    // back to the old cache copy only where it does not.  That is the whole
+    // point of the exercise: a 6 GB pick used to need 6 GB of free space
+    // before the transfer could even start.
+    //
+    // Descriptors are handed out largest-first, because the budget is what
+    // limits how many sources can skip the copy and the big ones are the ones
+    // that hurt.
+    //
+    // Each returned map carries `path` (what Rust opens), `name` (what the
+    // receiver sees — a descriptor path ends in the fd number, so the real
+    // name has to travel separately), `size` and `copied`.
+    private fun resolveSendSources(
+        uris: List<Uri>,
+        onCopyProgress: (copiedTotal: Long, copyTotal: Long, index: Int) -> Unit = { _, _, _ -> },
+    ): List<Map<String, Any?>> {
+        val names = uris.map { sanitizeFileName(resolveFileName(it)) }
+        val sizes = uris.map { resolveSize(it) ?: 0L }
+        val resolved = arrayOfNulls<Map<String, Any?>>(uris.size)
+
+        for (index in uris.indices.sortedByDescending { sizes[it] }) {
+            val fdPath = openForSend(uris[index]) ?: continue
+            resolved[index] = mapOf(
+                "path" to fdPath,
+                "name" to names[index],
+                // Not every provider fills in OpenableColumns.SIZE, but the
+                // descriptor path always stats through to the real file.
+                "size" to (sizes[index].takeIf { it > 0L } ?: File(fdPath).length()),
+                "copied" to false,
+            )
+        }
+
+        val copyTotal = uris.indices.filter { resolved[it] == null }.sumOf { sizes[it] }
+        var copiedBefore = 0L
+        for (index in uris.indices) {
+            if (resolved[index] != null) continue
+            val path = copyUriToCache(uris[index]) { fileCopied ->
+                onCopyProgress(copiedBefore + fileCopied, copyTotal, index)
+            }
+            copiedBefore += sizes[index]
+            if (path == null) continue
+            resolved[index] = mapOf(
+                "path" to path,
+                "name" to names[index],
+                "size" to File(path).length(),
+                "copied" to true,
+            )
+        }
+
+        val fdCount = resolved.count { it != null && it["copied"] == false }
+        Log.i(
+            PICK_TAG,
+            "resolved ${resolved.count { it != null }}/${uris.size} source(s), " +
+                "$fdCount without a copy",
+        )
+        return resolved.filterNotNull()
+    }
+
+    // Opens [uri] for a copy-free send and returns the `/proc/self/fd/<n>`
+    // path the core should use, or null when this source has to be copied.
+    //
+    // Two things have to hold, and neither can be assumed:
+    //
+    // 1. The descriptor must point at a plain regular file.  Cloud providers
+    //    (Drive, Dropbox) answer `openFileDescriptor` with a pipe, which has
+    //    no length and cannot be reopened at all.
+    // 2. The descriptor path must be reopenable.  Opening `/proc/self/fd/<n>`
+    //    is a fresh path walk, and under scoped storage that walk lands in
+    //    FUSE, which re-runs its own permission check.  So we do exactly what
+    //    the blob store will do later — open the path once, here — and treat
+    //    a failure as "this source needs a copy" rather than discovering it
+    //    mid-transfer.
+    private fun openForSend(uri: Uri): String? {
+        // A soft budget: two concurrent resolves can overshoot it by the
+        // handful they have in flight, which is well inside the headroom.
+        if (synchronized(sendFdLock) { openSendFds.size } >= MAX_OPEN_SEND_FDS) return null
+        val pfd = try {
+            contentResolver.openFileDescriptor(uri, "r")
+        } catch (e: Exception) {
+            Log.i(PICK_TAG, "cannot open $uri as a descriptor: ${e.message}")
+            null
+        } ?: return null
+        val path = "/proc/self/fd/${pfd.fd}"
+        val usable = try {
+            OsConstants.S_ISREG(Os.fstat(pfd.fileDescriptor).st_mode) &&
+                FileInputStream(path).use { true }
+        } catch (e: Exception) {
+            Log.i(PICK_TAG, "descriptor for $uri is not reopenable, copying instead: ${e.message}")
+            false
+        }
+        if (!usable) {
+            try {
+                pfd.close()
+            } catch (_: IOException) {
+            }
+            return null
+        }
+        synchronized(sendFdLock) { openSendFds.add(pfd) }
+        return path
+    }
+
+    // Releases every descriptor held for a copy-free send.  Dart calls this
+    // when it clears the draft, alongside deleting the `wisp_picked` cache.
+    private fun releaseSendSources() {
+        val held = synchronized(sendFdLock) {
+            if (openSendFds.isEmpty()) return
+            openSendFds.toList().also { openSendFds.clear() }
+        }
+        Log.i(PICK_TAG, "releasing ${held.size} send descriptor(s)")
+        for (pfd in held) {
+            try {
+                pfd.close()
+            } catch (_: IOException) {
+            }
+        }
     }
 
     // A fresh, never-reused directory under the shared `wisp_picked` cache

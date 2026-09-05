@@ -3,8 +3,10 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
-/// Channels OS-level "share to Wisp" hand-offs into Flutter as lists of cached
-/// file paths (or plain text).
+import 'native_source.dart';
+
+/// Channels OS-level "share to Wisp" hand-offs into Flutter as lists of
+/// ready-to-send sources (or plain text).
 ///
 /// Both mobile platforms feed the same `dev.vigov5.wisp/share_intent` channel
 /// and the same cold-start/warm-start contract:
@@ -21,8 +23,8 @@ class ShareIntent {
     'dev.vigov5.wisp/share_intent',
   );
 
-  static final StreamController<List<String>> _controller =
-      StreamController<List<String>>.broadcast();
+  static final StreamController<List<NativeSource>> _controller =
+      StreamController<List<NativeSource>>.broadcast();
 
   static final StreamController<String> _textController =
       StreamController<String>.broadcast();
@@ -32,10 +34,10 @@ class ShareIntent {
   /// Whether this platform delivers shares through the native channel.
   static bool get isSupported => Platform.isAndroid || Platform.isIOS;
 
-  /// Stream of newly-shared file-path lists arriving while the app is
-  /// already running (warm start).  Cold-start shares are delivered via
+  /// Stream of newly-shared file lists arriving while the app is already
+  /// running (warm start).  Cold-start shares are delivered via
   /// [getInitialSharedFiles] instead.
-  static Stream<List<String>> get onSharedFiles {
+  static Stream<List<NativeSource>> get onSharedFiles {
     _ensureWired();
     return _controller.stream;
   }
@@ -51,13 +53,13 @@ class ShareIntent {
   /// Returns the files attached to the share that launched the app, or an
   /// empty list when launched normally.  The native side hands the cold-start
   /// stash over only once — subsequent calls return an empty list.
-  static Future<List<String>> getInitialSharedFiles() async {
+  static Future<List<NativeSource>> getInitialSharedFiles() async {
     if (!isSupported) return const [];
     _ensureWired();
     final result = await _channel.invokeMethod<List<dynamic>>(
       'getInitialSharedFiles',
     );
-    return result?.cast<String>() ?? const [];
+    return NativeSource.parseAll(result);
   }
 
   /// Returns the plain text attached to the share that launched the app, or
@@ -75,7 +77,10 @@ class ShareIntent {
     if (!isSupported) return;
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'onSharedFiles') {
-        final list = (call.arguments as List?)?.cast<String>() ?? const [];
+        // Android sends one map per file (a descriptor path plus the name it
+        // cannot carry itself); iOS sends bare paths.  [NativeSource.parseAll]
+        // takes either.
+        final list = NativeSource.parseAll(call.arguments as List?);
         if (list.isNotEmpty) {
           _controller.add(list);
         }

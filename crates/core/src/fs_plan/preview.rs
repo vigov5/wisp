@@ -1,7 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::blobs::util::walk_files;
 use crate::fs_plan::error::FsPlanError;
+use crate::fs_plan::input::SendInput;
 
 type Result<T> = std::result::Result<T, FsPlanError>;
 
@@ -14,6 +15,10 @@ pub enum SelectedPathKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectedPathPreview {
     pub path: PathBuf,
+    /// What to label this item in the UI.  Not always derivable from `path`:
+    /// an Android descriptor input is `/proc/self/fd/<n>`, whose final
+    /// component is the fd number.
+    pub name: String,
     pub kind: SelectedPathKind,
     pub file_count: u64,
     pub total_size: u64,
@@ -26,8 +31,8 @@ pub struct SelectionPreview {
     pub total_size: u64,
 }
 
-pub fn inspect_selected_paths(paths: &[PathBuf]) -> Result<SelectionPreview> {
-    if paths.is_empty() {
+pub fn inspect_selected_paths(inputs: &[SendInput]) -> Result<SelectionPreview> {
+    if inputs.is_empty() {
         return Ok(SelectionPreview {
             items: Vec::new(),
             file_count: 0,
@@ -35,12 +40,12 @@ pub fn inspect_selected_paths(paths: &[PathBuf]) -> Result<SelectionPreview> {
         });
     }
 
-    let mut items = Vec::with_capacity(paths.len());
+    let mut items = Vec::with_capacity(inputs.len());
     let mut total_file_count = 0_u64;
     let mut total_size = 0_u64;
 
-    for path in paths {
-        let preview = inspect_selected_path(path)?;
+    for input in inputs {
+        let preview = inspect_selected_path(input)?;
         total_file_count = total_file_count
             .checked_add(preview.file_count)
             .ok_or(FsPlanError::FileCountOverflow)?;
@@ -50,7 +55,7 @@ pub fn inspect_selected_paths(paths: &[PathBuf]) -> Result<SelectionPreview> {
         items.push(preview);
     }
 
-    if !paths.is_empty() && total_file_count == 0 {
+    if !inputs.is_empty() && total_file_count == 0 {
         return Err(FsPlanError::NoRegularFiles);
     }
 
@@ -61,29 +66,39 @@ pub fn inspect_selected_paths(paths: &[PathBuf]) -> Result<SelectionPreview> {
     })
 }
 
-fn inspect_selected_path(path: &Path) -> Result<SelectedPathPreview> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|source| FsPlanError::ReadMetadata {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let file_type = metadata.file_type();
-    let kind = if file_type.is_file() {
+fn inspect_selected_path(input: &SendInput) -> Result<SelectedPathPreview> {
+    let path = input.path();
+    // A descriptor input is always a single regular file behind a
+    // `/proc/self/fd` symlink, so the symlink check below would reject the one
+    // thing it is guaranteed to be.
+    let kind = if input.is_file_descriptor() {
         SelectedPathKind::File
-    } else if file_type.is_dir() {
-        SelectedPathKind::Folder
-    } else if file_type.is_symlink() {
-        return Err(FsPlanError::SymbolicLink {
-            path: path.to_path_buf(),
-        });
     } else {
-        return Err(FsPlanError::UnsupportedFileType {
-            path: path.to_path_buf(),
-        });
+        let metadata =
+            std::fs::symlink_metadata(path).map_err(|source| FsPlanError::ReadMetadata {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        let file_type = metadata.file_type();
+        if file_type.is_file() {
+            SelectedPathKind::File
+        } else if file_type.is_dir() {
+            SelectedPathKind::Folder
+        } else if file_type.is_symlink() {
+            return Err(FsPlanError::SymbolicLink {
+                path: path.to_path_buf(),
+            });
+        } else {
+            return Err(FsPlanError::UnsupportedFileType {
+                path: path.to_path_buf(),
+            });
+        }
     };
+    let name = input.display_name()?;
 
     let mut file_count = 0_u64;
     let mut total_size = 0_u64;
-    for (_, local_path) in walk_files(path.to_path_buf())? {
+    for (_, local_path) in walk_files(input.clone())? {
         let local_metadata =
             std::fs::metadata(&local_path).map_err(|source| FsPlanError::ReadMetadata {
                 path: local_path.clone(),
@@ -99,6 +114,7 @@ fn inspect_selected_path(path: &Path) -> Result<SelectedPathPreview> {
 
     Ok(SelectedPathPreview {
         path: path.to_path_buf(),
+        name,
         kind,
         file_count,
         total_size,
@@ -121,11 +137,16 @@ mod tests {
         write_test_file(&photos.join("trip/cat.jpg"), "cat").await?;
         write_test_file(&photos.join("trip/dog.jpg"), "doggie").await?;
 
-        let preview = inspect_selected_paths(&[notes.clone(), photos.clone()])?;
+        let preview = inspect_selected_paths(&[
+            SendInput::from(notes.clone()),
+            SendInput::from(photos.clone()),
+        ])?;
 
         assert_eq!(preview.file_count, 3);
         assert_eq!(preview.total_size, 14);
         assert_eq!(preview.items.len(), 2);
+        assert_eq!(preview.items[0].name, "notes.txt");
+        assert_eq!(preview.items[1].name, "photos");
         assert_eq!(preview.items[0].kind, SelectedPathKind::File);
         assert_eq!(preview.items[0].file_count, 1);
         assert_eq!(preview.items[0].total_size, 5);
@@ -143,8 +164,40 @@ mod tests {
         let empty_dir = temp.path.join("empty");
         tokio::fs::create_dir_all(&empty_dir).await?;
 
-        let err = inspect_selected_paths(&[empty_dir]).unwrap_err();
+        let err = inspect_selected_paths(&[SendInput::from(empty_dir)]).unwrap_err();
         assert!(err.to_string().contains("no regular files found"));
+
+        Ok(())
+    }
+
+    /// The draft list has to show the picked file's real name, not the fd
+    /// number that `/proc/self/fd/<n>` ends in.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn inspect_names_a_descriptor_input_from_its_carried_name()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let temp = TestDir::new("wisp-inspect-fd").await?;
+        let backing = temp.path.join("backing-store-name.bin");
+        write_test_file(&backing, "holiday").await?;
+        let file = std::fs::File::open(&backing)?;
+        let fd_path = PathBuf::from(format!(
+            "/proc/self/fd/{}",
+            std::os::fd::AsRawFd::as_raw_fd(&file)
+        ));
+        if !fd_path.exists() {
+            // No procfs (macOS): nothing to assert here.
+            return Ok(());
+        }
+
+        let preview = inspect_selected_paths(&[SendInput::FileDescriptor {
+            path: fd_path,
+            name: "holiday.mp4".to_owned(),
+        }])?;
+
+        assert_eq!(preview.file_count, 1);
+        assert_eq!(preview.total_size, 7);
+        assert_eq!(preview.items[0].name, "holiday.mp4");
+        assert_eq!(preview.items[0].kind, SelectedPathKind::File);
 
         Ok(())
     }

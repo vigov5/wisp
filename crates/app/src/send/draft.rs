@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use wisp_core::fs_plan::preview::{
     SelectedPathKind, SelectedPathPreview, SelectionPreview as CoreSelectionPreview,
@@ -7,7 +7,7 @@ use wisp_core::fs_plan::preview::{
 };
 
 use crate::error::{AppError, AppResult};
-use crate::types::{SelectionChange, SelectionItem, SelectionPreview, SendConfig};
+use crate::types::{SelectionChange, SelectionItem, SelectionPreview, SendConfig, SendInput};
 
 use super::destination::SendDestination;
 use super::session::SendSession;
@@ -15,20 +15,20 @@ use super::session::SendSession;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendDraft {
     config: SendConfig,
-    paths: Vec<PathBuf>,
-    /// When set, this is a text-only send: `paths` is empty and the text
+    inputs: Vec<SendInput>,
+    /// When set, this is a text-only send: `inputs` is empty and the text
     /// travels inline (≤ 16 KB) or as a synthetic `.txt` (larger).
     inline_text: Option<String>,
 }
 
 impl SendDraft {
-    pub fn new(config: SendConfig, paths: Vec<PathBuf>) -> Self {
+    pub fn new(config: SendConfig, inputs: Vec<SendInput>) -> Self {
         let mut draft = Self {
             config,
-            paths: Vec::new(),
+            inputs: Vec::new(),
             inline_text: None,
         };
-        draft.replace_paths(paths);
+        draft.replace_inputs(inputs);
         draft
     }
 
@@ -37,7 +37,7 @@ impl SendDraft {
     pub fn new_text(config: SendConfig, text: String) -> Self {
         Self {
             config,
-            paths: Vec::new(),
+            inputs: Vec::new(),
             inline_text: Some(text),
         }
     }
@@ -46,39 +46,39 @@ impl SendDraft {
         &self.config
     }
 
-    pub fn paths(&self) -> &[PathBuf] {
-        &self.paths
+    pub fn inputs(&self) -> &[SendInput] {
+        &self.inputs
     }
 
     pub fn inline_text(&self) -> Option<&str> {
         self.inline_text.as_deref()
     }
 
-    pub fn replace_paths(&mut self, paths: Vec<PathBuf>) {
+    pub fn replace_inputs(&mut self, inputs: Vec<SendInput>) {
         let mut seen = HashSet::new();
-        self.paths = paths
+        self.inputs = inputs
             .into_iter()
-            .filter(|path| seen.insert(selection_path_key(path)))
+            .filter(|input| seen.insert(selection_path_key(input.path())))
             .collect();
     }
 
-    pub fn add_paths(&mut self, paths: Vec<PathBuf>) -> SelectionChange {
-        let before = self.paths.len();
+    pub fn add_inputs(&mut self, inputs: Vec<SendInput>) -> SelectionChange {
+        let before = self.inputs.len();
         let mut seen = self
-            .paths
+            .inputs
             .iter()
-            .map(|path| selection_path_key(path))
+            .map(|input| selection_path_key(input.path()))
             .collect::<HashSet<_>>();
 
-        for path in paths {
-            if seen.insert(selection_path_key(&path)) {
-                self.paths.push(path);
+        for input in inputs {
+            if seen.insert(selection_path_key(input.path())) {
+                self.inputs.push(input);
             }
         }
 
-        let added = self.paths.len().saturating_sub(before) as u64;
+        let added = self.inputs.len().saturating_sub(before) as u64;
         SelectionChange {
-            paths: self.paths.clone(),
+            inputs: self.inputs.clone(),
             added_count: added,
             removed_count: 0,
             changed: added > 0,
@@ -87,23 +87,24 @@ impl SendDraft {
 
     pub fn remove_path(&mut self, path: &Path) -> SelectionChange {
         let key = selection_path_key(path);
-        let before = self.paths.len();
-        self.paths.retain(|item| selection_path_key(item) != key);
-        let removed = before.saturating_sub(self.paths.len()) as u64;
+        let before = self.inputs.len();
+        self.inputs
+            .retain(|input| selection_path_key(input.path()) != key);
+        let removed = before.saturating_sub(self.inputs.len()) as u64;
         SelectionChange {
-            paths: self.paths.clone(),
+            inputs: self.inputs.clone(),
             added_count: 0,
             removed_count: removed,
             changed: removed > 0,
         }
     }
 
-    pub fn clear_paths(&mut self) {
-        self.paths.clear();
+    pub fn clear_inputs(&mut self) {
+        self.inputs.clear();
     }
 
     pub fn is_empty(&self) -> bool {
-        self.paths.is_empty() && self.inline_text.is_none()
+        self.inputs.is_empty() && self.inline_text.is_none()
     }
 
     pub fn inspect(&self) -> AppResult<SelectionPreview> {
@@ -123,7 +124,7 @@ impl SendDraft {
                 total_size,
             });
         }
-        let preview = inspect_selected_paths(&self.paths).map_err(|e| AppError::Internal {
+        let preview = inspect_selected_paths(&self.inputs).map_err(|e| AppError::Internal {
             message: e.to_string(),
         })?;
         Ok(map_preview(preview))
@@ -151,11 +152,7 @@ fn map_preview(preview: CoreSelectionPreview) -> SelectionPreview {
 
 fn map_item(item: SelectedPathPreview) -> SelectionItem {
     SelectionItem {
-        name: item
-            .path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| item.path.display().to_string()),
+        name: item.name,
         path: item.path.display().to_string(),
         is_directory: item.kind == SelectedPathKind::Folder,
         file_count: item.file_count,
@@ -171,8 +168,23 @@ fn selection_path_key(path: &Path) -> String {
 mod tests {
     use super::SendDraft;
     use crate::error::{AppError, UserFacingErrorKind};
-    use crate::types::SendConfig;
+    use crate::types::{SendConfig, SendInput};
     use std::path::{Path, PathBuf};
+
+    fn inputs(paths: &[&str]) -> Vec<SendInput> {
+        paths
+            .iter()
+            .map(|path| SendInput::from(PathBuf::from(path)))
+            .collect()
+    }
+
+    fn input_paths(draft: &SendDraft) -> Vec<PathBuf> {
+        draft
+            .inputs()
+            .iter()
+            .map(|input| input.path().to_path_buf())
+            .collect()
+    }
     use wisp_core::protocol::{CancelPhase, TransferRole};
     use wisp_core::transfer::TransferCancellation;
 
@@ -194,14 +206,10 @@ mod tests {
                 device_name: "Laptop".to_owned(),
                 device_type: "laptop".to_owned(),
             },
-            vec![
-                PathBuf::from("a.txt"),
-                PathBuf::from("b.txt"),
-                PathBuf::from("a.txt"),
-            ],
+            inputs(&["a.txt", "b.txt", "a.txt"]),
         );
         assert_eq!(
-            draft.paths(),
+            input_paths(&draft),
             [PathBuf::from("a.txt"), PathBuf::from("b.txt")]
         );
     }
@@ -213,7 +221,7 @@ mod tests {
                 device_name: "Laptop".to_owned(),
                 device_type: "laptop".to_owned(),
             },
-            vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")],
+            inputs(&["a.txt", "b.txt"]),
         );
 
         let change = draft.remove_path(Path::new("a.txt"));
@@ -221,7 +229,7 @@ mod tests {
         assert!(change.changed);
         assert_eq!(change.added_count, 0);
         assert_eq!(change.removed_count, 1);
-        assert_eq!(draft.paths(), [PathBuf::from("b.txt")]);
+        assert_eq!(input_paths(&draft), [PathBuf::from("b.txt")]);
     }
 
     #[test]
@@ -231,27 +239,16 @@ mod tests {
                 device_name: "Laptop".to_owned(),
                 device_type: "laptop".to_owned(),
             },
-            vec![PathBuf::from("a.txt")],
+            inputs(&["a.txt"]),
         );
 
-        let change = draft.add_paths(vec![
-            PathBuf::from("a.txt"),
-            PathBuf::from("b.txt"),
-            PathBuf::from("c.txt"),
-        ]);
+        let change = draft.add_inputs(inputs(&["a.txt", "b.txt", "c.txt"]));
 
         assert!(change.changed);
         assert_eq!(change.added_count, 2);
         assert_eq!(change.removed_count, 0);
-        assert_eq!(
-            change.paths,
-            vec![
-                PathBuf::from("a.txt"),
-                PathBuf::from("b.txt"),
-                PathBuf::from("c.txt"),
-            ]
-        );
-        assert_eq!(draft.paths(), change.paths);
+        assert_eq!(change.inputs, inputs(&["a.txt", "b.txt", "c.txt"]));
+        assert_eq!(draft.inputs(), change.inputs);
     }
 
     #[test]
@@ -261,13 +258,13 @@ mod tests {
                 device_name: "Laptop".to_owned(),
                 device_type: "laptop".to_owned(),
             },
-            vec![PathBuf::from("a.txt")],
+            inputs(&["a.txt"]),
         );
 
-        draft.clear_paths();
+        draft.clear_inputs();
 
         assert!(draft.is_empty());
-        assert!(draft.paths().is_empty());
+        assert!(draft.inputs().is_empty());
     }
 
     #[test]

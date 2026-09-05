@@ -14,6 +14,7 @@ use crate::{
     blobs::telemetry::{
         PhaseOutcome, TelemetryRole, TransferPhase as TelemetryPhase, benchmark_run_id, emit_phase,
     },
+    fs_plan::SendInput,
     protocol::message::{DeviceType, INLINE_TEXT_MAX_BYTES, MessageKind},
     protocol::wire as protocol_wire,
     protocol::{ALPN, ProtocolError},
@@ -60,7 +61,7 @@ const CONNECT_RETRY_DELAY: Duration = Duration::from_millis(400);
 pub struct SendRequest {
     pub peer_endpoint_addr: EndpointAddr,
     pub peer_endpoint_id: EndpointId,
-    pub files: Vec<std::path::PathBuf>,
+    pub files: Vec<SendInput>,
     /// Optional plain-text payload for a text-only send.  When set, `files`
     /// is ignored: text at or below [`INLINE_TEXT_MAX_BYTES`] rides inline on
     /// the control stream (no blobs); larger text falls back to a synthetic
@@ -309,7 +310,9 @@ impl SenderSession {
                         .map_err(|source| {
                             TransferError::other("writing oversized inline text to scratch", source)
                         })?;
-                    let prepared = PreparedStore::prepare(&scratch.path, vec![text_path]).await?;
+                    let prepared =
+                        PreparedStore::prepare(&scratch.path, vec![SendInput::from(text_path)])
+                            .await?;
                     let prepared_plan = build_prepared_plan(&self.session_id, &prepared)?;
                     let manifest = prepared.manifest();
                     let collection_hash = prepared.collection_hash();

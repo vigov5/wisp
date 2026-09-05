@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::error::UserFacingError;
 
 use iroh::SecretKey;
-pub use wisp_core::fs_plan::ConflictPolicy;
+pub use wisp_core::fs_plan::{ConflictPolicy, SendInput};
 pub use wisp_core::transfer::{TransferPlan, TransferSnapshot};
 pub use wisp_core::util::{CandidatePath, ConnectionPath, ConnectionPathKind};
 
@@ -164,7 +164,7 @@ pub struct SelectionPreview {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectionChange {
-    pub paths: Vec<PathBuf>,
+    pub inputs: Vec<SendInput>,
     pub added_count: u64,
     pub removed_count: u64,
     pub changed: bool,

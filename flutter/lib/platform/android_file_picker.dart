@@ -4,17 +4,23 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// Files copied from Android's Storage Access Framework into the app cache.
-/// [copyElapsed] covers native metadata reads and streaming only; time spent by
-/// the user in the system picker is deliberately excluded.
+import 'native_source.dart';
+
+/// Files selected through Android's Storage Access Framework.
+///
+/// Most of them are never copied anywhere: the native side opens the SAF URI
+/// and hands over the descriptor path, so [bytesCopied] counts only the
+/// sources that had to fall back to a cache copy.  [copyElapsed] covers native
+/// metadata reads and that copying; time spent by the user in the system
+/// picker is deliberately excluded.
 class AndroidFilePickResult {
   const AndroidFilePickResult({
-    required this.paths,
+    required this.sources,
     required this.bytesCopied,
     required this.copyElapsed,
   });
 
-  final List<String> paths;
+  final List<NativeSource> sources;
   final BigInt bytesCopied;
   final Duration copyElapsed;
 }
@@ -119,8 +125,9 @@ class AndroidFilePicker {
     });
   }
 
-  /// Opens the system file picker and returns a list of absolute paths to
-  /// copies of the selected files stored in the app cache directory.
+  /// Opens the system file picker and returns one [NativeSource] per selected
+  /// file, each already openable by the core — normally as a live descriptor
+  /// path, and only as a cache copy where the platform left no alternative.
   static Future<AndroidFilePickResult> pickFiles() async {
     _ensureWired();
     pickProgress.value = null;
@@ -128,12 +135,9 @@ class AndroidFilePicker {
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'pickFiles',
       );
-      final rawPaths = result?['paths'];
-      final paths = rawPaths is List
-          ? rawPaths.whereType<String>().toList(growable: false)
-          : const <String>[];
+      final raw = result?['sources'];
       return AndroidFilePickResult(
-        paths: paths,
+        sources: NativeSource.parseAll(raw is List ? raw : null),
         bytesCopied: BigInt.from(_nonNegativeInt(result?['bytesCopied'])),
         copyElapsed: Duration(
           microseconds: _nonNegativeInt(result?['copyElapsedMicros']),
@@ -186,11 +190,19 @@ class AndroidFilePicker {
   /// Returns the cached size for [path] previously set by [pickFolder].
   static BigInt? cachedSizeOf(String path) => _folderSizeCache[path];
 
-  /// Deletes all files copied into the app cache by [pickFiles] and
-  /// [pickFolder]. Call this when the draft is cleared so picked copies do
-  /// not accumulate indefinitely. Safe to call multiple times.
+  /// Releases everything a pick is holding: the descriptors kept open for
+  /// copy-free sends, and the files that did get copied into the app cache by
+  /// [pickFiles] / [pickFolder]. Call this when the draft is cleared. Safe to
+  /// call multiple times.
   static Future<void> clearPickedCache() async {
     _folderSizeCache.clear();
+    if (Platform.isAndroid) {
+      try {
+        await _channel.invokeMethod<void>('releaseSendSources');
+      } catch (_) {
+        // Best-effort — the descriptors go with the process anyway.
+      }
+    }
     try {
       final tmp = await getTemporaryDirectory();
       final dir = Directory('${tmp.path}/wisp_picked');

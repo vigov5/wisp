@@ -1,5 +1,9 @@
 import 'package:flutter/foundation.dart';
 
+import '../../../platform/native_source.dart';
+
+export '../../../platform/native_source.dart' show SendSource;
+
 enum SendDestinationMode { none, code, nearby }
 
 enum SendTransferOutcome { success, cancelled, declined, failed }
@@ -24,7 +28,7 @@ class SendSourcePreparation {
 class SendRequestData {
   const SendRequestData({
     required this.destinationMode,
-    required this.paths,
+    required this.sources,
     required this.deviceName,
     required this.deviceType,
     this.code,
@@ -60,7 +64,7 @@ class SendRequestData {
        );
 
   final SendDestinationMode destinationMode;
-  final List<String> paths;
+  final List<SendSource> sources;
   final String deviceName;
   final String deviceType;
   final String? code;
@@ -68,8 +72,8 @@ class SendRequestData {
   final String? lanDestinationLabel;
   final String? serverUrl;
 
-  /// Text-only send: when set, `paths` is empty and the text is shared inline
-  /// (≤ 16 KB) or as a synthetic `.txt` for larger payloads.
+  /// Text-only send: when set, `sources` is empty and the text is shared
+  /// inline (≤ 16 KB) or as a synthetic `.txt` for larger payloads.
   final String? inlineText;
 }
 
@@ -103,6 +107,7 @@ class SendDraftItem {
     required this.kind,
     required this.sizeBytes,
     this.sourcePreparation,
+    this.fdDisplayName,
   });
 
   factory SendDraftItem.fromPickedFile(SendPickedFile file) {
@@ -112,11 +117,19 @@ class SendDraftItem {
       kind: file.kind,
       sizeBytes: file.sizeBytes ?? BigInt.zero,
       sourcePreparation: file.sourcePreparation,
+      fdDisplayName: file.fdDisplayName,
     );
   }
 
+  /// This item as the core wants it.
+  SendSource get source =>
+      SendSource(path: path, fdDisplayName: fdDisplayName);
+
   final String path;
   final String name;
+
+  /// See [SendSource.fdDisplayName].
+  final String? fdDisplayName;
   final SendPickedFileKind kind;
   final BigInt sizeBytes;
   final SendSourcePreparation? sourcePreparation;
@@ -130,6 +143,7 @@ class SendPickedFile {
     this.kind = SendPickedFileKind.file,
     this.sizeBytes,
     this.sourcePreparation,
+    this.fdDisplayName,
   });
 
   factory SendPickedFile.fromPath(String path) {
@@ -153,4 +167,8 @@ class SendPickedFile {
   final SendPickedFileKind kind;
   final BigInt? sizeBytes;
   final SendSourcePreparation? sourcePreparation;
+
+  /// Set when [path] is a `/proc/self/fd/<n>` descriptor path — see
+  /// [SendSource.fdDisplayName].  Null for an ordinary file.
+  final String? fdDisplayName;
 }

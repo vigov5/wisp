@@ -1277,6 +1277,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<SendSourceData> dco_decode_list_send_source_data(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_send_source_data).toList();
+  }
+
+  @protected
   List<TransferPlanFileData> dco_decode_list_transfer_plan_file_data(
     dynamic raw,
   ) {
@@ -1554,6 +1560,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SendSourceData dco_decode_send_source_data(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return SendSourceData(
+      path: dco_decode_String(arr[0]),
+      fdDisplayName: dco_decode_opt_String(arr[1]),
+    );
+  }
+
+  @protected
   SendTransferEvent dco_decode_send_transfer_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -1592,7 +1610,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
     return SendTransferRequest(
       code: dco_decode_String(arr[0]),
-      paths: dco_decode_list_String(arr[1]),
+      sources: dco_decode_list_send_source_data(arr[1]),
       serverUrl: dco_decode_opt_String(arr[2]),
       deviceName: dco_decode_String(arr[3]),
       deviceType: dco_decode_String(arr[4]),
@@ -2029,6 +2047,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<SendSourceData> sse_decode_list_send_source_data(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <SendSourceData>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_send_source_data(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<TransferPlanFileData> sse_decode_list_transfer_plan_file_data(
     SseDeserializer deserializer,
   ) {
@@ -2397,6 +2429,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SendSourceData sse_decode_send_source_data(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_path = sse_decode_String(deserializer);
+    var var_fdDisplayName = sse_decode_opt_String(deserializer);
+    return SendSourceData(path: var_path, fdDisplayName: var_fdDisplayName);
+  }
+
+  @protected
   SendTransferEvent sse_decode_send_transfer_event(
     SseDeserializer deserializer,
   ) {
@@ -2458,7 +2498,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_code = sse_decode_String(deserializer);
-    var var_paths = sse_decode_list_String(deserializer);
+    var var_sources = sse_decode_list_send_source_data(deserializer);
     var var_serverUrl = sse_decode_opt_String(deserializer);
     var var_deviceName = sse_decode_String(deserializer);
     var var_deviceType = sse_decode_String(deserializer);
@@ -2467,7 +2507,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_inlineText = sse_decode_opt_String(deserializer);
     return SendTransferRequest(
       code: var_code,
-      paths: var_paths,
+      sources: var_sources,
       serverUrl: var_serverUrl,
       deviceName: var_deviceName,
       deviceType: var_deviceType,
@@ -2945,6 +2985,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_send_source_data(
+    List<SendSourceData> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_send_source_data(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_transfer_plan_file_data(
     List<TransferPlanFileData> self,
     SseSerializer serializer,
@@ -3254,6 +3306,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_send_source_data(
+    SendSourceData self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.path, serializer);
+    sse_encode_opt_String(self.fdDisplayName, serializer);
+  }
+
+  @protected
   void sse_encode_send_transfer_event(
     SendTransferEvent self,
     SseSerializer serializer,
@@ -3301,7 +3363,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.code, serializer);
-    sse_encode_list_String(self.paths, serializer);
+    sse_encode_list_send_source_data(self.sources, serializer);
     sse_encode_opt_String(self.serverUrl, serializer);
     sse_encode_String(self.deviceName, serializer);
     sse_encode_String(self.deviceType, serializer);

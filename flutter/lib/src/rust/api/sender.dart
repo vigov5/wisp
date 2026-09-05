@@ -8,8 +8,8 @@ import 'error.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'transfer.dart';
 
-// These functions are ignored because they are not marked as `pub`: `cancel_send_session`, `fallback_destination_label`, `format_code_label`, `map_connection_candidate`, `map_connection_path`, `map_event`, `map_phase`, `map_plan_file`, `map_plan`, `map_snapshot`, `terminal_event_for_app_error`, `terminal_internal_failure_event`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `cancel_send_session`, `fallback_destination_label`, `format_code_label`, `map_connection_candidate`, `map_connection_path`, `map_event`, `map_phase`, `map_snapshot`, `map_source`, `terminal_event_for_app_error`, `terminal_internal_failure_event`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 Stream<SendTransferEvent> startSendTransfer({
   required SendTransferRequest request,
@@ -67,6 +67,33 @@ class SendConnectionPath {
           kind == other.kind &&
           relayUrl == other.relayUrl &&
           directAddr == other.directAddr;
+}
+
+/// One picked source, as Dart hands it to the core.
+class SendSourceData {
+  /// The path the core opens.  On Android a SAF pick travels here as
+  /// `/proc/self/fd/<n>` so the file never has to be copied into the app
+  /// cache first; the descriptor is held open natively for the whole
+  /// transfer, because the blob store reopens this path lazily as it serves.
+  final String path;
+
+  /// The name the receiver should see for a descriptor source.  Required
+  /// there, since `/proc/self/fd/<n>` ends in the fd number rather than a
+  /// file name.  `None` marks an ordinary path, which names itself.
+  final String? fdDisplayName;
+
+  const SendSourceData({required this.path, this.fdDisplayName});
+
+  @override
+  int get hashCode => path.hashCode ^ fdDisplayName.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SendSourceData &&
+          runtimeType == other.runtimeType &&
+          path == other.path &&
+          fdDisplayName == other.fdDisplayName;
 }
 
 class SendTransferEvent {
@@ -169,20 +196,20 @@ enum SendTransferPhase {
 
 class SendTransferRequest {
   final String code;
-  final List<String> paths;
+  final List<SendSourceData> sources;
   final String? serverUrl;
   final String deviceName;
   final String deviceType;
   final String? ticket;
   final String? lanDestinationLabel;
 
-  /// Text-only send.  When set, `paths` is ignored and the text is shared
+  /// Text-only send.  When set, `sources` is ignored and the text is shared
   /// inline (≤ 16 KB) or as a synthetic `.txt` for larger payloads.
   final String? inlineText;
 
   const SendTransferRequest({
     required this.code,
-    required this.paths,
+    required this.sources,
     this.serverUrl,
     required this.deviceName,
     required this.deviceType,
@@ -194,7 +221,7 @@ class SendTransferRequest {
   @override
   int get hashCode =>
       code.hashCode ^
-      paths.hashCode ^
+      sources.hashCode ^
       serverUrl.hashCode ^
       deviceName.hashCode ^
       deviceType.hashCode ^
@@ -208,7 +235,7 @@ class SendTransferRequest {
       other is SendTransferRequest &&
           runtimeType == other.runtimeType &&
           code == other.code &&
-          paths == other.paths &&
+          sources == other.sources &&
           serverUrl == other.serverUrl &&
           deviceName == other.deviceName &&
           deviceType == other.deviceType &&

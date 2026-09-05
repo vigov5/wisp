@@ -38,7 +38,7 @@ void main() {
         destination: const SendDestinationState.code('ABC123'),
         request: const SendRequestData(
           destinationMode: SendDestinationMode.code,
-          paths: ['/tmp/report.pdf'],
+          sources: [SendSource(path: '/tmp/report.pdf')],
           deviceName: 'MacBook Pro',
           deviceType: 'laptop',
           code: 'ABC123',
@@ -72,7 +72,7 @@ void main() {
         ),
         request: const SendRequestData(
           destinationMode: SendDestinationMode.nearby,
-          paths: ['/tmp/report.pdf'],
+          sources: [SendSource(path: '/tmp/report.pdf')],
           deviceName: 'MacBook Pro',
           deviceType: 'laptop',
           ticket: 'ticket-1',

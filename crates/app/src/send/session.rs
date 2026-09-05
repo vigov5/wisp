@@ -250,7 +250,7 @@ impl SendSession {
             SendRequest {
                 peer_endpoint_addr: resolved.peer_endpoint_addr.clone(),
                 peer_endpoint_id: resolved.peer_endpoint_id,
-                files: self.draft.paths().to_vec(),
+                files: self.draft.inputs().to_vec(),
                 inline_text: self.draft.inline_text().map(str::to_owned),
             },
         )

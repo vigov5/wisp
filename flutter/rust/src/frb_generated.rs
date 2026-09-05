@@ -1253,6 +1253,20 @@ impl SseDecode for Vec<crate::api::sender::SendConnectionCandidate> {
     }
 }
 
+impl SseDecode for Vec<crate::api::sender::SendSourceData> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::sender::SendSourceData>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::transfer::TransferPlanFileData> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1629,6 +1643,18 @@ impl SseDecode for crate::api::sender::SendConnectionPath {
     }
 }
 
+impl SseDecode for crate::api::sender::SendSourceData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_path = <String>::sse_decode(deserializer);
+        let mut var_fdDisplayName = <Option<String>>::sse_decode(deserializer);
+        return crate::api::sender::SendSourceData {
+            path: var_path,
+            fd_display_name: var_fdDisplayName,
+        };
+    }
+}
+
 impl SseDecode for crate::api::sender::SendTransferEvent {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1694,7 +1720,7 @@ impl SseDecode for crate::api::sender::SendTransferRequest {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_code = <String>::sse_decode(deserializer);
-        let mut var_paths = <Vec<String>>::sse_decode(deserializer);
+        let mut var_sources = <Vec<crate::api::sender::SendSourceData>>::sse_decode(deserializer);
         let mut var_serverUrl = <Option<String>>::sse_decode(deserializer);
         let mut var_deviceName = <String>::sse_decode(deserializer);
         let mut var_deviceType = <String>::sse_decode(deserializer);
@@ -1703,7 +1729,7 @@ impl SseDecode for crate::api::sender::SendTransferRequest {
         let mut var_inlineText = <Option<String>>::sse_decode(deserializer);
         return crate::api::sender::SendTransferRequest {
             code: var_code,
-            paths: var_paths,
+            sources: var_sources,
             server_url: var_serverUrl,
             device_name: var_deviceName,
             device_type: var_deviceType,
@@ -2422,6 +2448,27 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::sender::SendConnectionPath>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::sender::SendSourceData {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.path.into_into_dart().into_dart(),
+            self.fd_display_name.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::sender::SendSourceData
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::sender::SendSourceData>
+    for crate::api::sender::SendSourceData
+{
+    fn into_into_dart(self) -> crate::api::sender::SendSourceData {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::sender::SendTransferEvent {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -2487,7 +2534,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::sender::SendTransferRequest {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.code.into_into_dart().into_dart(),
-            self.paths.into_into_dart().into_dart(),
+            self.sources.into_into_dart().into_dart(),
             self.server_url.into_into_dart().into_dart(),
             self.device_name.into_into_dart().into_dart(),
             self.device_type.into_into_dart().into_dart(),
@@ -2913,6 +2960,16 @@ impl SseEncode for Vec<crate::api::sender::SendConnectionCandidate> {
     }
 }
 
+impl SseEncode for Vec<crate::api::sender::SendSourceData> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::sender::SendSourceData>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::transfer::TransferPlanFileData> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3186,6 +3243,14 @@ impl SseEncode for crate::api::sender::SendConnectionPath {
     }
 }
 
+impl SseEncode for crate::api::sender::SendSourceData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.path, serializer);
+        <Option<String>>::sse_encode(self.fd_display_name, serializer);
+    }
+}
+
 impl SseEncode for crate::api::sender::SendTransferEvent {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3239,7 +3304,7 @@ impl SseEncode for crate::api::sender::SendTransferRequest {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.code, serializer);
-        <Vec<String>>::sse_encode(self.paths, serializer);
+        <Vec<crate::api::sender::SendSourceData>>::sse_encode(self.sources, serializer);
         <Option<String>>::sse_encode(self.server_url, serializer);
         <String>::sse_encode(self.device_name, serializer);
         <String>::sse_encode(self.device_type, serializer);

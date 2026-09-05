@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../platform/android_file_picker.dart';
+import '../../../platform/native_source.dart';
 import 'model.dart';
 
 abstract class SendSelectionPicker {
@@ -34,22 +35,13 @@ class FileSelectorSendSelectionPicker implements SendSelectionPicker {
         elapsed: result.copyElapsed,
         bytesCopied: result.bytesCopied,
       );
-      return result.paths
-          .map((path) {
-            BigInt? sizeBytes;
-            try {
-              sizeBytes = BigInt.from(File(path).lengthSync());
-            } catch (_) {
-              sizeBytes = null;
-            }
-            return SendPickedFile(
-              path: path,
-              name: SendPickedFile.fromPath(path).name,
-              kind: SendPickedFileKind.file,
-              sizeBytes: sizeBytes,
+      return result.sources
+          .map(
+            (source) => sendPickedFileFromNativeSource(
+              source,
               sourcePreparation: sourcePreparation,
-            );
-          })
+            ),
+          )
           .toList(growable: false);
     }
 
@@ -138,4 +130,33 @@ class FileSelectorSendSelectionPicker implements SendSelectionPicker {
       }),
     );
   }
+}
+
+/// Adapts a platform-provided source into a draft entry.
+///
+/// A descriptor-backed source keeps its native name in [SendPickedFile.
+/// fdDisplayName] as well, because its path (`/proc/self/fd/<n>`) is the one
+/// thing that cannot tell the receiver what the file is called.
+SendPickedFile sendPickedFileFromNativeSource(
+  NativeSource source, {
+  SendSourcePreparation? sourcePreparation,
+}) {
+  // A descriptor path stats through to the file it holds open, so it can be
+  // measured here too when the provider reported no size.
+  BigInt? sizeBytes = source.sizeBytes;
+  if (sizeBytes == null || sizeBytes == BigInt.zero) {
+    try {
+      sizeBytes = BigInt.from(File(source.path).lengthSync());
+    } catch (_) {
+      sizeBytes = source.sizeBytes;
+    }
+  }
+  return SendPickedFile(
+    path: source.path,
+    name: source.name,
+    kind: SendPickedFileKind.file,
+    sizeBytes: sizeBytes,
+    sourcePreparation: sourcePreparation,
+    fdDisplayName: source.fromDescriptor ? source.name : null,
+  );
 }

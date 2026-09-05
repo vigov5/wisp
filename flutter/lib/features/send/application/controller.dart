@@ -217,9 +217,9 @@ class SendController extends _$SendController {
     }
 
     final settings = ref.read(settingsControllerProvider).settings;
-    final paths =
-        items?.map((item) => item.path).toList(growable: false) ??
-        const <String>[];
+    final sources =
+        items?.map((item) => item.source).toList(growable: false) ??
+        const <SendSource>[];
 
     switch (destination.mode) {
       case SendDestinationMode.none:
@@ -231,7 +231,7 @@ class SendController extends _$SendController {
         }
         return SendRequestData(
           destinationMode: SendDestinationMode.code,
-          paths: paths,
+          sources: sources,
           deviceName: settings.deviceName,
           deviceType: _localDeviceTypeLabel(),
           code: code,
@@ -241,7 +241,7 @@ class SendController extends _$SendController {
       case SendDestinationMode.nearby:
         return SendRequestData(
           destinationMode: SendDestinationMode.nearby,
-          paths: paths,
+          sources: sources,
           deviceName: settings.deviceName,
           deviceType: _localDeviceTypeLabel(),
           ticket: destination.ticket,
@@ -289,7 +289,7 @@ class SendController extends _$SendController {
         .startTransfer(
           SendTransferRequestData(
             code: validatedRequest.code ?? '',
-            paths: validatedRequest.paths,
+            sources: validatedRequest.sources,
             deviceName: validatedRequest.deviceName,
             deviceType: validatedRequest.deviceType,
             serverUrl: validatedRequest.serverUrl,
@@ -668,7 +668,7 @@ class SendController extends _$SendController {
 
   bool _sameSendRequest(SendRequestData left, SendRequestData right) {
     return left.destinationMode == right.destinationMode &&
-        listEquals(left.paths, right.paths) &&
+        listEquals(left.sources, right.sources) &&
         left.deviceName == right.deviceName &&
         left.deviceType == right.deviceType &&
         left.code == right.code &&
