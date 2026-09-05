@@ -40,10 +40,13 @@ pub struct SendSourceData {
     /// cache first; the descriptor is held open natively for the whole
     /// transfer, because the blob store reopens this path lazily as it serves.
     pub path: String,
-    /// The name the receiver should see for a descriptor source.  Required
-    /// there, since `/proc/self/fd/<n>` ends in the fd number rather than a
-    /// file name.  `None` marks an ordinary path, which names itself.
-    pub fd_display_name: Option<String>,
+    /// Where a descriptor source lands on the receiver.  Required there, since
+    /// `/proc/self/fd/<n>` ends in the fd number rather than a file name.  A
+    /// bare file name for a picked file; a relative path
+    /// (`photos/trip/cat.jpg`) for one file of a picked folder, which is sent
+    /// as one descriptor per file.  `None` marks an ordinary path, which names
+    /// itself.
+    pub fd_transfer_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,8 +65,11 @@ pub struct SendTransferRequest {
 
 fn map_source(source: SendSourceData) -> SendInput {
     let path = PathBuf::from(source.path);
-    match source.fd_display_name {
-        Some(name) => SendInput::FileDescriptor { path, name },
+    match source.fd_transfer_path {
+        Some(transfer_path) => SendInput::FileDescriptor {
+            path,
+            transfer_path,
+        },
         None => SendInput::Path(path),
     }
 }

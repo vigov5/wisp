@@ -250,7 +250,7 @@ class LocalSendTransferSource implements SendTransferSource {
             .map(
               (source) => rust_sender.SendSourceData(
                 path: source.path,
-                fdDisplayName: source.fdDisplayName,
+                fdTransferPath: source.fdTransferPath,
               ),
             )
             .toList(growable: false),

@@ -78,13 +78,18 @@ class FileSelectorSendSelectionPicker implements SendSelectionPicker {
       if (result == null) return const [];
       return [
         SendPickedFile(
-          path: result.path,
-          name: SendPickedFile.directory(result.path).name,
+          // A tree URI, not a path — the folder resolves to one source per
+          // file, so there is nothing single for the core to open.
+          path: result.identity,
+          name: result.name,
           kind: SendPickedFileKind.directory,
           sizeBytes: result.sizeBytes,
           sourcePreparation: SendSourcePreparation(
             elapsed: result.copyElapsed,
-            bytesCopied: result.sizeBytes,
+            bytesCopied: result.bytesCopied,
+          ),
+          sources: result.sources.map(SendSource.fromNative).toList(
+            growable: false,
           ),
         ),
       ];
@@ -134,9 +139,9 @@ class FileSelectorSendSelectionPicker implements SendSelectionPicker {
 
 /// Adapts a platform-provided source into a draft entry.
 ///
-/// A descriptor-backed source keeps its native name in [SendPickedFile.
-/// fdDisplayName] as well, because its path (`/proc/self/fd/<n>`) is the one
-/// thing that cannot tell the receiver what the file is called.
+/// A descriptor-backed source also carries itself in [SendPickedFile.sources],
+/// because its path (`/proc/self/fd/<n>`) is the one thing that cannot tell
+/// the receiver where the file belongs.
 SendPickedFile sendPickedFileFromNativeSource(
   NativeSource source, {
   SendSourcePreparation? sourcePreparation,
@@ -157,6 +162,8 @@ SendPickedFile sendPickedFileFromNativeSource(
     kind: SendPickedFileKind.file,
     sizeBytes: sizeBytes,
     sourcePreparation: sourcePreparation,
-    fdDisplayName: source.fromDescriptor ? source.name : null,
+    sources: source.fromDescriptor
+        ? [SendSource.fromNative(source)]
+        : null,
   );
 }

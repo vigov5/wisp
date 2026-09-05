@@ -18,9 +18,24 @@ void main() {
     expect(picked.path, '/proc/self/fd/42');
     expect(picked.name, 'holiday.mp4');
     // The path cannot name the file, so this is what the core is told.
-    expect(picked.fdDisplayName, 'holiday.mp4');
+    expect(picked.resolvedSources, [
+      const SendSource(path: '/proc/self/fd/42', fdTransferPath: 'holiday.mp4'),
+    ]);
     expect(picked.sizeBytes, BigInt.from(6000000000));
     expect(picked.kind, SendPickedFileKind.file);
+  });
+
+  test('a folder child keeps its path within the folder', () {
+    final picked = sendPickedFileFromNativeSource(
+      const NativeSource(
+        path: '/proc/self/fd/43',
+        name: 'photos/trip/cat.jpg',
+        sizeBytes: null,
+        fromDescriptor: true,
+      ),
+    );
+
+    expect(picked.resolvedSources.single.fdTransferPath, 'photos/trip/cat.jpg');
   });
 
   test('an ordinary path source carries no fd display name', () {
@@ -30,7 +45,11 @@ void main() {
 
     expect(picked.path, '/cache/report.pdf');
     expect(picked.name, 'report.pdf');
-    expect(picked.fdDisplayName, isNull);
+    // Nothing carried: the path names itself.
+    expect(picked.sources, isNull);
+    expect(picked.resolvedSources, [
+      const SendSource(path: '/cache/report.pdf'),
+    ]);
   });
 
   test('draft items hand the core exactly what the picker resolved', () {
@@ -44,9 +63,8 @@ void main() {
       ),
     );
 
-    expect(
-      item.source,
-      const SendSource(path: '/proc/self/fd/7', fdDisplayName: 'clip.mov'),
-    );
+    expect(item.resolvedSources, [
+      const SendSource(path: '/proc/self/fd/7', fdTransferPath: 'clip.mov'),
+    ]);
   });
 }

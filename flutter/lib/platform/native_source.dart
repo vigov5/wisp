@@ -55,8 +55,9 @@ class NativeSource {
   final BigInt? sizeBytes;
 
   /// True when [path] is a descriptor path rather than a durable file: the
-  /// bytes were never copied anywhere, and [name] is the only place the real
-  /// file name exists.
+  /// bytes were never copied anywhere, and [name] — the file's path within the
+  /// picked folder, or its bare name for a picked file — is the only place
+  /// that survives.
   final bool fromDescriptor;
 
   static String _basename(String path) {
@@ -69,13 +70,13 @@ class NativeSource {
 /// One source handed to the core for a send.
 @immutable
 class SendSource {
-  const SendSource({required this.path, this.fdDisplayName});
+  const SendSource({required this.path, this.fdTransferPath});
 
   /// Built from a platform-provided [NativeSource].
   factory SendSource.fromNative(NativeSource source) {
     return SendSource(
       path: source.path,
-      fdDisplayName: source.fromDescriptor ? source.name : null,
+      fdTransferPath: source.fromDescriptor ? source.name : null,
     );
   }
 
@@ -85,16 +86,19 @@ class SendSource {
   /// send needs no free space at all.
   final String path;
 
-  /// The name the receiver should see, for a descriptor [path] — which ends in
-  /// the fd number and so cannot name itself.  Null for an ordinary file.
-  final String? fdDisplayName;
+  /// Where this lands on the receiver, for a descriptor [path] — which ends in
+  /// the fd number and so cannot name itself.  A bare file name for a picked
+  /// file; a relative path (`photos/trip/cat.jpg`) for one file of a picked
+  /// folder, which travels as one descriptor per file.  Null for an ordinary
+  /// file, which names itself.
+  final String? fdTransferPath;
 
   @override
   bool operator ==(Object other) =>
       other is SendSource &&
       other.path == path &&
-      other.fdDisplayName == fdDisplayName;
+      other.fdTransferPath == fdTransferPath;
 
   @override
-  int get hashCode => Object.hash(path, fdDisplayName);
+  int get hashCode => Object.hash(path, fdTransferPath);
 }

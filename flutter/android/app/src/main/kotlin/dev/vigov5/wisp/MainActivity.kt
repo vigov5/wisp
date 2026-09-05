@@ -68,6 +68,11 @@ class MainActivity : FlutterFragmentActivity() {
         // into the cache the way every pick used to.
         private const val MAX_OPEN_SEND_FDS = 256
 
+        // Depth limit for a transfer path built from a picked folder, matching
+        // the core's own cap.  Guards against a provider reporting a cyclic or
+        // absurdly deep tree.
+        private const val MAX_TREE_DEPTH = 32
+
         // Minimum bytes copied between two "onPickProgress" events.  Throttles
         // the platform-channel chatter during a multi-GB copy to ~1 event per
         // 8 MB (≈375 events for a 3 GB file) while still animating smoothly.
@@ -641,30 +646,30 @@ class MainActivity : FlutterFragmentActivity() {
                 Intent.FLAG_GRANT_READ_URI_PERMISSION,
             )
             val rootDoc = FastDocumentFile.fromTreeUri(this, treeUri)
-            // Copy the entire folder tree into the app cache so that Rust can
-            // read it via ordinary filesystem APIs. External storage paths are
-            // blocked by Android scoped storage for native (non-SAF) callers.
-            val destDir = File(newPickedDir(), rootDoc.name.ifBlank { "folder" })
-            // Off the main thread, same as the file pick above.  Folder size is
-            // discovered while copying, so progress is indeterminate (totalBytes
-            // = 0) — the bar spins but still shows bytes copied so far.
+            // Off the main thread, same as the file pick above.  Only the files
+            // that could not be sent from a descriptor are copied, and how many
+            // that is isn't known until the tree has been walked, so progress
+            // stays indeterminate (totalBytes = 0).
             lifecycleScope.launch {
                 val res = withContext(Dispatchers.IO) {
-                    val copyStartedNanos = SystemClock.elapsedRealtimeNanos()
-                    var copied = 0L
+                    val startedNanos = SystemClock.elapsedRealtimeNanos()
                     var lastEmit = 0L
-                    val sizeBytes = copyDocumentTreeToCache(rootDoc, destDir) { delta ->
-                        copied += delta
+                    val tree = resolveTreeSources(rootDoc) { copied ->
                         if (copied - lastEmit >= PROGRESS_EMIT_BYTES) {
                             lastEmit = copied
                             emitPickProgress(copied, 0L, 0, 1)
                         }
                     }
                     mapOf(
-                        "path" to destDir.absolutePath,
-                        "sizeBytes" to sizeBytes,
+                        // A tree has no filesystem path, so the URI is what the
+                        // draft keys this item by.
+                        "identity" to treeUri.toString(),
+                        "name" to tree.name,
+                        "sources" to tree.sources,
+                        "sizeBytes" to tree.totalBytes,
+                        "bytesCopied" to tree.copiedBytes,
                         "copyElapsedMicros" to
-                            (SystemClock.elapsedRealtimeNanos() - copyStartedNanos) / 1_000L,
+                            (SystemClock.elapsedRealtimeNanos() - startedNanos) / 1_000L,
                     )
                 }
                 result.success(res)
@@ -754,6 +759,135 @@ class MainActivity : FlutterFragmentActivity() {
                 "$fdCount without a copy",
         )
         return resolved.filterNotNull()
+    }
+
+    // Resolves a picked SAF tree into sources.  A tree offers no single handle
+    // to open, so a folder travels as one descriptor per file, each carrying
+    // its path within the folder for the receiver to rebuild the tree from.
+    //
+    // Whatever does not fit the descriptor budget (or cannot be opened) is
+    // copied into one cache directory that mirrors the folder, and that
+    // directory is handed over as a single ordinary source — the core walks it
+    // and derives the same relative paths.  So the two kinds mix within one
+    // folder without either needing to know about the other.
+    private fun resolveTreeSources(
+        root: FastDocumentFile,
+        onCopyProgress: (copiedTotal: Long) -> Unit = {},
+    ): TreeSources {
+        val rootName = sanitizeFileName(root.name.ifBlank { "folder" })
+        val files = mutableListOf<TreeFile>()
+        collectTreeFiles(root, rootName, 1, files)
+
+        val sources = mutableListOf<Map<String, Any?>>()
+        val claimed = BooleanArray(files.size)
+        for (index in files.indices.sortedByDescending { files[it].doc.size }) {
+            val file = files[index]
+            val fdPath = openForSend(file.doc.uri) ?: continue
+            claimed[index] = true
+            sources.add(
+                mapOf(
+                    "path" to fdPath,
+                    "name" to file.transferPath,
+                    "size" to (file.doc.size.takeIf { it > 0L } ?: File(fdPath).length()),
+                    "copied" to false,
+                ),
+            )
+        }
+        val leftovers = files.filterIndexed { index, _ -> !claimed[index] }
+
+        var copiedBytes = 0L
+        if (leftovers.isNotEmpty()) {
+            // The mirror is rooted at the folder name so the core's walk
+            // derives exactly the transfer paths the descriptors carry.
+            val mirrorRoot = File(newPickedDir(), rootName)
+            for (file in leftovers) {
+                // Drop the folder name — it is already `mirrorRoot`.
+                val relative = file.transferPath.substringAfter('/', "")
+                if (relative.isEmpty()) continue
+                val dest = File(mirrorRoot, relative)
+                dest.parentFile?.mkdirs()
+                val before = copiedBytes
+                copiedBytes += copyUriToFile(file.doc.uri, dest) { written ->
+                    onCopyProgress(before + written)
+                }
+            }
+            sources.add(
+                mapOf(
+                    "path" to mirrorRoot.absolutePath,
+                    "name" to rootName,
+                    "size" to copiedBytes,
+                    "copied" to true,
+                ),
+            )
+        }
+
+        Log.i(
+            PICK_TAG,
+            "folder $rootName: ${files.size} file(s), " +
+                "${files.size - leftovers.size} without a copy",
+        )
+        return TreeSources(
+            name = rootName,
+            sources = sources,
+            // Summed from the resolved sources, not from the tree listing:
+            // providers do not always fill in COLUMN_SIZE, and a descriptor
+            // source has already had its size measured through the fd.
+            totalBytes = sources.sumOf { it["size"] as Long },
+            copiedBytes = copiedBytes,
+        )
+    }
+
+    private data class TreeFile(val transferPath: String, val doc: FastDocumentFile)
+
+    private data class TreeSources(
+        val name: String,
+        val sources: List<Map<String, Any?>>,
+        val totalBytes: Long,
+        val copiedBytes: Long,
+    )
+
+    private fun collectTreeFiles(
+        dir: FastDocumentFile,
+        prefix: String,
+        depth: Int,
+        out: MutableList<TreeFile>,
+    ) {
+        if (depth > MAX_TREE_DEPTH) {
+            Log.w(PICK_TAG, "folder tree deeper than $MAX_TREE_DEPTH, stopping at $prefix")
+            return
+        }
+        for (child in dir.listFiles()) {
+            if (child.name.isBlank()) continue
+            val childPath = "$prefix/${sanitizeFileName(child.name)}"
+            if (child.isDirectory) {
+                collectTreeFiles(child, childPath, depth + 1, out)
+            } else if (child.isFile) {
+                out.add(TreeFile(childPath, child))
+            }
+        }
+    }
+
+    // Streams one content URI into [dest], returning the bytes written (0 when
+    // the source cannot be read — the transfer surfaces the gap).
+    private fun copyUriToFile(uri: Uri, dest: File, onBytes: (Long) -> Unit = {}): Long {
+        var written = 0L
+        try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(dest).use { output ->
+                    val buffer = ByteArray(65_536)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                        written += read
+                        onBytes(written)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(PICK_TAG, "could not copy $uri: ${e.message}")
+        }
+        return written
     }
 
     // Opens [uri] for a copy-free send and returns the `/proc/self/fd/<n>`
@@ -921,44 +1055,6 @@ class MainActivity : FlutterFragmentActivity() {
         // file:// URIs (older Files apps, some legacy share targets) carry
         // the name as the last path segment.
         return uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
-    }
-
-    // Recursively copies a FastDocumentFile tree into [destDir] using 64 KB
-    // streaming chunks via SAF.  Uses a single ContentResolver query per
-    // directory level (ported from LocalSend's FastDocumentFile approach) so
-    // it scales well to folders with many files.  Returns the total bytes copied.
-    private fun copyDocumentTreeToCache(
-        src: FastDocumentFile,
-        destDir: File,
-        onBytes: (Long) -> Unit = {},
-    ): Long {
-        destDir.mkdirs()
-        var totalBytes = 0L
-        for (child in src.listFiles()) {
-            if (child.name.isBlank()) continue
-            if (child.isDirectory) {
-                totalBytes += copyDocumentTreeToCache(child, File(destDir, child.name), onBytes)
-            } else if (child.isFile) {
-                val destFile = File(destDir, child.name)
-                try {
-                    contentResolver.openInputStream(child.uri)?.use { input ->
-                        FileOutputStream(destFile).use { output ->
-                            val buffer = ByteArray(65_536)
-                            while (true) {
-                                val read = input.read(buffer)
-                                if (read < 0) break
-                                output.write(buffer, 0, read)
-                                totalBytes += read
-                                onBytes(read.toLong())
-                            }
-                        }
-                    }
-                } catch (_: Exception) {
-                    // Skip unreadable files; the transfer will surface the gap.
-                }
-            }
-        }
-        return totalBytes
     }
 
     // Saves a file from [srcPath] into the public Downloads/Wisp/ folder.

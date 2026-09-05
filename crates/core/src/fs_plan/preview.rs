@@ -94,7 +94,7 @@ fn inspect_selected_path(input: &SendInput) -> Result<SelectedPathPreview> {
             });
         }
     };
-    let name = input.display_name()?;
+    let name = input.transfer_path()?;
 
     let mut file_count = 0_u64;
     let mut total_size = 0_u64;
@@ -191,7 +191,7 @@ mod tests {
 
         let preview = inspect_selected_paths(&[SendInput::FileDescriptor {
             path: fd_path,
-            name: "holiday.mp4".to_owned(),
+            transfer_path: "holiday.mp4".to_owned(),
         }])?;
 
         assert_eq!(preview.file_count, 1);

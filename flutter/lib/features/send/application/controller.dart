@@ -218,7 +218,9 @@ class SendController extends _$SendController {
 
     final settings = ref.read(settingsControllerProvider).settings;
     final sources =
-        items?.map((item) => item.source).toList(growable: false) ??
+        items
+            ?.expand((item) => item.resolvedSources)
+            .toList(growable: false) ??
         const <SendSource>[];
 
     switch (destination.mode) {
@@ -346,6 +348,12 @@ class SendController extends _$SendController {
 
     for (final item in items) {
       if (item.kind != SendPickedFileKind.directory) {
+        continue;
+      }
+      // An Android folder pick already measured the tree while resolving it
+      // into sources, and its `path` is a tree URI that no size calculator
+      // could walk anyway.
+      if (item.sizeBytes > BigInt.zero) {
         continue;
       }
       if (resolvedSizes.containsKey(item.path) ||

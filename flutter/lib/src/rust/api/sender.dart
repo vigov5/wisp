@@ -77,15 +77,18 @@ class SendSourceData {
   /// transfer, because the blob store reopens this path lazily as it serves.
   final String path;
 
-  /// The name the receiver should see for a descriptor source.  Required
-  /// there, since `/proc/self/fd/<n>` ends in the fd number rather than a
-  /// file name.  `None` marks an ordinary path, which names itself.
-  final String? fdDisplayName;
+  /// Where a descriptor source lands on the receiver.  Required there, since
+  /// `/proc/self/fd/<n>` ends in the fd number rather than a file name.  A
+  /// bare file name for a picked file; a relative path
+  /// (`photos/trip/cat.jpg`) for one file of a picked folder, which is sent
+  /// as one descriptor per file.  `None` marks an ordinary path, which names
+  /// itself.
+  final String? fdTransferPath;
 
-  const SendSourceData({required this.path, this.fdDisplayName});
+  const SendSourceData({required this.path, this.fdTransferPath});
 
   @override
-  int get hashCode => path.hashCode ^ fdDisplayName.hashCode;
+  int get hashCode => path.hashCode ^ fdTransferPath.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -93,7 +96,7 @@ class SendSourceData {
       other is SendSourceData &&
           runtimeType == other.runtimeType &&
           path == other.path &&
-          fdDisplayName == other.fdDisplayName;
+          fdTransferPath == other.fdTransferPath;
 }
 
 class SendTransferEvent {

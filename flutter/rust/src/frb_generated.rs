@@ -1647,10 +1647,10 @@ impl SseDecode for crate::api::sender::SendSourceData {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_path = <String>::sse_decode(deserializer);
-        let mut var_fdDisplayName = <Option<String>>::sse_decode(deserializer);
+        let mut var_fdTransferPath = <Option<String>>::sse_decode(deserializer);
         return crate::api::sender::SendSourceData {
             path: var_path,
-            fd_display_name: var_fdDisplayName,
+            fd_transfer_path: var_fdTransferPath,
         };
     }
 }
@@ -2452,7 +2452,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::sender::SendSourceData {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.path.into_into_dart().into_dart(),
-            self.fd_display_name.into_into_dart().into_dart(),
+            self.fd_transfer_path.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -3247,7 +3247,7 @@ impl SseEncode for crate::api::sender::SendSourceData {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.path, serializer);
-        <Option<String>>::sse_encode(self.fd_display_name, serializer);
+        <Option<String>>::sse_encode(self.fd_transfer_path, serializer);
     }
 }
 

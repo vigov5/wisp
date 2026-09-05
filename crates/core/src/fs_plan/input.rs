@@ -2,6 +2,10 @@ use std::path::{Path, PathBuf};
 
 use crate::transfer::path::{TransferPathError, input_root_name, validate_transfer_path};
 
+/// Upper bound on a carried transfer path, so a hostile or buggy provider
+/// cannot make the receiver create an unbounded directory chain.
+const MAX_TRANSFER_PATH_SEGMENTS: usize = 32;
+
 /// One source the user picked for a send.
 ///
 /// Desktop picks are plain paths.  Android SAF picks are not: scoped storage
@@ -22,11 +26,19 @@ pub enum SendInput {
     /// descriptor ourselves from a URI the user picked, so there is no
     /// untrusted link for the symlink check to guard against.
     ///
+    /// `transfer_path` is where the file lands on the receiver. It is a bare
+    /// file name for a picked file, and a relative path (`photos/trip/cat.jpg`)
+    /// for one file of a picked folder — a folder is sent as one descriptor per
+    /// file, since a SAF tree offers no single handle to open.
+    ///
     /// The descriptor must stay open for the whole transfer, not just the
     /// import: the blob store references the file in place
     /// ([`iroh_blobs::api::blobs::ImportMode::TryReference`]) and reopens
     /// this path lazily every time it serves bytes.
-    FileDescriptor { path: PathBuf, name: String },
+    FileDescriptor {
+        path: PathBuf,
+        transfer_path: String,
+    },
 }
 
 impl SendInput {
@@ -53,14 +65,15 @@ impl SendInput {
         matches!(self, Self::FileDescriptor { .. })
     }
 
-    /// The name the receiver sees for this source: the final path component
-    /// for a [`SendInput::Path`], the carried name for a descriptor.
-    pub fn display_name(&self) -> Result<String, TransferPathError> {
+    /// Where this source lands on the receiver: the final path component for a
+    /// [`SendInput::Path`] (its tree is walked from there), the carried
+    /// relative path for a descriptor.
+    pub fn transfer_path(&self) -> Result<String, TransferPathError> {
         match self {
             Self::Path(path) => input_root_name(path),
-            Self::FileDescriptor { name, .. } => {
-                validate_file_name(name)?;
-                Ok(name.clone())
+            Self::FileDescriptor { transfer_path, .. } => {
+                validate_carried_transfer_path(transfer_path)?;
+                Ok(transfer_path.clone())
             }
         }
     }
@@ -72,12 +85,12 @@ impl From<PathBuf> for SendInput {
     }
 }
 
-/// A carried name has to be exactly one safe path segment — it becomes a
-/// transfer path root on the receiver, so `..`, separators and empties are all
-/// out.
-fn validate_file_name(name: &str) -> Result<(), TransferPathError> {
-    let segments = validate_transfer_path(name)?;
-    if segments.len() != 1 {
+/// A carried path becomes a transfer path verbatim, so it gets the same
+/// treatment the walk gives a discovered one: relative, `/`-separated, no `..`
+/// or empty segments — and bounded in depth, since nothing upstream limits it.
+fn validate_carried_transfer_path(path: &str) -> Result<(), TransferPathError> {
+    let segments = validate_transfer_path(path)?;
+    if segments.len() > MAX_TRANSFER_PATH_SEGMENTS {
         return Err(TransferPathError::InvalidSegment);
     }
     Ok(())
@@ -87,34 +100,49 @@ fn validate_file_name(name: &str) -> Result<(), TransferPathError> {
 mod tests {
     use super::*;
 
-    fn descriptor(name: &str) -> SendInput {
+    fn descriptor(transfer_path: &str) -> SendInput {
         SendInput::FileDescriptor {
             path: PathBuf::from("/proc/self/fd/7"),
-            name: name.to_owned(),
+            transfer_path: transfer_path.to_owned(),
         }
     }
 
     #[test]
     fn path_input_takes_its_name_from_the_final_component() {
         let input = SendInput::from(PathBuf::from("/home/u/holiday.mp4"));
-        assert_eq!(input.display_name().expect("name"), "holiday.mp4");
+        assert_eq!(input.transfer_path().expect("name"), "holiday.mp4");
         assert!(!input.is_file_descriptor());
     }
 
     #[test]
-    fn descriptor_input_uses_the_carried_name_not_the_fd_number() {
+    fn descriptor_input_uses_the_carried_path_not_the_fd_number() {
         let input = descriptor("holiday.mp4");
-        assert_eq!(input.display_name().expect("name"), "holiday.mp4");
+        assert_eq!(input.transfer_path().expect("name"), "holiday.mp4");
         assert_eq!(input.path(), Path::new("/proc/self/fd/7"));
         assert!(input.is_file_descriptor());
     }
 
+    /// One file of a picked folder arrives as its own descriptor, so the
+    /// carried path has to keep the folder structure.
     #[test]
-    fn descriptor_name_may_not_escape_the_transfer_root() {
-        for name in ["", "..", ".", "a/b", r"a\b", "/abs", "sub/"] {
-            descriptor(name)
-                .display_name()
-                .expect_err(&format!("expected {name:?} to be rejected"));
+    fn descriptor_input_accepts_a_nested_transfer_path() {
+        assert_eq!(
+            descriptor("photos/trip/cat.jpg")
+                .transfer_path()
+                .expect("nested path"),
+            "photos/trip/cat.jpg"
+        );
+    }
+
+    #[test]
+    fn descriptor_path_may_not_escape_the_transfer_root() {
+        let too_deep = vec!["d"; MAX_TRANSFER_PATH_SEGMENTS + 1].join("/");
+        for path in [
+            "", "..", ".", "a/../b", r"a\b", "/abs", "sub/", "a//b", &too_deep,
+        ] {
+            descriptor(path)
+                .transfer_path()
+                .expect_err(&format!("expected {path:?} to be rejected"));
         }
     }
 }

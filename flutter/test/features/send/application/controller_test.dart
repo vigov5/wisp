@@ -300,7 +300,12 @@ void main() {
           path: '/proc/self/fd/42',
           name: 'holiday.mp4',
           sizeBytes: BigInt.from(6000000000),
-          fdDisplayName: 'holiday.mp4',
+          sources: const [
+            SendSource(
+              path: '/proc/self/fd/42',
+              fdTransferPath: 'holiday.mp4',
+            ),
+          ],
         ),
       ]);
       controller.updateDestinationCode('ABC123');
@@ -309,7 +314,7 @@ void main() {
       expect(request.sources, [
         const SendSource(
           path: '/proc/self/fd/42',
-          fdDisplayName: 'holiday.mp4',
+          fdTransferPath: 'holiday.mp4',
         ),
       ]);
 
@@ -318,11 +323,59 @@ void main() {
       expect(fakeSource.lastRequest?.sources, [
         const SendSource(
           path: '/proc/self/fd/42',
-          fdDisplayName: 'holiday.mp4',
+          fdTransferPath: 'holiday.mp4',
         ),
       ]);
     },
   );
+
+  /// A picked folder has no path to open, so one draft row stands for one
+  /// descriptor per file — each carrying its path inside the folder.
+  test('a picked folder expands into one source per file', () {
+    final container = ProviderContainer(
+      overrides: [
+        initialAppSettingsProvider.overrideWithValue(testAppSettings),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final controller = container.read(sendControllerProvider.notifier);
+    controller.beginDraft([
+      SendPickedFile(
+        path: 'content://com.android.externalstorage.documents/tree/primary%3Aphotos',
+        name: 'photos',
+        kind: SendPickedFileKind.directory,
+        sizeBytes: BigInt.from(9),
+        sources: const [
+          SendSource(
+            path: '/proc/self/fd/42',
+            fdTransferPath: 'photos/trip/cat.jpg',
+          ),
+          SendSource(
+            path: '/proc/self/fd/43',
+            fdTransferPath: 'photos/dog.jpg',
+          ),
+        ],
+      ),
+    ]);
+    controller.updateDestinationCode('ABC123');
+
+    final request = controller.buildSendRequest()!;
+
+    expect(request.sources, [
+      const SendSource(
+        path: '/proc/self/fd/42',
+        fdTransferPath: 'photos/trip/cat.jpg',
+      ),
+      const SendSource(
+        path: '/proc/self/fd/43',
+        fdTransferPath: 'photos/dog.jpg',
+      ),
+    ]);
+    // The draft still shows one row for the folder the user picked.
+    final drafting = container.read(sendControllerProvider) as SendStateDrafting;
+    expect(drafting.items.single.name, 'photos');
+  });
 
   test(
     'send controller starts transfer only for the currently validated request',

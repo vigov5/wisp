@@ -107,7 +107,7 @@ class SendDraftItem {
     required this.kind,
     required this.sizeBytes,
     this.sourcePreparation,
-    this.fdDisplayName,
+    this.sources,
   });
 
   factory SendDraftItem.fromPickedFile(SendPickedFile file) {
@@ -117,19 +117,19 @@ class SendDraftItem {
       kind: file.kind,
       sizeBytes: file.sizeBytes ?? BigInt.zero,
       sourcePreparation: file.sourcePreparation,
-      fdDisplayName: file.fdDisplayName,
+      sources: file.sources,
     );
   }
 
-  /// This item as the core wants it.
-  SendSource get source =>
-      SendSource(path: path, fdDisplayName: fdDisplayName);
+  /// What the core is handed for this item — see [SendPickedFile.sources].
+  List<SendSource> get resolvedSources =>
+      sources ?? [SendSource(path: path)];
 
   final String path;
   final String name;
 
-  /// See [SendSource.fdDisplayName].
-  final String? fdDisplayName;
+  /// See [SendPickedFile.sources].
+  final List<SendSource>? sources;
   final SendPickedFileKind kind;
   final BigInt sizeBytes;
   final SendSourcePreparation? sourcePreparation;
@@ -143,7 +143,7 @@ class SendPickedFile {
     this.kind = SendPickedFileKind.file,
     this.sizeBytes,
     this.sourcePreparation,
-    this.fdDisplayName,
+    this.sources,
   });
 
   factory SendPickedFile.fromPath(String path) {
@@ -168,7 +168,13 @@ class SendPickedFile {
   final BigInt? sizeBytes;
   final SendSourcePreparation? sourcePreparation;
 
-  /// Set when [path] is a `/proc/self/fd/<n>` descriptor path — see
-  /// [SendSource.fdDisplayName].  Null for an ordinary file.
-  final String? fdDisplayName;
+  /// What the core is handed for this item, when that is not simply [path].
+  ///
+  /// A folder picked on Android has no filesystem path at all — it resolves to
+  /// one descriptor per file — so one draft row can stand for many sources.
+  /// Null means the ordinary case: [path] is itself the one source.
+  final List<SendSource>? sources;
+
+  List<SendSource> get resolvedSources =>
+      sources ?? [SendSource(path: path)];
 }

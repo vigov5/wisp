@@ -26,20 +26,40 @@ class AndroidFilePickResult {
 }
 
 /// Result of [AndroidFilePicker.pickFolder].
+///
+/// A SAF tree has no filesystem path and no single handle to open, so the
+/// native side resolves it to one source per file — normally a live
+/// descriptor, and a cache copy only for what the descriptor budget could not
+/// cover.  [bytesCopied] counts just that remainder.
 class AndroidFolderResult {
   const AndroidFolderResult({
-    required this.path,
+    required this.identity,
+    required this.name,
+    required this.sources,
     required this.sizeBytes,
+    required this.bytesCopied,
     required this.copyElapsed,
   });
 
-  final String path;
+  /// The tree URI. Not openable by the core — it is what the draft keys this
+  /// folder by, in place of a path.
+  final String identity;
+
+  /// The picked folder's own name, and the root of every source's transfer
+  /// path.
+  final String name;
+
+  /// One entry per file in the folder, each carrying its path within it.
+  final List<NativeSource> sources;
 
   /// Total size in bytes computed on the native side via the Storage Access
   /// Framework — works regardless of Android scoped-storage restrictions.
   final BigInt sizeBytes;
 
-  /// Native SAF traversal + streaming time, excluding the system picker UI.
+  /// Of [sizeBytes], how much had to be copied into the app cache.
+  final BigInt bytesCopied;
+
+  /// Native SAF traversal + any copying, excluding the system picker UI.
   final Duration copyElapsed;
 }
 
@@ -163,19 +183,29 @@ class AndroidFilePicker {
     }
     if (result == null) return null;
 
-    final path = result['path'] as String?;
-    if (path == null || path.isEmpty) return null;
+    final identity = result['identity'] as String?;
+    if (identity == null || identity.isEmpty) return null;
 
-    final rawSize = result['sizeBytes'];
-    final sizeBytes = switch (rawSize) {
-      int v => BigInt.from(v),
+    final rawSources = result['sources'];
+    final sources = NativeSource.parseAll(
+      rawSources is List ? rawSources : null,
+    );
+    if (sources.isEmpty) return null;
+
+    final sizeBytes = switch (result['sizeBytes']) {
+      int v when v >= 0 => BigInt.from(v),
       _ => BigInt.zero,
     };
 
-    _folderSizeCache[path] = sizeBytes;
+    _folderSizeCache[identity] = sizeBytes;
     return AndroidFolderResult(
-      path: path,
+      identity: identity,
+      name: (result['name'] as String?)?.trim().isNotEmpty == true
+          ? result['name'] as String
+          : 'folder',
+      sources: sources,
       sizeBytes: sizeBytes,
+      bytesCopied: BigInt.from(_nonNegativeInt(result['bytesCopied'])),
       copyElapsed: Duration(
         microseconds: _nonNegativeInt(result['copyElapsedMicros']),
       ),

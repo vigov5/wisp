@@ -36,7 +36,7 @@ pub(crate) fn walk_files(input: SendInput) -> Result<Vec<(String, PathBuf)>, FsP
     // open ourselves, so it is followed rather than rejected, and there is
     // nothing below it to traverse.
     if input.is_file_descriptor() {
-        let root_name = input.display_name()?;
+        let root_name = input.transfer_path()?;
         let path = absolute_input_path(input.into_path())?;
         let metadata = std::fs::metadata(&path).map_err(|source| FsPlanError::ReadMetadata {
             path: path.clone(),
@@ -283,6 +283,56 @@ mod tests {
     /// symlink onto an already-open file.  The plain `Path` walk rejects
     /// symlinks, so the descriptor variant has to opt out of that check and
     /// carry the real name instead of the fd number.
+    /// A picked folder has no single handle to open, so it is sent as one
+    /// descriptor per file, each carrying its path within the folder.  Those
+    /// paths are what the receiver rebuilds the tree from.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn import_rebuilds_a_folder_from_per_file_descriptors() -> Result<()> {
+        use std::os::fd::AsRawFd;
+
+        let root = unique_temp_dir("wisp-import-descriptor-tree");
+        std::fs::create_dir_all(&root)?;
+        let mut held = Vec::new();
+        let mut inputs = Vec::new();
+        for (transfer_path, body) in [
+            ("photos/trip/cat.jpg", b"meow".as_slice()),
+            ("photos/dog.jpg", b"woof!".as_slice()),
+        ] {
+            let backing = root.join(transfer_path.replace('/', "_"));
+            std::fs::write(&backing, body)?;
+            let file = std::fs::File::open(&backing)?;
+            let fd_path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+            if !fd_path.exists() {
+                // No procfs (macOS): nothing to assert here.
+                let _ = std::fs::remove_dir_all(&root);
+                return Ok(());
+            }
+            inputs.push(SendInput::FileDescriptor {
+                path: fd_path,
+                transfer_path: transfer_path.to_owned(),
+            });
+            held.push(file);
+        }
+        let store: Store = MemStore::new().into();
+
+        let mut imported = Vec::new();
+        for input in inputs {
+            imported.extend(import_files(&store, input).await?);
+        }
+
+        let paths = imported
+            .iter()
+            .map(|file| file.transfer_path.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, vec!["photos/trip/cat.jpg", "photos/dog.jpg"]);
+        assert_eq!(imported.iter().map(|file| file.size_bytes).sum::<u64>(), 9);
+
+        drop(held);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn import_follows_a_descriptor_path_and_uses_its_carried_name() -> Result<()> {
@@ -306,7 +356,7 @@ mod tests {
             &store,
             SendInput::FileDescriptor {
                 path: fd_path,
-                name: "holiday.mp4".to_owned(),
+                transfer_path: "holiday.mp4".to_owned(),
             },
         )
         .await?;

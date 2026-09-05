@@ -1567,7 +1567,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
     return SendSourceData(
       path: dco_decode_String(arr[0]),
-      fdDisplayName: dco_decode_opt_String(arr[1]),
+      fdTransferPath: dco_decode_opt_String(arr[1]),
     );
   }
 
@@ -2432,8 +2432,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SendSourceData sse_decode_send_source_data(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_path = sse_decode_String(deserializer);
-    var var_fdDisplayName = sse_decode_opt_String(deserializer);
-    return SendSourceData(path: var_path, fdDisplayName: var_fdDisplayName);
+    var var_fdTransferPath = sse_decode_opt_String(deserializer);
+    return SendSourceData(path: var_path, fdTransferPath: var_fdTransferPath);
   }
 
   @protected
@@ -3312,7 +3312,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.path, serializer);
-    sse_encode_opt_String(self.fdDisplayName, serializer);
+    sse_encode_opt_String(self.fdTransferPath, serializer);
   }
 
   @protected

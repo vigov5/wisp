@@ -38,7 +38,14 @@ class FileSystemDirectorySizeCalculator implements DirectorySizeCalculator {
   @override
   Future<BigInt> sizeOfDirectory(String path) async {
     final directory = Directory(path);
-    if (!await directory.exists()) {
+    // `exists` throws rather than returning false when the string isn't valid
+    // path syntax for the platform — reachable now that a draft item's `path`
+    // is sometimes an identity (a SAF tree URI) rather than a real location.
+    try {
+      if (!await directory.exists()) {
+        return BigInt.zero;
+      }
+    } catch (_) {
       return BigInt.zero;
     }
 
