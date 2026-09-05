@@ -5160,9 +5160,11 @@ dependencies = [
 name = "wisp-core"
 version = "2.1.1"
 dependencies = [
+ "bao-tree",
  "base64",
  "bincode",
  "blake3",
+ "bytes",
  "flume",
  "futures-lite",
  "if-addrs",
@@ -5170,6 +5172,7 @@ dependencies = [
  "iroh-blobs",
  "irpc",
  "mdns-sd",
+ "n0-error",
  "netdev 0.40.1",
  "rand 0.8.5",
  "reqwest 0.12.28",
