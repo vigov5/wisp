@@ -5217,9 +5217,11 @@ name = "wisp-core"
 version = "2.1.1"
 dependencies = [
  "anyhow",
+ "bao-tree",
  "base64",
  "bincode",
  "blake3",
+ "bytes",
  "filetime",
  "flume",
  "futures-lite",
@@ -5228,6 +5230,7 @@ dependencies = [
  "iroh-blobs",
  "irpc",
  "mdns-sd",
+ "n0-error",
  "netdev 0.40.1",
  "noq-proto",
  "rand 0.8.5",

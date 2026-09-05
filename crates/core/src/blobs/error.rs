@@ -18,8 +18,6 @@ pub enum BlobError {
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
-    #[error("blob store still shared")]
-    StoreStillShared,
     #[error("connecting to blob provider for {context}")]
     Connect {
         context: String,
@@ -42,12 +40,6 @@ pub enum BlobError {
     #[error("importing files from {path}")]
     ImportFiles {
         path: String,
-        #[source]
-        source: Box<dyn StdError + Send + Sync + 'static>,
-    },
-    #[error("creating temp directory {path}")]
-    ScratchDirCreate {
-        path: PathBuf,
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
@@ -95,10 +87,6 @@ impl BlobError {
         }
     }
 
-    pub(crate) fn store_still_shared() -> Self {
-        Self::StoreStillShared
-    }
-
     pub(crate) fn connect(
         context: impl Into<String>,
         source: impl StdError + Send + Sync + 'static,
@@ -135,16 +123,6 @@ impl BlobError {
     ) -> Self {
         Self::ImportFiles {
             path: path.into(),
-            source: Box::new(source),
-        }
-    }
-
-    pub(crate) fn scratch_dir_create(
-        path: PathBuf,
-        source: impl StdError + Send + Sync + 'static,
-    ) -> Self {
-        Self::ScratchDirCreate {
-            path,
             source: Box::new(source),
         }
     }

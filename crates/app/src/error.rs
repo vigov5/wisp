@@ -536,9 +536,8 @@ impl From<BlobError> for UserFacingError {
             BlobError::StoreLoad { source, .. }
             | BlobError::StoreShutdown { source, .. }
             | BlobError::StoreCollection { source }
-            | BlobError::ImportFiles { source, .. }
-            | BlobError::ScratchDirCreate { source, .. } => map_local_io_error(source.as_ref()),
-            BlobError::StoreStillShared | BlobError::JoinDownloadTask { .. } => {
+            | BlobError::ImportFiles { source, .. } => map_local_io_error(source.as_ref()),
+            BlobError::JoinDownloadTask { .. } => {
                 UserFacingError::from_kind(UserFacingErrorKind::Internal)
             }
         }

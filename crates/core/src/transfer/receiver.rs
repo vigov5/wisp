@@ -2,13 +2,7 @@
 
 use futures_lite::StreamExt;
 use iroh::{Endpoint, endpoint::Connection};
-use iroh_blobs::{
-    ALPN as BLOBS_ALPN,
-    api::{blobs::ExportMode, blobs::ExportOptions},
-    format::collection::Collection,
-    store::fs::FsStore,
-    ticket::BlobTicket,
-};
+use iroh_blobs::{ALPN as BLOBS_ALPN, ticket::BlobTicket};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,6 +18,7 @@ use crate::{
         BlobDownloadSession, BlobDownloadUpdate, BlobDownloadUpdateStream, BlobReceiver,
         BlobTransportProfile,
     },
+    blobs::stream::StreamTarget,
     blobs::telemetry::{
         PhaseOutcome, TelemetryRole, TransferPhase as TelemetryPhase, benchmark_run_id, emit_phase,
     },
@@ -607,8 +602,19 @@ async fn run_session(
         let blob_receiver = BlobReceiver::new(endpoint.clone())
             .with_transport_profile(blob_transport_profile)
             .with_benchmark_run_id(run_id);
+        // Destinations are already resolved (Phase 2), so the download can
+        // write each file where it belongs instead of staging the whole
+        // collection in a store first.
+        let stream_targets = expected_transfer_files
+            .iter()
+            .map(|file| StreamTarget {
+                transfer_path: file.path.clone(),
+                destination: file.destination.clone(),
+                size: file.size,
+            })
+            .collect::<Vec<_>>();
         let mut blob_download = match blob_receiver
-            .start(record_dir.join("store"), blob_ticket.clone(), false)
+            .start_streaming(blob_ticket.clone(), stream_targets)
             .await
         {
             Ok(download) => download,
@@ -748,26 +754,7 @@ async fn run_session(
     )
     .await;
 
-    let blob_store = match FsStore::load(record_dir.join("store")).await {
-        Ok(store) => store,
-        Err(error) => {
-            emit_phase(
-                TelemetryRole::Receiver,
-                TelemetryPhase::Export,
-                run_id,
-                export_started.elapsed(),
-                PhaseOutcome::Failed,
-                phase_bytes_total,
-                phase_file_count,
-            );
-            return Err(TransferError::other(
-                "loading blob store for export",
-                error,
-            ));
-        }
-    };
-
-    // Drive `export_downloaded_collection` to completion while keeping the
+    // Drive the finalize step to completion while keeping the
     // application-level wire busy with periodic Finalizing progress frames.
     // Without these the export window has no app traffic, so iroh's tight
     // path keepalive (6_000 ms idle / 4_500 ms ping) is the only thing
@@ -779,9 +766,7 @@ async fn run_session(
     // "Finalizing" instead of looking frozen.  See
     // docs/upstream-bug-audit.md for the full analysis.
     let final_snapshot = {
-        let export_fut = export_downloaded_collection(
-            &blob_store,
-            receiver_offer.collection_hash,
+        let export_fut = record_streamed_collection(
             &expected_transfer_files,
             &mut record,
             &record_dir,
@@ -1255,72 +1240,43 @@ async fn abort_session(
     Ok(outcome)
 }
 
-pub async fn export_downloaded_collection(
-    store: &FsStore,
-    root_hash: iroh_blobs::Hash,
+/// Finalizes a streamed transfer.
+///
+/// The download already wrote every file to its destination and only gave it
+/// its real name once the last chunk verified, so there is nothing to move
+/// here — this just confirms each file arrived and records it, which is what
+/// resume and the finish screen read.
+///
+/// Kept on the same shape as the export it replaced (including
+/// `exported_bytes`) so the caller's progress heartbeat is unchanged.
+async fn record_streamed_collection(
     expected_files: &[ExpectedTransferFile],
     record: &mut TransferRecord,
     record_dir: &std::path::Path,
-    // Cumulative bytes exported so far.  Bumped after each file (and for
-    // already-exported files on a resume) so the caller's progress
-    // heartbeat can animate the finalize bar.  Pass a throwaway
-    // `&AtomicU64::new(0)` when progress isn't observed.
     exported_bytes: &AtomicU64,
 ) -> Result<()> {
-    let collection = Collection::load(root_hash, store.as_ref())
-        .await
-        .map_err(|source| TransferError::other("loading downloaded collection", source))?;
-    let hashes: BTreeMap<_, _> = collection.into_iter().collect();
-    let mut exported_total = 0_u64;
+    let mut total = 0_u64;
     for exp in expected_files {
-        if record.exported_files.contains(&exp.path) {
-            info!("skipping already exported file: {}", exp.path);
-            exported_total = exported_total.saturating_add(exp.size);
-            exported_bytes.store(exported_total, Ordering::Relaxed);
-            continue;
-        }
-
-        let hash = *hashes.get(&exp.path).ok_or_else(|| {
-            TransferError::other(
-                "exporting downloaded collection",
-                std::io::Error::other(format!("missing file in collection: {}", exp.path)),
-            )
-        })?;
-        ensure_destination_available(&record.output_dir, &exp.destination).await?;
-        if let Some(p) = exp.destination.parent() {
-            fs::create_dir_all(p)
-                .await
-                .map_err(|source| TransferError::other("creating export directory", source))?;
-        }
-        store
-            .export_with_opts(ExportOptions {
-                hash,
-                target: exp.destination.clone(),
-                // `TryReference` moves the blob out of the store and
-                // references it from the DB instead of copying every byte a
-                // second time (`Copy` was the bulk of the receiver's
-                // post-download lag — each byte hit the disk twice: once
-                // into `<out>/.wisp/transfers/<hash>/store`, then again to
-                // the destination).  The store lives on the same volume as
-                // the destination, so this is a reflink/hardlink/rename and
-                // finishes near-instantly.  iroh is free to fall back to a
-                // copy for tiny/inline blobs or stores that can't reference,
-                // so correctness is unchanged — only the common large-file
-                // path gets faster.  Safe against the post-completion record
-                // dir cleanup: the data already lives at the destination, so
-                // deleting the store afterwards just drops the now-redundant
-                // reference.
-                mode: ExportMode::TryReference,
-            })
-            .finish()
+        let metadata = fs::metadata(&exp.destination)
             .await
-            .map_err(|source| TransferError::other("exporting downloaded file", source))?;
-
+            .map_err(|source| TransferError::other("checking streamed file", source))?;
+        if metadata.len() != exp.size {
+            return Err(TransferError::other(
+                "checking streamed file",
+                std::io::Error::other(format!(
+                    "expected {} bytes for {} at {}, found {}",
+                    exp.size,
+                    exp.path,
+                    exp.destination.display(),
+                    metadata.len()
+                )),
+            ));
+        }
         record.exported_files.insert(exp.path.clone());
-        save_transfer_record(record, record_dir, "saving record during export").await?;
-        exported_total = exported_total.saturating_add(exp.size);
-        exported_bytes.store(exported_total, Ordering::Relaxed);
+        total = total.saturating_add(exp.size);
+        exported_bytes.store(total, Ordering::Relaxed);
     }
+    save_transfer_record(record, record_dir, "saving record after streaming").await?;
     Ok(())
 }
 
@@ -1899,56 +1855,6 @@ mod tests {
         let (mut control_recv, _) = tokio::io::split(local);
 
         await_final_sender_ack(&mut control_recv, "session-1").await;
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn export_downloaded_collection_rejects_symlinked_parents() {
-        use std::os::unix::fs::symlink;
-
-        let temp = tempfile::tempdir().unwrap();
-        let source_root = temp.path().join("source");
-        let download_root = temp.path().join("downloads");
-        let escape_root = temp.path().join("escape");
-        let record_dir = temp.path().join("record");
-        let source_link = source_root.join("link");
-        let expected_destination = download_root.join("link/owned.txt");
-
-        std::fs::create_dir_all(&source_link).unwrap();
-        std::fs::create_dir_all(&download_root).unwrap();
-        std::fs::create_dir_all(&escape_root).unwrap();
-        std::fs::create_dir_all(&record_dir).unwrap();
-        std::fs::write(source_link.join("owned.txt"), b"owned").unwrap();
-        symlink(&escape_root, download_root.join("link")).unwrap();
-
-        let prepared = PreparedStore::prepare(&source_link, vec![source_link.clone()])
-            .await
-            .unwrap();
-        let mut record = TransferRecord::new(
-            prepared.collection_hash(),
-            download_root.clone(),
-            ConflictPolicy::Rename,
-            prepared.manifest(),
-        );
-        let expected = vec![ExpectedTransferFile {
-            path: "link/owned.txt".to_owned(),
-            size: 5,
-            destination: expected_destination,
-        }];
-
-        let err = export_downloaded_collection(
-            prepared.store(),
-            prepared.collection_hash(),
-            &expected,
-            &mut record,
-            &record_dir,
-            &AtomicU64::new(0),
-        )
-        .await
-        .unwrap_err();
-
-        assert!(format!("{err:#}").contains("symbolic link"));
-        assert!(!escape_root.join("owned.txt").exists());
     }
 
     #[tokio::test]

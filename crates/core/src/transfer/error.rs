@@ -63,12 +63,10 @@ impl TransferError {
                 BlobError::DuplicateTransferPath { .. } => TransferErrorCode::FileConflict,
                 BlobError::StoreLoad { .. }
                 | BlobError::StoreShutdown { .. }
-                | BlobError::StoreStillShared
                 | BlobError::Connect { .. }
                 | BlobError::Fetch { .. }
                 | BlobError::StoreCollection { .. }
                 | BlobError::ImportFiles { .. }
-                | BlobError::ScratchDirCreate { .. }
                 | BlobError::JoinDownloadTask { .. } => TransferErrorCode::IoError,
             },
             Self::Path(error) => match error {

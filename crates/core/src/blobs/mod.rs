@@ -1,6 +1,7 @@
 pub(crate) mod error;
 pub mod receive;
 pub mod send;
+pub(crate) mod stream;
 pub(crate) mod telemetry;
 pub(crate) mod util;
 
