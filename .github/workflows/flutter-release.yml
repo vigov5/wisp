@@ -441,3 +441,8 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+          # Without this the default is `true`, which means "make *this* one
+          # latest" — so whichever tag's build finishes last wins the badge,
+          # even an older version. `legacy` hands the decision to GitHub, which
+          # picks by semantic version and date instead.
+          make_latest: legacy
