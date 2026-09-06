@@ -80,10 +80,11 @@ class SendSource {
     );
   }
 
-  /// The path the core opens.  On Android this is usually
-  /// `/proc/self/fd/<n>`: the picked file is read straight from its SAF
-  /// descriptor rather than copied into the app cache first, so a multi-GB
-  /// send needs no free space at all.
+  /// The path the core opens.  On Android this may be `/proc/self/fd/<n>`:
+  /// the picked file read straight from its SAF descriptor, needing no free
+  /// space at all.  Where the platform refuses to reopen that descriptor —
+  /// which on current Android is most of external storage — it is a cache
+  /// copy instead.
   final String path;
 
   /// Where this lands on the receiver, for a descriptor [path] — which ends in
@@ -101,4 +102,59 @@ class SendSource {
 
   @override
   int get hashCode => Object.hash(path, fdTransferPath);
+}
+
+/// Why the platform could not hand a picked or shared file over to a send.
+enum SourceRejectionReason {
+  /// Preparing the file would have needed more free space than the device can
+  /// spare.  Android only lets an app read some providers' files by copying
+  /// them into its own cache first, and a copy that fills the disk takes the
+  /// whole device down, so one that cannot fit is refused before it starts.
+  noSpace,
+
+  /// The provider would not give up the bytes at all.
+  unreadable,
+}
+
+/// One file the platform refused to prepare, and why — so an empty (or short)
+/// draft can say what happened instead of silently dropping the file.
+@immutable
+class SourceRejection {
+  const SourceRejection({
+    required this.name,
+    required this.reason,
+    this.requiredBytes,
+    this.availableBytes,
+  });
+
+  static SourceRejection? parse(Object? raw) {
+    if (raw is! Map) return null;
+    final name = (raw['name'] as String?)?.trim();
+    if (name == null || name.isEmpty) return null;
+    final required = raw['requiredBytes'];
+    final available = raw['availableBytes'];
+    return SourceRejection(
+      name: name,
+      reason: raw['reason'] == 'no_space'
+          ? SourceRejectionReason.noSpace
+          : SourceRejectionReason.unreadable,
+      requiredBytes: required is int ? BigInt.from(required) : null,
+      availableBytes: available is int ? BigInt.from(available) : null,
+    );
+  }
+
+  static List<SourceRejection> parseAll(Object? raw) {
+    if (raw is! List) return const [];
+    return raw.map(SourceRejection.parse).nonNulls.toList(growable: false);
+  }
+
+  final String name;
+  final SourceRejectionReason reason;
+
+  /// Bytes the copy would have needed, when the provider reported a size.
+  final BigInt? requiredBytes;
+
+  /// Bytes that were free for it, over and above the headroom the device
+  /// keeps for itself.
+  final BigInt? availableBytes;
 }

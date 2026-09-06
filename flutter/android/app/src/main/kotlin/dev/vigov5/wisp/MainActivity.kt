@@ -78,6 +78,25 @@ class MainActivity : FlutterFragmentActivity() {
         // the platform-channel chatter during a multi-GB copy to ~1 event per
         // 8 MB (≈375 events for a 3 GB file) while still animating smoothly.
         private const val PROGRESS_EMIT_BYTES = 8L * 1024 * 1024
+
+        // Free space the fallback copy has to leave behind.  Filling /data
+        // does not merely fail the copy: the platform starts killing
+        // processes and the device stays wedged until something clears the
+        // cache.  Sharing a 6.2 GB file into 6.3 GB of headroom did exactly
+        // that — the copy ran to within 190 MB of the end of the disk and
+        // took the app down with it.  Android's own low-storage threshold
+        // sits near 500 MB, so stop short of it.
+        private const val COPY_HEADROOM_BYTES = 512L * 1024 * 1024
+
+        // How much a running copy may write between free-space checks.  The
+        // pre-flight check covers providers that report a size; this catches
+        // the ones that do not.
+        private const val SPACE_RECHECK_BYTES = 32L * 1024 * 1024
+
+        // Why a shared or picked source could not be prepared, as the Dart
+        // side reads it.
+        private const val REJECT_NO_SPACE = "no_space"
+        private const val REJECT_UNREADABLE = "unreadable"
     }
 
     // The file_picker channel, kept so the copy coroutine can push
@@ -93,7 +112,7 @@ class MainActivity : FlutterFragmentActivity() {
     // and Flutter awaits this when calling getInitialSharedFiles, so a
     // multi-hundred-megabyte share never blocks the main thread (or the
     // launch screen).
-    private var initialSharedFilesJob: Deferred<List<Map<String, Any?>>>? = null
+    private var initialSharedFilesJob: Deferred<Map<String, Any?>>? = null
     // Cold-start stash for an ACTION_SEND text/plain share (EXTRA_TEXT, no
     // EXTRA_STREAM).  Handed to Flutter once via getInitialSharedText.
     private var initialSharedText: String? = null
@@ -187,7 +206,9 @@ class MainActivity : FlutterFragmentActivity() {
             } catch (_: Exception) {
                 return@launch
             }
-            if (files.isEmpty()) return@launch
+            // A share that resolved nothing at all still has to travel: the
+            // rejections are the only thing that explains the empty draft.
+            if (files.values.all { (it as? List<*>).isNullOrEmpty() }) return@launch
             val channel = shareChannel
             if (channel != null) {
                 channel.invokeMethod("onSharedFiles", files)
@@ -204,15 +225,20 @@ class MainActivity : FlutterFragmentActivity() {
     // skip it entirely; otherwise kicks off the URI resolve on
     // Dispatchers.IO and returns the in-flight Deferred.  Tied to
     // lifecycleScope so the work is cancelled if the activity dies.
-    private fun extractSharedFilesAsync(intent: Intent?): Deferred<List<Map<String, Any?>>>? {
+    private fun extractSharedFilesAsync(intent: Intent?): Deferred<Map<String, Any?>>? {
         if (intent == null) return null
         if (intent.action != Intent.ACTION_SEND &&
             intent.action != Intent.ACTION_SEND_MULTIPLE
         ) return null
         return lifecycleScope.async(Dispatchers.IO) {
-            extractSharedFilesFromIntent(intent) ?: emptyList()
+            extractSharedFilesFromIntent(intent) ?: emptyShare()
         }
     }
+
+    private fun emptyShare(): Map<String, Any?> = mapOf(
+        "sources" to emptyList<Map<String, Any?>>(),
+        "rejected" to emptyList<Map<String, Any?>>(),
+    )
 
     // Returns the plain text of an ACTION_SEND text/plain share, or null when
     // the intent isn't a text share.  A file share (EXTRA_STREAM present) is
@@ -346,7 +372,7 @@ class MainActivity : FlutterFragmentActivity() {
                                 // Activity destroyed mid-resolve (job
                                 // cancelled) or it threw — surface as empty
                                 // rather than failing the channel call.
-                                result.success(emptyList<Map<String, Any?>>())
+                                result.success(emptyShare())
                             }
                         }
                     }
@@ -363,24 +389,24 @@ class MainActivity : FlutterFragmentActivity() {
 
     // Pulls file URIs out of an ACTION_SEND / ACTION_SEND_MULTIPLE intent and
     // resolves each one through the same descriptor-first path the file picker
-    // uses, so sharing a multi-GB video out of Photos costs no disk either.
-    // Returns null when the intent isn't a share intent at all so the caller
-    // can distinguish "no share" from "empty share".
-    private fun extractSharedFilesFromIntent(intent: Intent?): List<Map<String, Any?>>? {
+    // uses.  Returns null when the intent isn't a share intent at all so the
+    // caller can distinguish "no share" from "empty share".
+    private fun extractSharedFilesFromIntent(intent: Intent?): Map<String, Any?>? {
         if (intent == null) return null
         if (intent.action != Intent.ACTION_SEND &&
             intent.action != Intent.ACTION_SEND_MULTIPLE
         ) return null
         val uris = sharedUris(intent)
         Log.i(SHARE_TAG, "share intent ${intent.action}: ${uris.size} uri(s)")
-        val sources = resolveSendSources(uris)
-        if (sources.size < uris.size) {
+        val resolved = resolveSendSources(uris)
+        if (resolved.sources.size < uris.size) {
             Log.w(
                 SHARE_TAG,
-                "share intent: ${uris.size - sources.size} of ${uris.size} uri(s) could not be read",
+                "share intent: ${uris.size - resolved.sources.size} of ${uris.size} " +
+                    "uri(s) could not be read",
             )
         }
-        return sources
+        return mapOf("sources" to resolved.sources, "rejected" to resolved.rejected)
     }
 
     // The URIs a share intent carries, preferring ClipData over EXTRA_STREAM.
@@ -618,20 +644,21 @@ class MainActivity : FlutterFragmentActivity() {
                 val pickResult = withContext(Dispatchers.IO) {
                     val startedNanos = SystemClock.elapsedRealtimeNanos()
                     var lastEmit = 0L
-                    val sources = resolveSendSources(uris) { copied, copyTotal, index ->
+                    val resolved = resolveSendSources(uris) { copied, copyTotal, index ->
                         if (copied - lastEmit >= PROGRESS_EMIT_BYTES) {
                             lastEmit = copied
                             emitPickProgress(copied, copyTotal, index, uris.size)
                         }
                     }
-                    val bytesCopied = sources
+                    val bytesCopied = resolved.sources
                         .filter { it["copied"] == true }
                         .sumOf { it["size"] as Long }
                     if (bytesCopied > 0L) {
                         emitPickProgress(bytesCopied, bytesCopied, uris.size, uris.size)
                     }
                     mapOf(
-                        "sources" to sources,
+                        "sources" to resolved.sources,
+                        "rejected" to resolved.rejected,
                         "bytesCopied" to bytesCopied,
                         "copyElapsedMicros" to
                             (SystemClock.elapsedRealtimeNanos() - startedNanos) / 1_000L,
@@ -678,6 +705,7 @@ class MainActivity : FlutterFragmentActivity() {
                         "identity" to treeUri.toString(),
                         "name" to tree.name,
                         "sources" to tree.sources,
+                        "rejected" to tree.rejected,
                         "sizeBytes" to tree.totalBytes,
                         "bytesCopied" to tree.copiedBytes,
                         "copyElapsedMicros" to
@@ -730,10 +758,11 @@ class MainActivity : FlutterFragmentActivity() {
     private fun resolveSendSources(
         uris: List<Uri>,
         onCopyProgress: (copiedTotal: Long, copyTotal: Long, index: Int) -> Unit = { _, _, _ -> },
-    ): List<Map<String, Any?>> {
+    ): SendSources {
         val names = uris.map { sanitizeFileName(resolveFileName(it)) }
         val sizes = uris.map { resolveSize(it) ?: 0L }
         val resolved = arrayOfNulls<Map<String, Any?>>(uris.size)
+        val rejected = mutableListOf<Map<String, Any?>>()
 
         for (index in uris.indices.sortedByDescending { sizes[it] }) {
             val fdPath = openForSend(uris[index]) ?: continue
@@ -751,11 +780,30 @@ class MainActivity : FlutterFragmentActivity() {
         var copiedBefore = 0L
         for (index in uris.indices) {
             if (resolved[index] != null) continue
+            // Refuse up front what the disk cannot hold, rather than writing
+            // gigabytes and discovering it at the far end.  A provider that
+            // never reports a size falls through to the running check inside
+            // the copy itself.
+            val needed = sizes[index]
+            val spare = copyBudgetBytes()
+            if (needed > spare) {
+                Log.w(
+                    PICK_TAG,
+                    "no room to copy ${names[index]}: needs $needed B, $spare B spare",
+                )
+                rejected.add(rejection(names[index], REJECT_NO_SPACE, needed))
+                copiedBefore += needed
+                continue
+            }
             val path = copyUriToCache(uris[index]) { fileCopied ->
                 onCopyProgress(copiedBefore + fileCopied, copyTotal, index)
             }
-            copiedBefore += sizes[index]
-            if (path == null) continue
+            copiedBefore += needed
+            if (path == null) {
+                val reason = if (copyBudgetBytes() <= 0L) REJECT_NO_SPACE else REJECT_UNREADABLE
+                rejected.add(rejection(names[index], reason, needed))
+                continue
+            }
             resolved[index] = mapOf(
                 "path" to path,
                 "name" to names[index],
@@ -770,8 +818,32 @@ class MainActivity : FlutterFragmentActivity() {
             "resolved ${resolved.count { it != null }}/${uris.size} source(s), " +
                 "$fdCount without a copy",
         )
-        return resolved.filterNotNull()
+        return SendSources(resolved.filterNotNull(), rejected)
     }
+
+    private data class SendSources(
+        val sources: List<Map<String, Any?>>,
+        val rejected: List<Map<String, Any?>>,
+    )
+
+    // Bytes the fallback copy may still write before it would put the device
+    // into low storage.  Zero once the cache filesystem is down to the
+    // headroom we refuse to spend.
+    private fun copyBudgetBytes(): Long =
+        (cacheDir.usableSpace - COPY_HEADROOM_BYTES).coerceAtLeast(0L)
+
+    // One source the platform left us no way to prepare, in the shape the
+    // Dart side turns into a message.
+    private fun rejection(
+        name: String,
+        reason: String,
+        requiredBytes: Long,
+    ): Map<String, Any?> = mapOf(
+        "name" to name,
+        "reason" to reason,
+        "requiredBytes" to requiredBytes,
+        "availableBytes" to copyBudgetBytes(),
+    )
 
     // Resolves a picked SAF tree into sources.  A tree offers no single handle
     // to open, so a folder travels as one descriptor per file, each carrying
@@ -806,8 +878,10 @@ class MainActivity : FlutterFragmentActivity() {
             )
         }
         val leftovers = files.filterIndexed { index, _ -> !claimed[index] }
+        val rejected = mutableListOf<Map<String, Any?>>()
 
         var copiedBytes = 0L
+        var mirrored = 0
         if (leftovers.isNotEmpty()) {
             // The mirror is rooted at the folder name so the core's walk
             // derives exactly the transfer paths the descriptors carry.
@@ -816,21 +890,46 @@ class MainActivity : FlutterFragmentActivity() {
                 // Drop the folder name — it is already `mirrorRoot`.
                 val relative = file.transferPath.substringAfter('/', "")
                 if (relative.isEmpty()) continue
+                val needed = file.doc.size
+                val spare = copyBudgetBytes()
+                if (needed > spare) {
+                    Log.w(
+                        PICK_TAG,
+                        "no room to copy ${file.transferPath}: needs $needed B, $spare B spare",
+                    )
+                    rejected.add(rejection(file.transferPath, REJECT_NO_SPACE, needed))
+                    continue
+                }
                 val dest = File(mirrorRoot, relative)
                 dest.parentFile?.mkdirs()
                 val before = copiedBytes
-                copiedBytes += copyUriToFile(file.doc.uri, dest) { written ->
-                    onCopyProgress(before + written)
+                copiedBytes += try {
+                    val written = streamUriToFile(file.doc.uri, dest) { copied ->
+                        onCopyProgress(before + copied)
+                    }
+                    mirrored += 1
+                    written
+                } catch (e: Exception) {
+                    Log.w(PICK_TAG, "could not copy ${file.transferPath}: ${e.message}")
+                    dest.delete()
+                    val reason =
+                        if (copyBudgetBytes() <= 0L) REJECT_NO_SPACE else REJECT_UNREADABLE
+                    rejected.add(rejection(file.transferPath, reason, needed))
+                    0L
                 }
             }
-            sources.add(
-                mapOf(
-                    "path" to mirrorRoot.absolutePath,
-                    "name" to rootName,
-                    "size" to copiedBytes,
-                    "copied" to true,
-                ),
-            )
+            // Only when something actually landed there: an empty mirror is
+            // not a folder the receiver should be offered.
+            if (mirrored > 0) {
+                sources.add(
+                    mapOf(
+                        "path" to mirrorRoot.absolutePath,
+                        "name" to rootName,
+                        "size" to copiedBytes,
+                        "copied" to true,
+                    ),
+                )
+            }
         }
 
         Log.i(
@@ -846,6 +945,7 @@ class MainActivity : FlutterFragmentActivity() {
             // source has already had its size measured through the fd.
             totalBytes = sources.sumOf { it["size"] as Long },
             copiedBytes = copiedBytes,
+            rejected = rejected,
         )
     }
 
@@ -856,6 +956,7 @@ class MainActivity : FlutterFragmentActivity() {
         val sources: List<Map<String, Any?>>,
         val totalBytes: Long,
         val copiedBytes: Long,
+        val rejected: List<Map<String, Any?>>,
     )
 
     private fun collectTreeFiles(
@@ -879,31 +980,47 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
-    // Streams one content URI into [dest], returning the bytes written (0 when
-    // the source cannot be read — the transfer surfaces the gap).
-    private fun copyUriToFile(uri: Uri, dest: File, onBytes: (Long) -> Unit = {}): Long {
+    // Streams one content URI into [dest] and returns the bytes written,
+    // stopping before the copy would fill the disk.  Throws on any failure —
+    // including that one — so the caller can delete the partial file.
+    private fun streamUriToFile(uri: Uri, dest: File, onBytes: (Long) -> Unit): Long {
+        val input = contentResolver.openInputStream(uri)
+            ?: throw IOException("provider returned no stream")
         var written = 0L
-        try {
-            contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(dest).use { output ->
-                    val buffer = ByteArray(65_536)
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        written += read
-                        onBytes(written)
+        input.use {
+            FileOutputStream(dest).use { output ->
+                val buffer = ByteArray(65_536)
+                var nextCheck = 0L
+                while (true) {
+                    // Re-measured as we go: the pre-flight check only knows
+                    // the sizes providers chose to report, and other apps are
+                    // spending the same disk in the meantime.
+                    if (written >= nextCheck) {
+                        if (copyBudgetBytes() <= 0L) {
+                            throw IOException("not enough free space")
+                        }
+                        nextCheck = written + SPACE_RECHECK_BYTES
                     }
+                    val read = it.read(buffer)
+                    if (read < 0) break
+                    output.write(buffer, 0, read)
+                    written += read
+                    onBytes(written)
                 }
             }
-        } catch (e: Exception) {
-            Log.w(PICK_TAG, "could not copy $uri: ${e.message}")
         }
         return written
     }
 
     // Opens [uri] for a copy-free send and returns the `/proc/self/fd/<n>`
     // path the core should use, or null when this source has to be copied.
+    //
+    // Expect the copy far more often than the name suggests: on Android 17 a
+    // Pixel 7 refused the reopen for every provider tried — Files' own
+    // FileProvider, DocumentsUI's downloads root, and MediaProvider's images
+    // — because Wisp holds no storage permission and the grant covers the
+    // descriptor rather than the path.  Anything on external storage lands
+    // here.
     //
     // Two things have to hold, and neither can be assumed:
     //
@@ -1082,26 +1199,19 @@ class MainActivity : FlutterFragmentActivity() {
     // is invoked with the running byte count for this file after every chunk
     // so the caller can report copy progress.
     private fun copyUriToCache(uri: Uri, onBytes: (Long) -> Unit = {}): String? {
+        val dir = newPickedDir()
+        dir.mkdirs()
+        val cacheFile = File(dir, sanitizeFileName(resolveFileName(uri)))
         return try {
-            val fileName = sanitizeFileName(resolveFileName(uri))
-            val dir = newPickedDir()
-            dir.mkdirs()
-            val cacheFile = File(dir, fileName)
-            contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(cacheFile).use { output ->
-                    val buffer = ByteArray(65_536)
-                    var copied = 0L
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        copied += read
-                        onBytes(copied)
-                    }
-                }
-            }
+            streamUriToFile(uri, cacheFile, onBytes)
             cacheFile.absolutePath
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // Leave nothing behind.  A half-written copy is useless to the
+            // send, and the copy that ran out of room is precisely the one
+            // whose leftovers keep the device full.
+            Log.w(PICK_TAG, "could not copy $uri: ${e.message}")
+            cacheFile.delete()
+            dir.delete()
             null
         }
     }

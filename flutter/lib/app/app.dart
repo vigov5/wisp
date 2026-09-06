@@ -24,7 +24,9 @@ import '../platform/android/multicast_lock_channel.dart';
 import '../features/usb_cable/application/usb_cable_controller.dart';
 import '../platform/share_intent.dart';
 import '../features/send/application/send_selection_picker.dart';
+import '../features/send/application/source_rejections.dart';
 import '../platform/native_source.dart';
+import '../platform/android_file_picker.dart';
 import '../platform/desktop_integration.dart';
 import '../platform/windows_context_menu.dart';
 import '../platform/rust/receiver/source.dart';
@@ -44,10 +46,17 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
   late final GoRouter _router;
   late final ReceiverServiceSource _receiverService;
   late final KeepaliveLifecycleObserver _keepaliveObserver;
-  StreamSubscription<List<NativeSource>>? _shareIntentSub;
+  StreamSubscription<SharedFiles>? _shareIntentSub;
   StreamSubscription<String>? _shareTextSub;
+  StreamSubscription<List<SourceRejection>>? _pickRejectionSub;
   StreamSubscription<List<String>>? _windowsSendSub;
   StreamSubscription<void>? _windowsSurfaceSub;
+
+  // A cold-start share can finish resolving before any route is on screen to
+  // host a SnackBar, so the messenger sits above the router rather than
+  // inside whichever page happens to be showing.
+  final GlobalKey<ScaffoldMessengerState> _messengerKey =
+      GlobalKey<ScaffoldMessengerState>();
   bool _discoverableEnabled = false;
   bool _isForeground = true;
   // True while the USB-cable IP tunnel is up. Forces discoverability on so the
@@ -103,9 +112,9 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
   void _wireShareIntent() {
     if (!ShareIntent.isSupported) return;
     unawaited(
-      ShareIntent.getInitialSharedFiles().then((sources) {
+      ShareIntent.getInitialSharedFiles().then((shared) {
         if (!mounted) return;
-        _openSendDraftWith(sources);
+        _handleShare(shared);
       }),
     );
     unawaited(
@@ -114,14 +123,22 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
         _openSendTextDraftWith(text);
       }),
     );
-    _shareIntentSub = ShareIntent.onSharedFiles.listen((sources) {
+    _shareIntentSub = ShareIntent.onSharedFiles.listen((shared) {
       if (!mounted) return;
-      _openSendDraftWith(sources);
+      _handleShare(shared);
     });
     _shareTextSub = ShareIntent.onSharedText.listen((text) {
       if (!mounted) return;
       _openSendTextDraftWith(text);
     });
+    // A pick reports the same way a share does: fewer files than the user
+    // chose, and one line saying which ones the platform would not hand over.
+    if (Platform.isAndroid) {
+      _pickRejectionSub = AndroidFilePicker.onRejected.listen((rejected) {
+        if (!mounted) return;
+        _showRejections(rejected);
+      });
+    }
   }
 
   // Wires the Windows "Send via Wisp" context-menu integration.  Cold-start
@@ -228,6 +245,40 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
     await repository.markContextMenuPrompted();
   }
 
+  // Opens the draft for whatever the share produced, and says what it
+  // could not.  A file the platform refused is worth a sentence even when the
+  // rest of the share went through: dropping it silently is how a share of one
+  // large file used to look like the app doing nothing at all.
+  void _handleShare(SharedFiles shared) {
+    _openSendDraftWith(shared.sources);
+    if (shared.rejected.isNotEmpty) {
+      _showRejections(shared.rejected);
+    }
+  }
+
+  void _showRejections(List<SourceRejection> rejected) {
+    final messenger = _messengerKey.currentState;
+    if (messenger == null) {
+      // A cold-start share can resolve before the first frame — an instant
+      // refusal costs no I/O at all. Wait one frame for the messenger rather
+      // than dropping the only explanation the user gets.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _messengerKey.currentState != null) {
+          _showRejections(rejected);
+        }
+      });
+      return;
+    }
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(describeSourceRejections(rejected)),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+  }
+
   void _openSendDraftWith(List<NativeSource> sources) {
     final files = _sendPickedFilesFromSources(sources);
     if (files.isEmpty) return;
@@ -316,6 +367,7 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     unawaited(_shareIntentSub?.cancel());
+    unawaited(_pickRejectionSub?.cancel());
     unawaited(_shareTextSub?.cancel());
     unawaited(_windowsSendSub?.cancel());
     unawaited(_windowsSurfaceSub?.cancel());
@@ -457,6 +509,7 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
     return MaterialApp.router(
       title: 'Wisp',
       debugShowCheckedModeBanner: false,
+      scaffoldMessengerKey: _messengerKey,
       theme: buildWispTheme(Brightness.light),
       darkTheme: buildWispTheme(Brightness.dark),
       themeMode: themeMode,

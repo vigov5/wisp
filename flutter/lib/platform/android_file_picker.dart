@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -8,8 +9,9 @@ import 'native_source.dart';
 
 /// Files selected through Android's Storage Access Framework.
 ///
-/// Most of them are never copied anywhere: the native side opens the SAF URI
-/// and hands over the descriptor path, so [bytesCopied] counts only the
+/// The native side tries to open each SAF URI and hand over the descriptor
+/// path rather than copy it — where the platform allows that reopen, which on
+/// current Android is little of external storage.  [bytesCopied] counts the
 /// sources that had to fall back to a cache copy.  [copyElapsed] covers native
 /// metadata reads and that copying; time spent by the user in the system
 /// picker is deliberately excluded.
@@ -127,6 +129,19 @@ class AndroidFilePicker {
   static final ValueNotifier<AndroidPickProgress?> pickProgress =
       ValueNotifier<AndroidPickProgress?>(null);
 
+  /// Files the last pick could not prepare.  Emitted rather than returned
+  /// because a rejection is not a picked file: the pick still succeeds, with
+  /// fewer items than the user chose, and something has to say why.
+  static Stream<List<SourceRejection>> get onRejected => _rejected.stream;
+
+  static final StreamController<List<SourceRejection>> _rejected =
+      StreamController<List<SourceRejection>>.broadcast();
+
+  static void _reportRejections(Object? raw) {
+    final rejections = SourceRejection.parseAll(raw);
+    if (rejections.isNotEmpty) _rejected.add(rejections);
+  }
+
   static bool _wired = false;
 
   static void _ensureWired() {
@@ -156,6 +171,7 @@ class AndroidFilePicker {
         'pickFiles',
       );
       final raw = result?['sources'];
+      _reportRejections(result?['rejected']);
       return AndroidFilePickResult(
         sources: NativeSource.parseAll(raw is List ? raw : null),
         bytesCopied: BigInt.from(_nonNegativeInt(result?['bytesCopied'])),
@@ -182,6 +198,7 @@ class AndroidFilePicker {
       pickProgress.value = null;
     }
     if (result == null) return null;
+    _reportRejections(result['rejected']);
 
     final identity = result['identity'] as String?;
     if (identity == null || identity.isEmpty) return null;
