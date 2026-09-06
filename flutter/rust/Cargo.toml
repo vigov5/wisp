@@ -80,3 +80,12 @@ debug = "full"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+
+# The bridge is its own workspace, so it needs the same patch the root
+# workspace applies: iroh-blobs with a store that can read an external path
+# through a file handle the embedder already holds. Android grants a shared
+# file as a `/proc/self/fd/<n>` link whose target it refuses to open again, so
+# without this every send falls back to copying the file into the app cache.
+# See third_party/iroh-blobs/PATCH.md.
+[patch.crates-io]
+iroh-blobs = { path = "../../third_party/iroh-blobs" }

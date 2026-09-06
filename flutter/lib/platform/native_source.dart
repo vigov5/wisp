@@ -80,11 +80,11 @@ class SendSource {
     );
   }
 
-  /// The path the core opens.  On Android this may be `/proc/self/fd/<n>`:
-  /// the picked file read straight from its SAF descriptor, needing no free
-  /// space at all.  Where the platform refuses to reopen that descriptor —
-  /// which on current Android is most of external storage — it is a cache
-  /// copy instead.
+  /// The path the core opens.  On Android this is usually
+  /// `/proc/self/fd/<n>`: the picked file read straight from its SAF
+  /// descriptor, needing no free space at all.  A cache copy only where the
+  /// platform leaves no alternative — a provider that answers with a pipe
+  /// rather than a file, which cannot be read at an offset.
   final String path;
 
   /// Where this lands on the receiver, for a descriptor [path] — which ends in

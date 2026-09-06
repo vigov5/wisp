@@ -32,7 +32,6 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicLong
@@ -769,9 +768,10 @@ class MainActivity : FlutterFragmentActivity() {
             resolved[index] = mapOf(
                 "path" to fdPath,
                 "name" to names[index],
-                // Not every provider fills in OpenableColumns.SIZE, but the
-                // descriptor path always stats through to the real file.
-                "size" to (sizes[index].takeIf { it > 0L } ?: File(fdPath).length()),
+                // Not every provider fills in OpenableColumns.SIZE.  Fall back
+                // to the descriptor rather than to `File(fdPath).length()`:
+                // statting the path is the same walk that opening it fails.
+                "size" to (sizes[index].takeIf { it > 0L } ?: descriptorLength(fdPath)),
                 "copied" to false,
             )
         }
@@ -872,7 +872,7 @@ class MainActivity : FlutterFragmentActivity() {
                 mapOf(
                     "path" to fdPath,
                     "name" to file.transferPath,
-                    "size" to (file.doc.size.takeIf { it > 0L } ?: File(fdPath).length()),
+                    "size" to (file.doc.size.takeIf { it > 0L } ?: descriptorLength(fdPath)),
                     "copied" to false,
                 ),
             )
@@ -1015,24 +1015,18 @@ class MainActivity : FlutterFragmentActivity() {
     // Opens [uri] for a copy-free send and returns the `/proc/self/fd/<n>`
     // path the core should use, or null when this source has to be copied.
     //
-    // Expect the copy far more often than the name suggests: on Android 17 a
-    // Pixel 7 refused the reopen for every provider tried — Files' own
-    // FileProvider, DocumentsUI's downloads root, and MediaProvider's images
-    // — because Wisp holds no storage permission and the grant covers the
-    // descriptor rather than the path.  Anything on external storage lands
-    // here.
+    // The descriptor must point at a plain regular file: cloud providers
+    // (Drive, Dropbox) answer `openFileDescriptor` with a pipe, which has no
+    // length and cannot be read at an offset, so those still need a copy.
     //
-    // Two things have to hold, and neither can be assumed:
-    //
-    // 1. The descriptor must point at a plain regular file.  Cloud providers
-    //    (Drive, Dropbox) answer `openFileDescriptor` with a pipe, which has
-    //    no length and cannot be reopened at all.
-    // 2. The descriptor path must be reopenable.  Opening `/proc/self/fd/<n>`
-    //    is a fresh path walk, and under scoped storage that walk lands in
-    //    FUSE, which re-runs its own permission check.  So we do exactly what
-    //    the blob store will do later — open the path once, here — and treat
-    //    a failure as "this source needs a copy" rather than discovering it
-    //    mid-transfer.
+    // What is deliberately *not* required is that the path reopen.  It mostly
+    // does not: opening `/proc/self/fd/<n>` is a fresh path walk that lands in
+    // MediaProvider's FUSE daemon, which re-checks permission against our uid,
+    // and the grant we hold covers the descriptor rather than the name.  On
+    // Android 17 that refused every provider tried, which used to send every
+    // external-storage file down the copy path.  The core reads the descriptor
+    // by duplicating it instead of reopening the path — see the core's
+    // `blobs::descriptor` — so the refusal no longer matters.
     private fun openForSend(uri: Uri): String? {
         // A soft budget: two concurrent resolves can overshoot it by the
         // handful they have in flight, which is well inside the headroom.
@@ -1043,15 +1037,13 @@ class MainActivity : FlutterFragmentActivity() {
             Log.i(PICK_TAG, "cannot open $uri as a descriptor: ${e.message}")
             null
         } ?: return null
-        val path = "/proc/self/fd/${pfd.fd}"
-        val usable = try {
-            OsConstants.S_ISREG(Os.fstat(pfd.fileDescriptor).st_mode) &&
-                FileInputStream(path).use { true }
+        val regular = try {
+            OsConstants.S_ISREG(Os.fstat(pfd.fileDescriptor).st_mode)
         } catch (e: Exception) {
-            Log.i(PICK_TAG, "descriptor for $uri is not reopenable, copying instead: ${e.message}")
+            Log.i(PICK_TAG, "cannot stat descriptor for $uri, copying instead: ${e.message}")
             false
         }
-        if (!usable) {
+        if (!regular) {
             try {
                 pfd.close()
             } catch (_: IOException) {
@@ -1059,7 +1051,21 @@ class MainActivity : FlutterFragmentActivity() {
             return null
         }
         synchronized(sendFdLock) { openSendFds.add(pfd) }
-        return path
+        return "/proc/self/fd/${pfd.fd}"
+    }
+
+    // Size of the file behind a `/proc/self/fd/<n>` path, measured through the
+    // descriptor.  `File(path).length()` would stat the path, which is the walk
+    // the platform refuses for a granted file, and would quietly report 0.
+    private fun descriptorLength(fdPath: String): Long {
+        val fd = fdPath.substringAfterLast('/').toIntOrNull() ?: return 0L
+        val pfd = synchronized(sendFdLock) { openSendFds.lastOrNull { it.fd == fd } } ?: return 0L
+        return try {
+            Os.fstat(pfd.fileDescriptor).st_size
+        } catch (e: Exception) {
+            Log.w(PICK_TAG, "cannot measure descriptor $fdPath: ${e.message}")
+            0L
+        }
     }
 
     // Releases every descriptor held for a copy-free send.  Dart calls this

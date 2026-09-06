@@ -10,6 +10,7 @@ use iroh_blobs::{
 };
 use tracing::{instrument, trace};
 
+use super::descriptor::{self, DescriptorHandles};
 use super::error::{BlobError, BlobTextError, Result as BlobResult};
 use crate::{
     fs_plan::{FsPlanError, SendInput},
@@ -38,7 +39,7 @@ pub(crate) fn walk_files(input: SendInput) -> Result<Vec<(String, PathBuf)>, FsP
     if input.is_file_descriptor() {
         let root_name = input.transfer_path()?;
         let path = absolute_input_path(input.into_path())?;
-        let metadata = std::fs::metadata(&path).map_err(|source| FsPlanError::ReadMetadata {
+        let metadata = descriptor::metadata(&path).map_err(|source| FsPlanError::ReadMetadata {
             path: path.clone(),
             source,
         })?;
@@ -129,16 +130,29 @@ fn absolute_input_path(path: PathBuf) -> Result<PathBuf, FsPlanError> {
 
 #[instrument(skip(store), fields(input_path = %input.path().display()))]
 #[cfg(test)]
-pub(super) async fn import_files(store: &Store, input: SendInput) -> BlobResult<Vec<ImportedFile>> {
-    Ok(import_files_with_timings(store, input).await?.files)
+pub(super) async fn import_files(
+    store: &Store,
+    input: SendInput,
+    handles: &mut DescriptorHandles,
+) -> BlobResult<Vec<ImportedFile>> {
+    Ok(import_files_with_timings(store, input, handles)
+        .await?
+        .files)
 }
 
 #[instrument(skip(store), fields(input_path = %input.path().display()))]
 pub(super) async fn import_files_with_timings(
     store: &Store,
     input: SendInput,
+    handles: &mut DescriptorHandles,
 ) -> BlobResult<ImportFilesResult> {
     let path_display = input.path().display().to_string();
+    // Before anything looks at the path.  Everything downstream — the stat in
+    // the walk, the store's own open, and every read while serving — goes
+    // through the descriptor from here on.
+    if input.is_file_descriptor() {
+        handles.register(input.path());
+    }
     let walk_started = Instant::now();
     let files = walk_files(input)
         .map_err(|source| BlobError::import_files(path_display.clone(), source))?;
@@ -169,7 +183,7 @@ pub(super) async fn import_files_with_timings(
         imported.push(ImportedFile {
             transfer_path,
             temp_tag: tag,
-            size_bytes: std::fs::metadata(&local_path)
+            size_bytes: descriptor::metadata(&local_path)
                 .map_err(|source| {
                     BlobError::import_files(
                         path_display.clone(),
@@ -201,7 +215,7 @@ mod tests {
 
     use iroh_blobs::{api::Store, store::mem::MemStore};
 
-    use super::{import_files, walk_files};
+    use super::{DescriptorHandles, import_files, walk_files};
     use crate::fs_plan::SendInput;
 
     type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -230,7 +244,8 @@ mod tests {
         std::fs::write(nested.join("a.txt"), b"aaaa")?;
         let store: Store = MemStore::new().into();
 
-        let imported = import_files(&store, SendInput::from(input)).await?;
+        let mut handles = DescriptorHandles::new();
+        let imported = import_files(&store, SendInput::from(input), &mut handles).await?;
         let transfer_paths = imported
             .iter()
             .map(|file| file.transfer_path.clone())
@@ -254,7 +269,8 @@ mod tests {
         std::fs::write(&file_path, b"hello")?;
         let store: Store = MemStore::new().into();
 
-        let imported = import_files(&store, SendInput::from(file_path)).await?;
+        let mut handles = DescriptorHandles::new();
+        let imported = import_files(&store, SendInput::from(file_path), &mut handles).await?;
         assert_eq!(imported.len(), 1);
         assert_eq!(imported[0].transfer_path, "hello.txt");
         assert_eq!(imported[0].size_bytes, 5);
@@ -316,9 +332,10 @@ mod tests {
         }
         let store: Store = MemStore::new().into();
 
+        let mut handles = DescriptorHandles::new();
         let mut imported = Vec::new();
         for input in inputs {
-            imported.extend(import_files(&store, input).await?);
+            imported.extend(import_files(&store, input, &mut handles).await?);
         }
 
         let paths = imported
@@ -329,6 +346,134 @@ mod tests {
         assert_eq!(imported.iter().map(|file| file.size_bytes).sum::<u64>(), 9);
 
         drop(held);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A file small enough to be stored inline never becomes a referenced
+    /// path, so it is read once at import and through a different branch —
+    /// which also has to go through the descriptor when the path will not
+    /// open.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_small_unreopenable_descriptor_is_inlined_from_its_descriptor() -> Result<()> {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::PermissionsExt;
+
+        use iroh_blobs::store::fs::FsStore;
+
+        let root = unique_temp_dir("wisp-import-unreopenable-small");
+        std::fs::create_dir_all(&root)?;
+        let backing = root.join("note.txt");
+        let body = b"a note small enough to live inline".to_vec();
+        std::fs::write(&backing, &body)?;
+        let file = std::fs::File::open(&backing)?;
+        let fd_path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+        if !fd_path.exists() {
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(());
+        }
+
+        std::fs::set_permissions(&backing, std::fs::Permissions::from_mode(0o000))?;
+        if std::fs::File::open(&fd_path).is_ok() {
+            let _ = std::fs::set_permissions(&backing, std::fs::Permissions::from_mode(0o644));
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(());
+        }
+
+        let store = FsStore::load(root.join("store")).await?;
+        let mut handles = DescriptorHandles::new();
+        let imported = import_files(
+            store.as_ref(),
+            SendInput::FileDescriptor {
+                path: fd_path,
+                transfer_path: "note.txt".to_owned(),
+            },
+            &mut handles,
+        )
+        .await?;
+
+        let file_entry = imported.first().expect("one imported file");
+        assert_eq!(file_entry.size_bytes, body.len() as u64);
+        let served = store.get_bytes(file_entry.temp_tag.hash()).await?;
+        assert_eq!(&served[..], &body[..]);
+
+        drop(imported);
+        store.shutdown().await?;
+        drop(handles);
+        let _ = std::fs::set_permissions(&backing, std::fs::Permissions::from_mode(0o644));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// The case the whole descriptor path exists for.  Android grants a file
+    /// by handing over a descriptor, and refuses to open the same file by name
+    /// a second time — so the store cannot reopen `/proc/self/fd/<n>` the way
+    /// it reopens any other referenced path.  `chmod 000` reproduces that
+    /// exactly: the descriptor we are already holding keeps reading, and the
+    /// magic link stops opening.
+    ///
+    /// Uses the on-disk store because that is the one that references a file
+    /// in place instead of copying it, and so the one that has to read the
+    /// path again later.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn import_reads_a_descriptor_whose_path_cannot_be_reopened() -> Result<()> {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::PermissionsExt;
+
+        use iroh_blobs::store::fs::FsStore;
+
+        let root = unique_temp_dir("wisp-import-unreopenable");
+        std::fs::create_dir_all(&root)?;
+        let backing = root.join("granted.bin");
+        // Comfortably past `max_data_inlined`, so the store references the file
+        // rather than swallowing it whole.
+        let body = vec![0xA5u8; 256 * 1024];
+        std::fs::write(&backing, &body)?;
+        let file = std::fs::File::open(&backing)?;
+        let fd_path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+        if !fd_path.exists() {
+            // No procfs (macOS): nothing to assert here.
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(());
+        }
+
+        std::fs::set_permissions(&backing, std::fs::Permissions::from_mode(0o000))?;
+        if std::fs::File::open(&fd_path).is_ok() {
+            // Running with privileges that ignore the mode (root in a
+            // container): the refusal cannot be staged, so there is nothing to
+            // prove here.
+            let _ = std::fs::set_permissions(&backing, std::fs::Permissions::from_mode(0o644));
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(());
+        }
+
+        let store = FsStore::load(root.join("store")).await?;
+        let mut handles = DescriptorHandles::new();
+        let imported = import_files(
+            store.as_ref(),
+            SendInput::FileDescriptor {
+                path: fd_path,
+                transfer_path: "granted.bin".to_owned(),
+            },
+            &mut handles,
+        )
+        .await?;
+
+        let file_entry = imported.first().expect("one imported file");
+        assert_eq!(file_entry.transfer_path, "granted.bin");
+        assert_eq!(file_entry.size_bytes, body.len() as u64);
+        // And the bytes are actually servable afterwards, which is the part
+        // that reopens the path.
+        let served = store.get_bytes(file_entry.temp_tag.hash()).await?;
+        assert_eq!(served.len(), body.len());
+        assert_eq!(&served[..], &body[..]);
+
+        drop(imported);
+        store.shutdown().await?;
+        drop(handles);
+        let _ = std::fs::set_permissions(&backing, std::fs::Permissions::from_mode(0o644));
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
@@ -352,12 +497,14 @@ mod tests {
         }
         let store: Store = MemStore::new().into();
 
+        let mut handles = DescriptorHandles::new();
         let imported = import_files(
             &store,
             SendInput::FileDescriptor {
                 path: fd_path,
                 transfer_path: "holiday.mp4".to_owned(),
             },
+            &mut handles,
         )
         .await?;
 

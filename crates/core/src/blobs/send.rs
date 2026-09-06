@@ -13,6 +13,7 @@ use super::telemetry::{
     BlobProviderTelemetry, TransferEnd, benchmark_run_id, is_enabled as telemetry_enabled,
 };
 use super::util::import_files_with_timings;
+use crate::blobs::descriptor::DescriptorHandles;
 use crate::fs_plan::SendInput;
 use iroh::{
     Endpoint,
@@ -145,6 +146,10 @@ pub(crate) struct PreparedStore {
     collection_tag: TempTag,
     files: Vec<PreparedFile>,
     timings: PrepareTimings,
+    /// Descriptors the store reads its sources through.  Declared last so they
+    /// outlive the store itself: the store reads a referenced file every time
+    /// it serves bytes, not just at import.
+    _descriptors: DescriptorHandles,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -170,10 +175,11 @@ impl PreparedStore {
         let mut seen_transfer_paths = HashSet::new();
         let mut files_out = Vec::new();
         let mut timings = PrepareTimings::default();
+        let mut descriptors = DescriptorHandles::new();
         for input in inputs {
             let input_display = input.path().display().to_string();
             trace!(input_path = %input_display, "processing import input path");
-            let imported = import_files_with_timings(&store, input)
+            let imported = import_files_with_timings(&store, input, &mut descriptors)
                 .await
                 .map_err(|source| {
                     BlobError::import_files(
@@ -215,6 +221,7 @@ impl PreparedStore {
             collection_tag,
             files: files_out,
             timings,
+            _descriptors: descriptors,
         })
     }
 

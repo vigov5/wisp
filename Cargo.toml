@@ -105,3 +105,13 @@ walkdir = "2.5"
 thiserror = "2.0"
 if-addrs = "0.15"
 netdev = "0.40"
+
+# iroh-blobs, with one addition: a store can be told to read an external path
+# through a file handle the embedder already holds, instead of opening the path
+# itself.  Android grants a shared file as a `/proc/self/fd/<n>` magic link
+# whose target the platform refuses to open a second time, so referencing the
+# file — rather than copying gigabytes into the app cache — is only possible
+# through the descriptor.  See third_party/iroh-blobs/PATCH.md for the diff and
+# how to carry it to a newer release.
+[patch.crates-io]
+iroh-blobs = { path = "third_party/iroh-blobs" }

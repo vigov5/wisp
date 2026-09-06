@@ -9,10 +9,11 @@ import 'native_source.dart';
 
 /// Files selected through Android's Storage Access Framework.
 ///
-/// The native side tries to open each SAF URI and hand over the descriptor
-/// path rather than copy it — where the platform allows that reopen, which on
-/// current Android is little of external storage.  [bytesCopied] counts the
-/// sources that had to fall back to a cache copy.  [copyElapsed] covers native
+/// Most of them are never copied anywhere: the native side opens the SAF URI
+/// and hands over the descriptor path, which the core reads through the
+/// descriptor itself.  [bytesCopied] counts the sources that had to fall back
+/// to a cache copy — a provider answering with a pipe, or a folder tree the
+/// descriptor budget could not cover.  [copyElapsed] covers native
 /// metadata reads and that copying; time spent by the user in the system
 /// picker is deliberately excluded.
 class AndroidFilePickResult {
