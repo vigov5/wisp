@@ -1,16 +1,23 @@
 //! Streaming download: verified bytes go straight to their destination.
 //!
-//! The store-backed path ([`super::receive::SequentialBlobDownload`]) fetches
-//! the whole collection into an `FsStore` and only then exports each file, so
-//! the receiver needs room for two copies at once. Here the get response is
-//! consumed as it arrives and each chunk is written where the file actually
-//! belongs, so the peak is one copy.
+//! The receiver used to fetch a whole collection into an `FsStore` and only
+//! then export each file, so it needed room for two copies at once. Here the
+//! get response is consumed as it arrives and each chunk is written where the
+//! file actually belongs, so the peak is one copy.
 //!
 //! Verification is unchanged: the get fsm checks every chunk against the hash
 //! before yielding it, so nothing unverified is ever written. What *is*
-//! different is that a partial file now exists at a real location, so each one
-//! is built under a `.wisp-part` suffix and renamed only once its last chunk
-//! lands.
+//! different is that a partial file now exists somewhere real, and its
+//! whole-file hash is not confirmed until the last chunk lands. Two shapes
+//! handle that:
+//!
+//! - an ordinary path is built under the record dir ([`PARTS_DIR`]) and renamed
+//!   onto its destination at the end, so a file at its real name is finished by
+//!   construction and an abandoned transfer leaves nothing in the user's folder;
+//! - a platform descriptor is already the final location and is written in
+//!   place, with the platform keeping it out of sight until told otherwise
+//!   (Android marks the MediaStore entry pending, which also hides it from the
+//!   filesystem under a `.pending-…` name).
 
 use std::collections::HashMap;
 use std::io::SeekFrom;
