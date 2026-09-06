@@ -302,6 +302,12 @@ section:first-of-type {
 .download-list a:hover {
   text-decoration: underline;
 }
+/* Streamed straight to disk: nothing to click, so it reads as a plain record of
+   what arrived rather than a dead-looking link. */
+.download-list .download-saved {
+  color: var(--wc-fg);
+  font-weight: 600;
+}
 
 /* Size warning — native relay amber. */
 .warn {

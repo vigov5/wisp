@@ -2,13 +2,17 @@
 
 Browser (wasm32) peer for drift — both **receive** and **send** halves of the
 `wisp/transfer/v1` v4 control protocol (shared schema from `wisp-wire`) over a
-relay-only iroh endpoint + iroh-blobs `MemStore`. File bytes ride n0 public
-relays end-to-end; the static page that loads this wasm module carries none of
-them.
+relay-only iroh endpoint. File bytes ride n0 public relays end-to-end; the
+static page that loads this wasm module carries none of them.
 
 Two wasm-bindgen entry points, both driven from `web/app.js`:
 - [`WebReceiver`] (`src/lib.rs`) — register a code, accept inbound
-  `wisp/transfer/v1`, fetch the collection into `MemStore`, trigger downloads.
+  `wisp/transfer/v1`, and stream the collection into a browser download. No
+  store: `src/stream.rs` drives iroh-blobs' get fsm itself and forwards each
+  verified chunk to the page's sink (`src/sink.rs`, implemented by
+  `web/download-sink.js`), so a received transfer is bounded by the user's disk
+  rather than by the tab. Multi-file transfers are zipped on the way past
+  (`src/zip.rs`, streaming STORED + ZIP64).
 - [`WebSender`] (`src/send.rs`) — claim a code, dial the receiver, and send
   inline text/link (rides the offer) or a single file (staged in `MemStore` and
   served from the tab via an `iroh::protocol::Router` on the blobs ALPN, so the
@@ -37,7 +41,9 @@ cargo build --target wasm32-unknown-unknown -p wisp-web-receiver
 Notes:
 
 - `iroh` / `iroh-blobs` are pinned with `default-features = false` (drops native
-  `metrics` and the `fs-store`/`rpc` backends, leaving the wasm-safe `MemStore`).
+  `metrics` and the `fs-store`/`rpc` backends, leaving the wasm-safe `MemStore`
+  the send half stages its blob in). `bao-tree` is taken the same way — its `fs`
+  feature wants positioned-io on `std::fs::File`, which wasm doesn't have.
 - getrandom's browser backend is selected in `../../.cargo/config.toml`
   (`--cfg getrandom_backend="wasm_js"`, wasm target only) plus the `wasm_js` /
   `js` features in `Cargo.toml`.

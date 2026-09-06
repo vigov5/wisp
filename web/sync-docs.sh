@@ -30,7 +30,7 @@ echo "Stamped version v${VERSION} into web/index.html"
 sed -i "s|^const CACHE_VERSION = '[^']*';|const CACHE_VERSION = 'v${VERSION}';|" web/sw.js
 echo "Stamped CACHE_VERSION v${VERSION} into web/sw.js"
 
-cp web/index.html web/app.js web/style.css docs/
+cp web/index.html web/app.js web/download-sink.js web/style.css docs/
 # PWA assets: manifest, service worker, and installable icons.
 cp web/manifest.webmanifest web/sw.js docs/
 mkdir -p docs/icons

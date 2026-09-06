@@ -55,7 +55,7 @@
       <p class="tagline">Send &amp; receive files in your browser — peer-to-peer, no install.</p>
       <p class="brand-meta">
         <!-- Kept in sync with flutter/pubspec.yaml by web/sync-docs.sh; don't edit by hand. -->
-        <span id="app-version">v2.0.1</span>
+        <span id="app-version">v2.2.0</span>
         <span class="dot">·</span>
         <a
           href="https://github.com/vigov5/wisp"
@@ -170,13 +170,23 @@
         <button
           class="btn-link"
           type="button"
+          x-show="$store.rx.downloads.some((d) => d.url)"
           @click="$store.rx.clearDownloads()"
           title="Remove the downloaded files from this tab's memory"
         >Clear &amp; free memory</button>
       </div>
+      <!-- An entry has a url only when the page had to buffer it; one that
+           streamed to disk is already saved and has nothing left to link to. -->
       <ul class="download-list">
-        <template x-for="d in $store.rx.downloads" :key="d.url">
-          <li><a :href="d.url" :download="d.path" x-text="d.label"></a></li>
+        <template x-for="d in $store.rx.downloads" :key="d.id">
+          <li>
+            <template x-if="d.url">
+              <a :href="d.url" :download="d.path" x-text="d.label"></a>
+            </template>
+            <template x-if="!d.url">
+              <span class="download-saved" x-text="d.label"></span>
+            </template>
+          </li>
         </template>
       </ul>
     </section>

@@ -5275,6 +5275,7 @@ version = "2.2.0"
 dependencies = [
  "anyhow",
  "async-channel",
+ "bao-tree",
  "bytes",
  "console_error_panic_hook",
  "futures-lite",
@@ -5283,6 +5284,7 @@ dependencies = [
  "iroh",
  "iroh-blobs",
  "js-sys",
+ "n0-error",
  "n0-future",
  "rand 0.8.5",
  "serde",

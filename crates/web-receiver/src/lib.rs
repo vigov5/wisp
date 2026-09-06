@@ -1,35 +1,32 @@
 //! Browser (wasm32) file receiver for drift.
 //!
-//! A relay-only iroh endpoint + iroh-blobs `MemStore` that plays the receiver
-//! half of the `wisp/transfer/v1` v4 control protocol (shared schema from
-//! `wisp-wire`). All file bytes ride n0 public relays end-to-end; the static
-//! page that loads this wasm module carries none of them.
+//! A relay-only iroh endpoint playing the receiver half of the
+//! `wisp/transfer/v1` v4 control protocol (shared schema from `wisp-wire`). All
+//! file bytes ride n0 public relays end-to-end; the static page that loads this
+//! wasm module carries none of them.
 //!
 //! Registers with the rendezvous server, displays a code, and accepts inbound
 //! control connections. For each: surfaces the sender's identity, gates the
-//! offer behind an Accept/Decline decision from the UI, then (on accept) fetches
-//! the collection into memory and triggers browser downloads. Per-file progress
-//! polish, cancel, and the inline-text path land in later stages (B2/B3).
+//! offer behind an Accept/Decline decision from the UI, then (on accept) streams
+//! the collection straight into a browser download — see [`stream`] for why
+//! nothing is held on the way through.
 
-mod download;
 mod send;
+mod sink;
+mod stream;
 mod wire;
 mod zip;
 
 pub use send::WebSender;
 
-use anyhow::{Context, Result, bail};
-use futures_lite::StreamExt;
+use anyhow::{Context, Result, anyhow, bail};
 use iroh::Endpoint;
 use iroh::endpoint::Connection;
-use iroh_blobs::api::Store;
-use iroh_blobs::api::remote::GetProgressItem;
-use iroh_blobs::format::collection::Collection;
-use iroh_blobs::store::mem::MemStore;
+use iroh_blobs::ALPN as BLOBS_ALPN;
 use iroh_blobs::ticket::BlobTicket;
-use iroh_blobs::{ALPN as BLOBS_ALPN, Hash};
 use js_sys::Function;
 use serde::Serialize;
+use sink::Downloads;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -43,9 +40,10 @@ use wisp_wire::message::{
 use wisp_wire::plan::TransferPhase;
 use wisp_wire::rendezvous::RendezvousClient;
 
-/// Soft ceiling for a single transfer. Everything lands in wasm linear memory
-/// (MemStore) before download, and browser tabs realistically cap around here,
-/// so we warn the user past this — they can still choose to try.
+/// Soft ceiling for a transfer the page has to hold before it can offer it,
+/// which is what happens when the browser can't stream a download to disk. We
+/// warn the user past this — they can still choose to try. A streaming sink
+/// accumulates nothing, so the ceiling doesn't apply to it.
 const MAX_TRANSFER_BYTES: u64 = 1024 * 1024 * 1024; // 1 GiB
 
 /// How often the idle poller checks whether the code was claimed/expired.
@@ -98,10 +96,13 @@ enum Event {
         bytes_received: u64,
         total_bytes: u64,
     },
+    /// A file finished. `url` is set only when the page buffered the bytes
+    /// instead of streaming them to disk, in which case the UI has to offer the
+    /// download itself.
     FileReady {
         path: String,
         size: u64,
-        url: String,
+        url: Option<String>,
     },
     /// A text/link payload that rode inline in the offer (no file download).
     TextReady {
@@ -151,9 +152,18 @@ impl WebReceiver {
     /// Bind a relay-only endpoint, register with the rendezvous server, and
     /// start accepting inbound transfers in the background. Resolves once the
     /// 6-char code is known; `on_event` streams progress thereafter.
+    ///
+    /// `downloads` is the page's download factory — see [`sink`] for the shape
+    /// it has to have. Received bytes go straight to it as they arrive, so what
+    /// the page does with them decides whether a transfer is bounded by the
+    /// tab's memory or by the user's disk.
     #[wasm_bindgen(js_name = start)]
-    pub async fn start(rendezvous_url: String, on_event: Function) -> Result<WebReceiver, JsValue> {
-        run_start(rendezvous_url, on_event)
+    pub async fn start(
+        rendezvous_url: String,
+        on_event: Function,
+        downloads: JsValue,
+    ) -> Result<WebReceiver, JsValue> {
+        run_start(rendezvous_url, on_event, Downloads::new(downloads))
             .await
             .map_err(|e| JsValue::from_str(&format!("{e:#}")))
     }
@@ -212,9 +222,11 @@ impl WebReceiver {
     }
 }
 
-async fn run_start(rendezvous_url: String, on_event: Function) -> Result<WebReceiver> {
-    let store: Store = MemStore::new().into();
-
+async fn run_start(
+    rendezvous_url: String,
+    on_event: Function,
+    downloads: Downloads,
+) -> Result<WebReceiver> {
     // Relay-only endpoint advertising only the control ALPN (blobs are dialed
     // out, not accepted). Ephemeral identity — fine for a no-install recipient.
     let endpoint = Endpoint::builder(iroh::endpoint::presets::N0)
@@ -312,7 +324,7 @@ async fn run_start(rendezvous_url: String, on_event: Function) -> Result<WebRece
             let _ = reregister(&endpoint, &loop_client, &loop_code, &on_event).await;
             if let Err(err) = handle_connection(
                 &endpoint,
-                &store,
+                &downloads,
                 &conn,
                 &on_event,
                 &task_pending,
@@ -379,12 +391,12 @@ fn device_type_label(device_type: DeviceType) -> &'static str {
 /// Name the bundled download. When every file sits under one top-level folder
 /// (a folder send), name the zip after it (`album/…` → `album.zip`); otherwise
 /// use a neutral name.
-fn zip_archive_name(files: &[(String, Vec<u8>)]) -> String {
-    match files.first().and_then(|(p, _)| top_segment(p)) {
+fn zip_archive_name(paths: &[String]) -> String {
+    match paths.first().and_then(|path| top_segment(path)) {
         Some(top)
-            if files
+            if paths
                 .iter()
-                .all(|(p, _)| top_segment(p).as_deref() == Some(top.as_str())) =>
+                .all(|path| top_segment(path).as_deref() == Some(top.as_str())) =>
         {
             format!("{top}.zip")
         }
@@ -402,7 +414,7 @@ fn top_segment(path: &str) -> Option<String> {
 
 async fn handle_connection(
     endpoint: &Endpoint,
-    store: &Store,
+    downloads: &Downloads,
     conn: &Connection,
     on_event: &Function,
     pending: &PendingDecision,
@@ -474,7 +486,9 @@ async fn handle_connection(
             files,
             total_bytes,
             inline_text: offer.inline_text.clone(),
-            too_large: total_bytes > MAX_TRANSFER_BYTES,
+            // Only a page that has to buffer the whole payload has a size it
+            // can't cope with; a streaming sink is bounded by the disk instead.
+            too_large: total_bytes > MAX_TRANSFER_BYTES && !downloads.streams_to_disk(),
         },
     );
 
@@ -552,7 +566,7 @@ async fn handle_connection(
     // sender's `accept_uni()` deadlocks.
     let mut progress_send = conn.open_uni().await?;
 
-    // BlobTicket → dial the sender on the blobs ALPN and fetch the collection.
+    // BlobTicket → dial the sender on the blobs ALPN and stream the collection.
     let ticket_message = match wire::read_sender_message(&mut control_recv).await? {
         SenderMessage::BlobTicket(ticket) => ticket,
         other => bail!("expected BlobTicket, got {:?}", other.kind()),
@@ -565,23 +579,56 @@ async fn handle_connection(
     let connection = endpoint
         .connect(blob_ticket.addr().clone(), BLOBS_ALPN)
         .await?;
-    let mut stream = store
-        .remote()
-        .fetch(connection.clone(), blob_ticket.clone())
-        .stream();
+    let events = stream::spawn_collection(connection.clone(), blob_ticket.hash());
 
-    // Each step races the next progress item against (a) either connection
+    // One file is downloaded under its own name. Anything more is packed into a
+    // single zip as it streams, because a browser can't rebuild a directory tree
+    // on disk and per-file `<a download>`s flatten the paths away.
+    let paths: Vec<String> = offer
+        .manifest
+        .items
+        .iter()
+        .map(|item| match item {
+            ManifestItem::File { path, .. } => path.clone(),
+        })
+        .collect();
+    let mut bundle = (paths.len() > 1).then(zip::ZipStream::new);
+    let bundle_name = zip_archive_name(&paths);
+
+    // Each step races the next stream item against (a) either connection
     // dropping — so a sender that dies mid-transfer can't hang us forever — and
     // (b) a short poll tick, so we make progress even while no bytes are flowing.
-    // Re-polling `stream.next()` after a tick is cancel-safe: the fetch
-    // generator's state lives in the stream, not the dropped future.
+    // Re-polling `events.recv()` after a tick is cancel-safe: the fetch's state
+    // lives on its own task, not in the dropped future.
     enum Step {
-        Item(Option<GetProgressItem>),
+        Item(Option<stream::StreamEvent>),
         // A framed message that arrived on the control channel mid-transfer.
         Control(Result<SenderMessage>),
         Disconnected,
         Tick,
     }
+    /// Why the streaming loop stopped.
+    enum Outcome {
+        Complete,
+        Cancelled,
+        Failed(anyhow::Error),
+    }
+    /// What handling one stream item decided about the loop.
+    enum Flow {
+        Continue,
+        Complete,
+        /// The user cancelled while a call into the sink was parked.
+        Cancelled,
+    }
+
+    // The open download, and the file currently going into it. Held out here so
+    // every exit path — including the ones that fail mid-file — can tell the
+    // browser to drop a partial download instead of leaving it stuck at "in
+    // progress" forever.
+    let mut sink: Option<sink::Sink> = None;
+    let mut current: Option<(String, u64)> = None;
+    let mut received: u64 = 0;
+
     // Listen on the control channel for a sender-initiated Cancel *while* the
     // blob fetch runs. The sender writes `Cancel` on the control stream before
     // it tears the connection down (sender.rs), so watching here reacts in
@@ -591,7 +638,7 @@ async fn handle_connection(
     // it each turn could drop a partially-read frame, so once it resolves we
     // stop racing it. The block scopes the `&mut control_recv` borrow so the
     // completion handshake below can reuse the stream.
-    {
+    let outcome = {
         let mut control_read = Some(Box::pin(wire::read_sender_message(&mut control_recv)));
         let mut since_yield: u32 = 0;
         // Report progress back to the sender on its uni stream. Two reasons this
@@ -602,11 +649,16 @@ async fn handle_connection(
         // does nothing; (2) subsequent frames drive the sender's progress bar.
         // Throttled to ~512 KiB so a big transfer doesn't flood the stream.
         const PROGRESS_FRAME_BYTES: u64 = 512 * 1024;
+        // Chunks now arrive every 16 KiB — one repaint each would cost more than
+        // it shows, so the UI gets its own, coarser throttle.
+        const UI_PROGRESS_BYTES: u64 = 256 * 1024;
         let mut reported_at: u64 = 0;
         let mut reported_any = false;
+        let mut painted_at: u64 = 0;
+        let mut outcome = Outcome::Complete;
         loop {
             // Cancel is checked every iteration, not just on the idle tick: a fast,
-            // steady stream keeps `next` immediately ready, so the tick branch would
+            // steady stream keeps `recv` immediately ready, so the tick branch would
             // otherwise starve and the flag would never be observed.
             if *cancel.borrow() {
                 let _ = wire::write_receiver_message(
@@ -619,8 +671,8 @@ async fn handle_connection(
                     }),
                 )
                 .await;
-                emit(on_event, &Event::Cancelled);
-                return Ok(());
+                outcome = Outcome::Cancelled;
+                break;
             }
 
             // Yield to the browser event loop periodically. The fetch is CPU-bound
@@ -637,7 +689,7 @@ async fn handle_connection(
                 n0_future::time::sleep(Duration::from_millis(0)).await;
             }
 
-            let next = async { Step::Item(stream.next().await) };
+            let next = async { Step::Item(events.recv().await.ok()) };
             let gone = async {
                 futures_lite::future::or(conn.closed(), connection.closed()).await;
                 Step::Disconnected
@@ -658,96 +710,231 @@ async fn handle_connection(
                 None => futures_lite::future::or(next, futures_lite::future::or(gone, tick)).await,
             };
             match step {
-                Step::Item(Some(GetProgressItem::Progress(offset))) => {
-                    emit(
-                        on_event,
-                        &Event::Progress {
-                            bytes_received: offset,
-                            total_bytes,
-                        },
-                    );
-                    // Forward to the sender (throttled; always the first tick so
-                    // its accept_uni() unblocks promptly).
-                    if !reported_any || offset >= reported_at + PROGRESS_FRAME_BYTES {
-                        reported_any = true;
-                        reported_at = offset;
-                        let snapshot = TransferProgressPayload {
-                            phase: TransferPhase::Transferring,
-                            completed_files: 0,
-                            total_files: offer.manifest.count() as u32,
-                            bytes_transferred: offset.min(total_bytes),
-                            total_bytes,
-                            active_file_id: None,
-                            active_file_bytes: None,
-                        };
-                        let _ = wire::write_receiver_message(
-                            &mut progress_send,
-                            &ReceiverMessage::TransferProgress(TransferProgress {
-                                session_id: session_id.clone(),
-                                snapshot,
-                            }),
-                        )
-                        .await;
+                Step::Item(Some(item)) => {
+                    // Handling an item is fallible at every turn, and a failure
+                    // has to unwind through the sink rather than straight out of
+                    // the function, so it runs in its own block and reports back.
+                    let handled: Result<Flow> = async {
+                        match item {
+                            stream::StreamEvent::FileStart { path, size } => {
+                                match bundle.as_mut() {
+                                    Some(zip) => {
+                                        // One sink for the whole archive, opened on
+                                        // the first file. Its final size isn't known
+                                        // until the last entry is written, so the
+                                        // browser gets no length to show progress
+                                        // against.
+                                        if sink.is_none() {
+                                            let opened = or_cancelled(
+                                                downloads.open(&bundle_name, None),
+                                                cancel,
+                                            )
+                                            .await;
+                                            let Some(opened) = opened else {
+                                                return Ok(Flow::Cancelled);
+                                            };
+                                            sink = Some(opened?);
+                                        }
+                                        let header = zip.begin(&path, size);
+                                        let open = sink.as_ref().expect("just opened");
+                                        let Some(written) =
+                                            or_cancelled(open.write(&header), cancel).await
+                                        else {
+                                            return Ok(Flow::Cancelled);
+                                        };
+                                        written?;
+                                    }
+                                    None => {
+                                        // The manifest said one file, so a second
+                                        // would silently replace the first
+                                        // download and leave it hanging.
+                                        if sink.is_some() {
+                                            bail!(
+                                                "the collection holds more files than the offer did"
+                                            );
+                                        }
+                                        let opened =
+                                            or_cancelled(downloads.open(&path, Some(size)), cancel)
+                                                .await;
+                                        let Some(opened) = opened else {
+                                            return Ok(Flow::Cancelled);
+                                        };
+                                        sink = Some(opened?);
+                                        current = Some((path, size));
+                                    }
+                                }
+                            }
+                            stream::StreamEvent::Chunk(bytes) => {
+                                let open = sink
+                                    .as_ref()
+                                    .context("bytes arrived before the file they belong to")?;
+                                let Some(written) = or_cancelled(open.write(&bytes), cancel).await
+                                else {
+                                    return Ok(Flow::Cancelled);
+                                };
+                                written?;
+                                if let Some(zip) = bundle.as_mut() {
+                                    zip.data(&bytes);
+                                }
+                                received = received.saturating_add(bytes.len() as u64);
+
+                                if received.saturating_sub(painted_at) >= UI_PROGRESS_BYTES {
+                                    painted_at = received;
+                                    emit(
+                                        on_event,
+                                        &Event::Progress {
+                                            bytes_received: received,
+                                            total_bytes,
+                                        },
+                                    );
+                                }
+                                if !reported_any || received >= reported_at + PROGRESS_FRAME_BYTES {
+                                    reported_any = true;
+                                    reported_at = received;
+                                    let snapshot = TransferProgressPayload {
+                                        phase: TransferPhase::Transferring,
+                                        completed_files: 0,
+                                        total_files: offer.manifest.count() as u32,
+                                        bytes_transferred: received.min(total_bytes),
+                                        total_bytes,
+                                        active_file_id: None,
+                                        active_file_bytes: None,
+                                    };
+                                    let _ = wire::write_receiver_message(
+                                        &mut progress_send,
+                                        &ReceiverMessage::TransferProgress(TransferProgress {
+                                            session_id: session_id.clone(),
+                                            snapshot,
+                                        }),
+                                    )
+                                    .await;
+                                }
+                            }
+                            stream::StreamEvent::FileEnd => match bundle.as_mut() {
+                                Some(zip) => {
+                                    let descriptor = zip.end();
+                                    let open =
+                                        sink.as_ref().context("a file ended before it started")?;
+                                    let Some(written) =
+                                        or_cancelled(open.write(&descriptor), cancel).await
+                                    else {
+                                        return Ok(Flow::Cancelled);
+                                    };
+                                    written?;
+                                }
+                                None => {
+                                    let (path, size) =
+                                        current.take().context("a file ended before it started")?;
+                                    let open =
+                                        sink.take().context("a file ended before it started")?;
+                                    let Some(url) = or_cancelled(open.close(), cancel).await else {
+                                        return Ok(Flow::Cancelled);
+                                    };
+                                    emit(
+                                        on_event,
+                                        &Event::FileReady {
+                                            path,
+                                            size,
+                                            url: url?,
+                                        },
+                                    );
+                                }
+                            },
+                            stream::StreamEvent::Done => {
+                                if let (Some(zip), Some(open)) = (bundle.take(), sink.take()) {
+                                    let (trailer, size) = zip.finish();
+                                    let Some(written) =
+                                        or_cancelled(open.write(&trailer), cancel).await
+                                    else {
+                                        return Ok(Flow::Cancelled);
+                                    };
+                                    written?;
+                                    let Some(url) = or_cancelled(open.close(), cancel).await else {
+                                        return Ok(Flow::Cancelled);
+                                    };
+                                    emit(
+                                        on_event,
+                                        &Event::FileReady {
+                                            path: bundle_name.clone(),
+                                            size,
+                                            url: url?,
+                                        },
+                                    );
+                                }
+                                return Ok(Flow::Complete);
+                            }
+                            stream::StreamEvent::Failed(message) => bail!("{message}"),
+                        }
+                        Ok(Flow::Continue)
+                    }
+                    .await;
+                    match handled {
+                        Ok(Flow::Continue) => {}
+                        Ok(Flow::Complete) => break,
+                        Ok(Flow::Cancelled) => {
+                            outcome = Outcome::Cancelled;
+                            break;
+                        }
+                        Err(err) => {
+                            outcome = Outcome::Failed(err);
+                            break;
+                        }
                     }
                 }
-                Step::Item(Some(GetProgressItem::Done(_))) | Step::Item(None) => break,
-                Step::Item(Some(GetProgressItem::Error(err))) => bail!("blob fetch failed: {err}"),
+                // The task always signals Done or Failed before it closes the
+                // channel, so a bare close means it went away unannounced.
+                Step::Item(None) => {
+                    outcome = Outcome::Failed(anyhow!("the download stopped unexpectedly"));
+                    break;
+                }
                 // Sender asked to cancel mid-transfer — stop and show it cleanly.
                 Step::Control(Ok(SenderMessage::Cancel(_))) => {
-                    emit(on_event, &Event::Cancelled);
-                    return Ok(());
+                    outcome = Outcome::Cancelled;
+                    break;
                 }
                 // Any other control message (or a read error) mid-transfer is
                 // unexpected; stop listening and let the stream / disconnect
                 // branches drive the outcome.
                 Step::Control(_) => control_read = None,
-                Step::Disconnected => bail!("sender disconnected"),
+                Step::Disconnected => {
+                    outcome = Outcome::Failed(anyhow!("sender disconnected"));
+                    break;
+                }
                 // Idle tick: loop back so the cancel check at the top runs.
                 Step::Tick => {}
             }
         }
-    }
+        outcome
+    };
 
-    // Read the collection (path → hash) into memory.
-    let root_hash: Hash = blob_ticket.hash();
-    let collection = Collection::load(root_hash, store).await?;
-    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
-    for (path, hash) in collection.into_iter() {
-        let bytes = store.get_bytes(hash).await?.to_vec();
-        files.push((path, bytes));
-    }
-
-    if files.len() <= 1 {
-        // Single file: download it directly under its own name.
-        for (path, bytes) in &files {
-            let url = download::trigger_download(path, bytes)?;
-            emit(
-                on_event,
-                &Event::FileReady {
-                    path: path.clone(),
-                    size: bytes.len() as u64,
-                    url,
-                },
-            );
+    match outcome {
+        Outcome::Complete => {}
+        // A browser can't take back bytes it has already written, but it can be
+        // told to stop — which leaves a download the user can see failed, rather
+        // than a short file that looks whole.
+        Outcome::Cancelled => {
+            if let Some(open) = sink.take() {
+                open.abort().await;
+            }
+            emit(on_event, &Event::Cancelled);
+            return Ok(());
         }
-    } else {
-        // Multi-file / folder: pack into one STORED zip so the folder structure
-        // survives and the user gets a single download. A browser can't rebuild
-        // a directory tree on disk, and per-file `<a download>`s flatten the
-        // paths — so bundling is the only way the structure round-trips.
-        let zip_name = zip_archive_name(&files);
-        let archive = zip::build_stored_zip(&files);
-        let size = archive.len() as u64;
-        let url = download::trigger_download(&zip_name, &archive)?;
-        emit(
-            on_event,
-            &Event::FileReady {
-                path: zip_name,
-                size,
-                url,
-            },
-        );
+        Outcome::Failed(err) => {
+            if let Some(open) = sink.take() {
+                open.abort().await;
+            }
+            return Err(err);
+        }
     }
+
+    // Never let the UI throttle hide the final byte count.
+    emit(
+        on_event,
+        &Event::Progress {
+            bytes_received: received,
+            total_bytes,
+        },
+    );
 
     // Completion handshake: TransferCompleted (uni) → TransferResult (control)
     // → wait for the sender's TransferAck.
@@ -795,6 +982,29 @@ async fn handle_connection(
     };
     futures_lite::future::or(ack, n0_future::time::sleep(Duration::from_secs(3))).await;
     Ok(())
+}
+
+/// Await `work`, giving up if the user cancels while it is still parked.
+///
+/// Every call into the page's sink can block for as long as the browser likes: a
+/// download it hasn't decided to accept is never drained, and the write behind it
+/// never resolves. The transfer loop checks the cancel flag between items, so
+/// without this it would sit inside that await and the Cancel button would do
+/// nothing at all. `None` means the user gave up first; the abandoned future is
+/// just a pending JS promise, and the sink is aborted straight after.
+async fn or_cancelled<T>(
+    work: impl std::future::Future<Output = T>,
+    cancel: &Rc<RefCell<bool>>,
+) -> Option<T> {
+    let watch = async {
+        loop {
+            if *cancel.borrow() {
+                return None;
+            }
+            n0_future::time::sleep(Duration::from_millis(150)).await;
+        }
+    };
+    futures_lite::future::or(async { Some(work.await) }, watch).await
 }
 
 fn emit(on_event: &Function, event: &Event) {

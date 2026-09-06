@@ -21,6 +21,13 @@ tokio = { version = "1", default-features = false, features = ["io-util"] }
 # feature-gated, and without one `endpoint::presets` compiles away entirely.
 iroh = { version = "1.0", default-features = false, features = ["tls-ring"] }
 iroh-blobs = { version = "0.103", default-features = false }
+# The streaming receive drives iroh-blobs' get fsm directly instead of
+# filling a store, so it needs the same bao/error crates iroh-blobs itself
+# resolves - keep these in step with whatever it picks.
+# default-features off to match how iroh-blobs takes it: the `fs` feature
+# wants positioned-io on std::fs::File, which does not exist on wasm.
+bao-tree = { version = "0.16", default-features = false }
+n0-error = "1.0"
 
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"

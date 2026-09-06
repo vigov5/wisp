@@ -1,5 +1,6 @@
 import Alpine from './vendor/alpine.esm.js';
 import init, { WebReceiver, WebSender } from './pkg/wisp_web_receiver.js';
+import { downloads } from './download-sink.js';
 
 // Rendezvous server the browser registers with. Override with ?rendezvous=... for
 // local testing (e.g. ?rendezvous=http://localhost:8787). File bytes never touch
@@ -115,6 +116,8 @@ Alpine.store('rx', {
   progressText: '',
 
   downloads: [],
+  // Monotonic key for the download list; a streamed entry has no URL to use.
+  _downloadSeq: 0,
 
   text: null,
   isLink: false,
@@ -257,7 +260,10 @@ Alpine.store('rx', {
       }
 
       case 'fileReady':
+        // A null url means the file streamed straight to disk and there is
+        // nothing left in the tab to link to — it's listed, not offered.
         this.downloads.push({
+          id: ++this._downloadSeq,
           path: event.path,
           url: event.url,
           label: `${event.path} (${formatBytes(event.size)})`,
@@ -345,11 +351,13 @@ Alpine.store('rx', {
     this.receiver.refreshCode();
   },
 
-  // Drop the downloaded blobs from tab memory. Each entry holds a live object
-  // URL pinning its bytes in RAM; revoking frees them. The files are already
-  // saved to disk, so the links are just re-download shortcuts.
+  // Drop the downloaded blobs from tab memory. A buffered entry holds a live
+  // object URL pinning its bytes in RAM; revoking frees them. The files are
+  // already saved to disk, so the links are just re-download shortcuts.
+  // Streamed entries never held anything, so there is nothing to revoke.
   clearDownloads() {
     for (const d of this.downloads) {
+      if (!d.url) continue;
       try {
         URL.revokeObjectURL(d.url);
       } catch (e) {
@@ -432,7 +440,11 @@ Alpine.store('rx', {
     this.status = 'Loading…';
     try {
       await wasmReady;
-      this.receiver = await WebReceiver.start(RENDEZVOUS_URL, (e) => this.onEvent(e));
+      this.receiver = await WebReceiver.start(
+        RENDEZVOUS_URL,
+        (e) => this.onEvent(e),
+        downloads,
+      );
     } catch (err) {
       this._receiverStarted = false;
       this.status = `Failed to start: ${err}`;
@@ -656,11 +668,14 @@ Alpine.store('rx').setMode(initialMode);
 // prerequisites, alongside the manifest. Registration is best-effort: it needs
 // a secure context (https or localhost), so it silently no-ops elsewhere and
 // never blocks the transfer UI.
+//
+// Registered here rather than on `load`: the worker is also what lets a received
+// file stream to disk (download-sink.js), and `load` waits on the ~4 MB wasm
+// bundle — long enough that an early transfer would fall back to buffering it in
+// the tab for no reason.
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch((err) => {
-      console.warn('SW registration failed', err);
-    });
+  navigator.serviceWorker.register('./sw.js').catch((err) => {
+    console.warn('SW registration failed', err);
   });
 }
 
