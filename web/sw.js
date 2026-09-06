@@ -38,10 +38,20 @@ const SHELL = [
 self.addEventListener('install', (event) => {
   // Precache the shell, but don't let one missing asset abort the whole install
   // (e.g. a renamed pkg file) — add them individually and ignore failures.
+  //
+  // Nor let the cache itself failing fail the install. Storage can be
+  // unavailable outright — a locked-down profile, a browser set to block site
+  // data — and `caches.open` rejecting inside waitUntil takes the whole worker
+  // down with it: installing → redundant, registration gone, and nothing logged
+  // on the page to say so. Offline launch is a nicety; being installed at all is
+  // not.
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) =>
-      Promise.allSettled(SHELL.map((url) => cache.add(url))),
-    ),
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => Promise.allSettled(SHELL.map((url) => cache.add(url))))
+      .catch((err) => {
+        console.warn('shell precache unavailable', err);
+      }),
   );
   // Take over as soon as installed so the very next navigation is controlled.
   self.skipWaiting();
@@ -59,6 +69,9 @@ self.addEventListener('activate', (event) => {
             .map((k) => caches.delete(k)),
         ),
       )
+      // Same as install: claiming clients is the part that matters, and it
+      // must not be lost because the cache couldn't be read.
+      .catch(() => {})
       .then(() => self.clients.claim()),
   );
 });
@@ -77,18 +90,25 @@ self.addEventListener('fetch', (event) => {
         // Cache a copy of good same-origin responses for offline fallback.
         if (res && res.status === 200 && res.type === 'basic') {
           const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+          caches
+            .open(CACHE_NAME)
+            .then((cache) => cache.put(req, copy))
+            .catch(() => {});
         }
         return res;
       })
       .catch(async () => {
         // Offline: serve the cached asset, falling back to the app shell for
         // navigations (so deep links / the standalone launch still open).
-        const cached = await caches.match(req);
-        if (cached) return cached;
-        if (req.mode === 'navigate') {
-          const shell = await caches.match('./index.html');
-          if (shell) return shell;
+        try {
+          const cached = await caches.match(req);
+          if (cached) return cached;
+          if (req.mode === 'navigate') {
+            const shell = await caches.match('./index.html');
+            if (shell) return shell;
+          }
+        } catch (err) {
+          /* no storage to fall back on */
         }
         return Response.error();
       }),
