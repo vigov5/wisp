@@ -24,6 +24,7 @@ jobs:
           sparse-checkout: |
             flutter
             crates
+            third_party
             Cargo.toml
             Cargo.lock
 
@@ -113,6 +114,7 @@ jobs:
           sparse-checkout: |
             flutter
             crates
+            third_party
             Cargo.toml
             Cargo.lock
 
@@ -220,6 +222,7 @@ jobs:
           sparse-checkout: |
             flutter
             crates
+            third_party
             Cargo.toml
             Cargo.lock
 
@@ -291,6 +294,7 @@ jobs:
           sparse-checkout: |
             flutter
             crates
+            third_party
             Cargo.toml
             Cargo.lock
 
