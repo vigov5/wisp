@@ -42,18 +42,41 @@ D4's third bullet asks for and nobody has instrumented. Treat the numbers above
 as evidence the transport is fine in both directions, and the app-level path as
 unmeasured.
 
-### Status as of 2026-09-08 — a fast link inverts the headline
+### Status as of 2026-09-08 — the ceiling is the sender, not the app
 
 Read this before the 2026-08-16 status below, whose central conclusion it
-supersedes for any link faster than the tether.
+supersedes.
 
-That conclusion — "no single large win left above the transport" — was drawn on
-a link carrying 37 MiB/s. Running the same decomposition **Pixel 4 → Pixel 7
-over 5 GHz Wi-Fi**, where raw TCP carries 67.7 MiB/s, the app lands at **28% of
-the link and 46% of its own transport**. Above the transport there is now a
-factor of 2.2, and it is the largest single loss in the stack.
+**The app is not slow. The Pixel 4 is slow at sending.** Every "app payload"
+figure this plan has recorded was taken with an Android sender and attributed to
+Wisp. Swap the sender for a desktop, keeping the same receiver, the same
+version and the same Wi-Fi, and the app runs at **89-95% of its link**:
 
-Interleaved A/B/C, three cycles, 512 MiB single file per arm, one direction:
+| cycle | TCP, desktop → Pixel 7 | app | of TCP |
+| --- | --- | --- | --- |
+| 1 | 40.32 | 38.30 | **95.0%** |
+| 2 | 39.05 | 33.72 | 86.4% |
+| 3 | 41.66 | 37.25 | 89.4% |
+
+There is no factor of 2.2 above the transport, no blob-layer tax worth chasing
+and no QUIC tax worth 40% — not as properties of the code. They are all
+properties of that phone's send path, and they are large:
+
+| | Pixel 4 sender | desktop sender |
+| --- | --- | --- |
+| raw TCP on the path | 67.66 | 40.32 |
+| raw QUIC (mem / file source) | 41.1 / 33.3 | — |
+| **app payload** | **18.72 (28% of TCP)** | **37.25 (92% of TCP)** |
+
+And the phone is not the floor either: **LocalSend sends from the same Pixel 4
+at 65 MB/s**, 92% of the same 67.7 MiB/s TCP ceiling. So the hardware carries
+62 MiB/s of application payload; Wisp gets 18.7 out of it, and raw QUIC from
+that phone gets only 33-41. Both of Wisp's sending layers degrade on the P4 and
+neither degrades on the desktop, which is the signature of a cost paid per byte
+by the CPU.
+
+Interleaved A/B/C with the **phone** as sender, three cycles, 512 MiB single
+file per arm:
 
 | cycle | TCP | raw QUIC (mem source) | app | app/TCP | app/QUIC |
 | --- | --- | --- | --- | --- | --- |
@@ -62,7 +85,7 @@ Interleaved A/B/C, three cycles, 512 MiB single file per arm, one direction:
 | 3 | 77.06 | 39.50 | 18.72 | 24.3% | 47.4% |
 | **median** | **67.66** | **41.10** | **18.72** | **27.9%** | **45.7%** |
 
-Against the tether decomposition, both layers get worse as the link speeds up:
+Against the tether decomposition, the ratios collapse as the link speeds up:
 
 | stage | tether | of TCP | Wi-Fi | of TCP |
 | --- | --- | --- | --- | --- |
@@ -70,38 +93,48 @@ Against the tether decomposition, both layers get worse as the link speeds up:
 | raw QUIC, memory source | 27.70 | 74% | 41.10 | **61%** |
 | app payload | 20.69 | 56% | 18.72 | **28%** |
 
-The QUIC tax is therefore **not a constant**: userspace QUIC costs CPU per byte,
-so it surfaces as the rate climbs. A baseline taken on a slow link understates
-it, which is how 74% became 61%.
-
-**The decisive observation is invariance, not the ratio.** TCP drifted
-65.3 → 77.1 MiB/s across the three cycles — an 18% swing — while the app moved
-18.63 → 18.72. It also reproduces the tether's 20.69 MiB/s on a link twice as
-fast. Wisp is pinned near 19-21 MiB/s *independent of link capacity*, and that
-is not the shape of a proportional cost. Crypto per byte, a sending-side read
-worth 15% of the wall, and a blob layer worth 12% would all scale with the
-link. Something in the app runs at a fixed rate.
+Which is the trap: those percentages were never measuring a proportional cost.
+**The Pixel 4 sender emits a near-constant rate**, so every ratio built on it
+just tracks the denominator. TCP drifted 65.3 → 77.1 MiB/s across the three
+cycles — an 18% swing — while the app moved 18.63 → 18.72, and 18.72 reproduces
+the tether's 20.69 on a link twice as fast. Read the "56% of TCP" and "75% of
+raw QUIC" figures in the 2026-08-16 status as artefacts of a ~37 MiB/s link,
+not as budgets to divide up.
 
 Ruled out in the same session, each by measurement:
 
 - **Flow control.** Loaded RTT is 5.9 ms mean / 17.9 ms max at 0% loss, so the
   Android receiver's 8 MiB stream window admits about 1.3 GiB/s. E1's "inert"
   verdict survives, for a reason E1 never tested.
-- **CPU saturation.** About 1.6 of 8 cores on the sender and 4.2 of 8 on the
-  receiver mid-transfer. The receiver's share is high for 19 MiB/s and is worth
-  a profile, but neither end is out of headroom.
 - **The link.** 67.7 MiB/s median TCP, best run 77.1, in the same direction.
 - **Connection setup.** `send.nearby_picked` → `prepared manifest` is
   1.31-1.50 s (BLAKE3 import of 512 MiB), well outside the transfer window the
   throughput is computed over.
+- **The whole receiving side, twice.** A desktop receiver — 2.6x the hash rate,
+  2.8x the write rate — measures 19.16 MiB/s against the phone's 18.72. And
+  pipelining the receiver's writes (its loop did a seek and a `write_all` per
+  16 KiB leaf before reading the next one, with no overlap) moved the app
+  18.72 → 19.19 against a TCP baseline that itself drifted 67.66 → 69.96, i.e.
+  nothing. The change is parked unmerged on
+  `perf/receiver-write-pipelining-unproven`; it is correct in principle and may
+  start to bind once the sender is fixed, but the receiver is not the
+  constraint and nothing on that side can move this number.
+- **Aggregate CPU as a summary statistic.** ~1.6 of 8 cores on the sender and
+  4.2 of 8 on the receiver, and no single thread above 31% (sender) or 15%
+  (receiver), spread across `tokio-rt-worker` and `iroh-blob-store`. Whatever
+  the sender is spending, `top`-level totals do not show it as saturation —
+  which is why the next step is a profile and not another sweep.
 
-Reference point: **LocalSend 1.18.2 moves the same direction at 65 MB/s**
-(62 MiB/s), about 92% of the TCP median here. That figure is its own UI's,
-not this harness's, so treat it as an order-of-magnitude marker rather than a
-measured arm — but it is above *both* of Wisp's losses, and LocalSend reaches it
-over TLS on TCP with 512 KiB pipelined buffers, one HTTP/1.1 POST per file and
-two files in flight. Its SHA-256 is optional and runs as a *separate pass before*
-the transfer, so its displayed rate excludes hashing that Wisp does inline.
+On the reference point, because it carries the weight of item 1: **LocalSend
+1.18.2 sends from this same Pixel 4 at 65 MB/s** (62 MiB/s), about 92% of the
+TCP median here — the same fraction the desktop-sender arm of Wisp reaches. That
+figure is its own UI's, not this harness's, so treat it as an order-of-magnitude
+marker rather than a measured arm; but it is the evidence that 18.7 is not a
+property of the phone. LocalSend reaches it over TLS on TCP with 512 KiB
+pipelined buffers, one HTTP/1.1 POST per file and two files in flight. Its
+SHA-256 is optional and runs as a *separate pass before* the transfer, so its
+displayed rate excludes hashing that Wisp does inline — worth remembering before
+reading the gap as entirely ours.
 
 Two cautions this session adds to the two already below.
 
@@ -118,25 +151,40 @@ after 512 KiB on a large stream and reports no error. Any "TCP through `nc`"
 figure in this document — including the 37.27 MiB/s tether baseline — is worth
 re-taking with `examples/tcp_baseline.rs`, added for this purpose.
 
-Open, in priority order:
+Open, in priority order. Note that every item is now scoped to the **sending**
+side, and that D4 (export) and the whole receiving branch can be closed on this
+evidence.
 
-1. **Where the fixed ~19 MiB/s comes from.** It is above the transport and it is
-   not flow control, CPU or the link. iroh-blobs verifies in 16 KiB BAO chunk
-   groups, and 19 MiB/s is about 1,200 groups/s, or 0.8 ms per group — close
-   enough to a per-group await to be worth instrumenting before anything else.
-2. **The QUIC/TCP gap at rate.** Even a perfect app over this transport caps at
-   41 MiB/s here. Closing it means a TCP path for same-LAN peers, which is what
-   LocalSend has; Wisp already has a non-iroh transport precedent in AOA.
+1. **Profile the Pixel 4's send path.** Two stacked costs to attribute, both
+   absent on the desktop: raw QUIC from that phone reaches only 33-41 MiB/s
+   where TCP reaches 67.7, and Wisp's blob serving then halves it again to 18.7.
+   LocalSend proves the phone itself can push 62 MiB/s, so neither number is a
+   hardware floor. Aggregate CPU is unrevealing (see above), so this wants a
+   sampling profiler or per-stage timing inside the provider, not another knob
+   sweep. Everything else here is downstream of the answer.
+2. **Check for thermal or core-placement effects while profiling.** The P4 read
+   59 °C mid-session with `mStatus=0`, and a 2019 SoC placing a per-byte stage
+   on a little core would look exactly like this: a fixed low rate with plenty
+   of idle cores and no saturated thread.
 3. **Advertised address count.** The receiver offers nine addresses — `tun0`,
    two `rmnet` (one a carrier address), `wlan1`, and five IPv6 — of which one is
    dialable on the LAN. Same failure mode the USB work solved with a dial-only
    address, and a candidate for the 2.5 s between manifest and offer arrival.
+   Independent of throughput; affects time-to-first-byte.
+4. **A TCP path for same-LAN peers.** Still the only way to remove the QUIC tax
+   outright, and Wisp has a non-iroh transport precedent in AOA. But it is now
+   clearly *second*: the desktop sender shows QUIC costing under 10% end to end
+   on a 40 MiB/s link, so this is a ceiling-raiser for fast links, not the
+   explanation for anything measured so far.
 
 ### Status as of 2026-08-16 — phone to desktop is measured out
 
 Read this before any section below, several of which record superseded
-conclusions in place. Its "no single large win left above the transport" holds
-only for links around 37 MiB/s; see the 2026-09-08 status above.
+conclusions in place. Its own central claim is now superseded too: everything
+here was measured with an **Android sender**, and the 2026-09-08 status above
+shows that is what the numbers were measuring. "No single large win left above
+the transport" is false — swapping the sender is worth 2x — and the percentages
+below are artefacts of a ~37 MiB/s link.
 
 On the one path this plan has measured properly — Android sender to desktop
 receiver, iroh 1.0.3, over a USB tether — **there is no single large win left
