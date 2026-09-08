@@ -265,7 +265,13 @@ async fn choose_source(
         // real connection and handshake, thrown away: the alternative is
         // discovering on file 1 of 76 that the port is firewalled.
         match crate::lan_transport::dial(target, &lan.secret, peer).await {
-            Ok(_probe) => {
+            Ok(mut probe) => {
+                // Close it properly rather than dropping it: a TLS stream that
+                // ends without close_notify makes the provider log a truncation
+                // warning for what was a successful probe, and a warning that
+                // fires on every healthy transfer is a warning nobody reads.
+                use tokio::io::AsyncWriteExt;
+                let _ = probe.shutdown().await;
                 debug!(%target, "blob source: lan tcp");
                 return Ok((BlobSource::LanTcp(lan), transport_profile));
             }

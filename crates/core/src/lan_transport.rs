@@ -29,7 +29,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use iroh::{EndpointAddr, PublicKey, SecretKey, TransportAddr};
-use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
 use tracing::debug;
@@ -261,19 +261,63 @@ impl<R: AsyncRead + Unpin + Send> iroh_blobs::util::AsyncReadRecvStreamExtra for
 }
 
 /// The write half of a byte stream, as an `iroh-blobs` send stream.
-pub struct LanSendStream<W>(W);
+///
+/// # Why this closes itself
+///
+/// The get protocol signals "the request is complete" by **dropping the write
+/// half**, and the provider will not answer until it sees the resulting EOF
+/// (`StreamPair::into_writer` awaits `expect_eof`). Dropping a QUIC
+/// `SendStream` finishes the stream, and dropping tokio's `OwnedWriteHalf`
+/// shuts the socket down — but dropping a `tokio::io::split` `WriteHalf`, which
+/// is the only way to split a TLS stream, does neither. Without this the two
+/// sides deadlock with empty socket queues, each waiting for the other.
+///
+/// A bare TCP FIN is not enough either: rustls reports a stream that ends
+/// without close_notify as a truncation *error*, not as EOF, so `expect_eof`
+/// would fail rather than succeed. The close has to happen at the TLS layer,
+/// and `a_half_closed_tls_stream_still_carries_the_response` is the test that
+/// the response survives it.
+///
+/// `Drop` cannot await, so the shutdown is spawned. It runs before the peer
+/// could notice, because the only thing the dropping side does next is block
+/// reading the response. With no runtime to spawn onto there is nothing useful
+/// to do, and the connection is being torn down anyway.
+pub struct LanSendStream<W: AsyncWrite + Unpin + Send + 'static>(Option<W>);
 
-impl<W> LanSendStream<W> {
+impl<W: AsyncWrite + Unpin + Send + 'static> LanSendStream<W> {
     pub fn new(inner: W) -> Self {
-        Self(inner)
+        Self(Some(inner))
+    }
+
+    /// The live half. Only `Drop` takes it, so every other use is before that.
+    fn half(&mut self) -> &mut W {
+        self.0
+            .as_mut()
+            .expect("the write half is only taken when dropping")
     }
 }
 
-impl<W: AsyncWrite + Unpin + Send> iroh_blobs::util::AsyncWriteSendStreamExtra
+impl<W: AsyncWrite + Unpin + Send + 'static> Drop for LanSendStream<W> {
+    fn drop(&mut self) {
+        let Some(mut half) = self.0.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        runtime.spawn(async move {
+            // Best effort: the peer may already be gone, and a failure here
+            // only means the transfer fails the way it was going to anyway.
+            let _ = half.shutdown().await;
+        });
+    }
+}
+
+impl<W: AsyncWrite + Unpin + Send + 'static> iroh_blobs::util::AsyncWriteSendStreamExtra
     for LanSendStream<W>
 {
     fn inner(&mut self) -> &mut (impl AsyncWrite + Unpin + Send) {
-        &mut self.0
+        self.half()
     }
 
     fn reset(&mut self, _code: iroh::endpoint::VarInt) -> std::io::Result<()> {
@@ -448,5 +492,87 @@ mod tests {
             waited < LAN_TCP_CONNECT_CAP * 3,
             "gave up after {waited:?}, cap is {LAN_TCP_CONNECT_CAP:?}"
         );
+    }
+
+    /// The exact shape the get protocol needs, which a plain TCP socket gave by
+    /// accident and a TLS stream does not.
+    ///
+    /// `iroh-blobs` has the getter write its request and then **drop the write
+    /// half**, and the provider waits for EOF on its read half
+    /// (`StreamPair::into_writer` -> `expect_eof`) before answering. Dropping a
+    /// QUIC `SendStream` finishes the stream; dropping tokio's `OwnedWriteHalf`
+    /// shuts the socket's write side; dropping a `tokio::io::split` `WriteHalf`
+    /// does neither. So the half-close has to be explicit — and the question
+    /// this test exists to answer is whether TLS survives it: after the client
+    /// sends close_notify, can the server still write its response, and can the
+    /// client still read it?
+    #[tokio::test]
+    async fn a_half_closed_tls_stream_still_carries_the_response() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let server_key = SecretKey::generate();
+        let client_key = SecretKey::generate();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server_secret = server_key.clone();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let (stream, _) = accept(tcp, &server_secret).await.expect("accept");
+            let (mut read, mut write) = tokio::io::split(stream);
+            // Read the request, then to EOF, the way `expect_eof` does.
+            let mut request = [0u8; 7];
+            read.read_exact(&mut request).await.expect("request");
+            let mut tail = Vec::new();
+            let eof = read.read_to_end(&mut tail).await;
+            // Answer only after having seen the end of the request.
+            let wrote = write.write_all(b"response").await;
+            let flushed = write.flush().await;
+            // The answering side has to close cleanly too. A first draft
+            // dropped the stream here instead, and the test failed on the
+            // client's read — a truncated stream, not the half-close it was
+            // written to examine.
+            let closed = write.shutdown().await;
+            (
+                request,
+                tail.len(),
+                eof.is_ok(),
+                wrote.is_ok(),
+                flushed.is_ok() && closed.is_ok(),
+            )
+        });
+
+        let stream = dial(addr, &client_key, server_key.public())
+            .await
+            .expect("dial");
+        let (mut read, mut write) = tokio::io::split(stream);
+        write.write_all(b"request").await.unwrap();
+        write.flush().await.unwrap();
+        // The half-close under test.
+        write
+            .shutdown()
+            .await
+            .expect("shutdown should send close_notify");
+
+        let mut answer = Vec::new();
+        let read_back = read.read_to_end(&mut answer).await;
+
+        let (request, tail, eof_ok, wrote_ok, flushed_ok) = server.await.unwrap();
+        assert_eq!(&request, b"request");
+        assert_eq!(tail, 0, "nothing should follow the request");
+        assert!(
+            eof_ok,
+            "the server must see a clean EOF, not a truncation error"
+        );
+        assert!(
+            wrote_ok,
+            "the server must still be able to write after close_notify"
+        );
+        assert!(flushed_ok, "and to flush it");
+        assert!(
+            read_back.is_ok(),
+            "the client must still be able to read: {read_back:?}"
+        );
+        assert_eq!(answer, b"response", "the response must arrive intact");
     }
 }
