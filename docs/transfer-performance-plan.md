@@ -215,17 +215,49 @@ after 512 KiB on a large stream and reports no error. Any "TCP through `nc`"
 figure in this document — including the 37.27 MiB/s tether baseline — is worth
 re-taking with `examples/tcp_baseline.rs`, added for this purpose.
 
-Closed by this session: the whole receiving branch, D4 (export), E1 (window),
-and the "25% above the transport" the August status asked about. None of them
-were the constraint; the sender's syscall rate was.
+#### Shipped, and measured: 3.23x
+
+The LAN TCP transport is in. Same pair, same direction, same 512 MiB, still
+interleaved with raw TCP, medians of three:
+
+| | MiB/s | of TCP | |
+| --- | --- | --- | --- |
+| raw TCP | 77.82 | 100% | denominator |
+| app over QUIC | 18.72 | 24% | where this started |
+| app over TCP, serial writes | 32.52 | 42% | 1.74x |
+| **app over TCP, pipelined writes** | **60.39** | **77.6%** | **3.23x** |
+
+LocalSend sends from this same phone at about 62 MiB/s, so that is parity.
+
+Two findings worth keeping, both of which cost a round of measurement.
+
+**The spike hid a bug.** `blob_over_tcp` reached 72.58 MiB/s over plain TCP and
+was taken as proof the protocol runs over a stream pair. It does — but it ran
+because tokio's `into_split()` shuts the socket down when the write half drops,
+which is how the getter signals end-of-request (the provider awaits
+`expect_eof` before answering). A TLS stream can only be split with
+`tokio::io::split`, whose `WriteHalf` drops silently, so the first real run
+deadlocked for 47 minutes with empty socket queues. The fix half-closes at the
+TLS layer; a bare FIN would not do, because rustls reports a stream ending
+without close_notify as an error rather than EOF. The gap between a spike and
+the real thing is where that bug lived.
+
+**A change that measures zero can still be right.** The receiver's per-leaf
+`seek` + `write_all` was measured at 18.72 → 19.19 MiB/s this morning — noise —
+and parked unmerged with a note that it would start to bind once the sending
+side was fixed. With the transport at 4x it is worth 1.86x on its own, which is
+most of the total. Parking it rather than deleting it is what made reviving it
+a cherry-pick.
+
+Closed by this session: the whole receiving branch (for the QUIC-bound reason,
+not permanently — see above), D4 (export), E1 (window), and the "25% above the
+transport" the August status asked about. None of them were the constraint; the
+sender's syscall rate was.
 
 Open, in priority order:
 
-1. **A TCP path for same-LAN peers.** Promoted from last to first, and now
-   priced at **3.9x** on the Pixel 4 by `examples/blob_over_tcp.rs` rather than
-   estimated. The protocol work is done — the spike proves the blob layer runs
-   over a stream pair at 97% of line rate — so what remains is the transport
-   around it:
+1. ~~**A TCP path for same-LAN peers.**~~ **Done**, at 3.23x. What was left of
+   it when this list was written, for the record:
    - **TLS over the socket**, pinned to the existing peer identity. This is the
      real work and the only part with security consequences; do not ship the
      spike's bare socket.
