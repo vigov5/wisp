@@ -71,9 +71,36 @@ properties of that phone's send path, and they are large:
 And the phone is not the floor either: **LocalSend sends from the same Pixel 4
 at 65 MB/s**, 92% of the same 67.7 MiB/s TCP ceiling. So the hardware carries
 62 MiB/s of application payload; Wisp gets 18.7 out of it, and raw QUIC from
-that phone gets only 33-41. Both of Wisp's sending layers degrade on the P4 and
-neither degrades on the desktop, which is the signature of a cost paid per byte
-by the CPU.
+that phone gets only 33-41.
+
+#### Why: the Pixel 4's kernel has no UDP GSO
+
+A sampling profile of the sending process, mid-payload, puts **59% of its cycles
+in the kernel** and almost none in the work you would suspect — `blake3` 4.7%,
+ring's AES-GCM 3.1%, quinn's `poll_transmit*` about 5%. That is not a compute
+cost, it is a syscall rate. And the cause is one line of capability:
+
+| sender | kernel | `max_gso_segments` | app | of that path's TCP |
+| --- | --- | --- | --- | --- |
+| Pixel 4 | 4.14.276 | **1** | 18.72 | **28%** |
+| Pixel 7 | 6.1.157 | **64** | 26.46 | **64%** |
+| desktop (Windows) | — | **512** | 37.25 | **92%** |
+
+`UDP_SEGMENT` landed in Linux 4.18. The Pixel 4 is on 4.14, so quinn gets no
+generic send offload and issues **one `sendmsg` per ~1250-byte datagram** —
+about 16,000 a second at 19 MiB/s, and ~28,000 at the 33 MiB/s raw QUIC
+reaches. The fraction of link each sender achieves rises monotonically with its
+GSO segment count, and the receiver is not a confound (it was ruled out twice,
+below).
+
+This is also the whole of LocalSend's advantage on that phone. TCP gets
+segmentation offload from any kernel, so its syscalls-per-byte does not depend
+on being newer than 4.18.
+
+Measured with `simpleperf record -e cpu-clock`; `cpu-cycles` gives the same
+59.3%. The Pixel 7 arm of the profile is missing because that device exposes
+neither `cpu-cycles` nor `cpu-clock` to a non-root process, so its share is
+inferred from the throughput ladder rather than measured.
 
 Interleaved A/B/C with the **phone** as sender, three cycles, 512 MiB single
 file per arm:
@@ -151,31 +178,33 @@ after 512 KiB on a large stream and reports no error. Any "TCP through `nc`"
 figure in this document — including the 37.27 MiB/s tether baseline — is worth
 re-taking with `examples/tcp_baseline.rs`, added for this purpose.
 
-Open, in priority order. Note that every item is now scoped to the **sending**
-side, and that D4 (export) and the whole receiving branch can be closed on this
-evidence.
+Closed by this session: the whole receiving branch, D4 (export), E1 (window),
+and the "25% above the transport" the August status asked about. None of them
+were the constraint; the sender's syscall rate was.
 
-1. **Profile the Pixel 4's send path.** Two stacked costs to attribute, both
-   absent on the desktop: raw QUIC from that phone reaches only 33-41 MiB/s
-   where TCP reaches 67.7, and Wisp's blob serving then halves it again to 18.7.
-   LocalSend proves the phone itself can push 62 MiB/s, so neither number is a
-   hardware floor. Aggregate CPU is unrevealing (see above), so this wants a
-   sampling profiler or per-stage timing inside the provider, not another knob
-   sweep. Everything else here is downstream of the answer.
-2. **Check for thermal or core-placement effects while profiling.** The P4 read
-   59 °C mid-session with `mStatus=0`, and a 2019 SoC placing a per-byte stage
-   on a little core would look exactly like this: a fixed low rate with plenty
-   of idle cores and no saturated thread.
-3. **Advertised address count.** The receiver offers nine addresses — `tun0`,
+Open, in priority order:
+
+1. **A TCP path for same-LAN peers.** Promoted from last to first. It is the
+   only lever that helps a sender whose kernel predates 4.18, it is worth ~3x
+   there, and it is exactly how LocalSend gets 62 MiB/s off the Pixel 4. Wisp
+   already has a non-iroh transport precedent in AOA. Note the scope: this is
+   for peers already on the same LAN, where the relay and hole-punching that
+   justify QUIC are not in play.
+2. **Decide what "supported" means for pre-4.18 kernels.** No code change moves
+   GSO onto a 2019 device. Every benchmark in this plan before today used the
+   worst possible sender, so the numbers users on kernel 4.19+ already see are
+   1.5-3x better than anything recorded here. Re-baseline on a modern phone
+   before setting any throughput target, and keep the Pixel 4 as the *floor*
+   case rather than the reference case.
+3. **The Pixel 7's residual 36%.** GSO 64 gets 64% of its link where GSO 512
+   gets 92%. Whether the rest is the segment count, ARM crypto throughput, or
+   something else is unmeasured — its perf events are closed to a non-root
+   process, so this needs either a rooted device or in-process instrumentation.
+4. **Advertised address count.** The receiver offers nine addresses — `tun0`,
    two `rmnet` (one a carrier address), `wlan1`, and five IPv6 — of which one is
    dialable on the LAN. Same failure mode the USB work solved with a dial-only
    address, and a candidate for the 2.5 s between manifest and offer arrival.
    Independent of throughput; affects time-to-first-byte.
-4. **A TCP path for same-LAN peers.** Still the only way to remove the QUIC tax
-   outright, and Wisp has a non-iroh transport precedent in AOA. But it is now
-   clearly *second*: the desktop sender shows QUIC costing under 10% end to end
-   on a 40 MiB/s link, so this is a ceiling-raiser for fast links, not the
-   explanation for anything measured so far.
 
 ### Status as of 2026-08-16 — phone to desktop is measured out
 
