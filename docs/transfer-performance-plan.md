@@ -102,6 +102,43 @@ Measured with `simpleperf record -e cpu-clock`; `cpu-cycles` gives the same
 neither `cpu-cycles` nor `cpu-clock` to a non-root process, so its share is
 inferred from the throughput ladder rather than measured.
 
+#### Priced: the same blob protocol over TCP is 3.9x on that phone
+
+`examples/blob_over_tcp.rs` runs the real get protocol — same request, same BAO
+verified stream, same `provider::handle_stream` — over a `TcpStream` instead of
+a QUIC connection. Pixel 4 provides, Pixel 7 fetches, interleaved with raw TCP:
+
+| cycle | raw TCP | blob over TCP | of TCP |
+| --- | --- | --- | --- |
+| 1 | 63.48 | 73.28 | 115%* |
+| 2 | 74.84 | 72.58 | **97.0%** |
+| 3 | 75.23 | 70.64 | 93.9% |
+
+\* the TCP arm drew a low run that cycle; the link drifts between arms, which is
+why they are interleaved at all.
+
+**72.58 MiB/s median against 18.72 for the app over QUIC.** So the blob layer is
+not a bottleneck on that phone in any sense — it feeds a TCP socket at 97% of
+line rate. The entire gap was the syscall cost of QUIC on a kernel without GSO.
+
+Integrity is not traded for it: the get fsm verifies every chunk against the
+hash before yielding it, so a fetch that completes at the declared size has
+already proved the bytes.
+
+What it took, which is the other half of the estimate: **one addition to the
+vendored crate.** Every get state after `AtConnected` and the whole provider
+side were already generic over `RecvStream`/`SendStream`; only `fsm::start` was
+tied to `iroh`, and only because it needs something to call `open_bi` on.
+`fsm::start_with_streams` takes the stream pair directly. The TCP adapters are
+~40 lines on top of the crate's own `AsyncReadRecvStream`/`AsyncWriteSendStream`
+helpers.
+
+The spike is deliberately **not** a transport: its socket is unencrypted and
+unauthenticated. A shippable version has to carry TLS over the TCP socket pinned
+to the peer identity Wisp already has — the shape LocalSend uses — and that
+budget is affordable: ring's AES-GCM was 3.1% of the sender's cycles against
+59% in the kernel, and TLS records are 16 KiB, so the syscall count stays low.
+
 Interleaved A/B/C with the **phone** as sender, three cycles, 512 MiB single
 file per arm:
 
@@ -184,12 +221,21 @@ were the constraint; the sender's syscall rate was.
 
 Open, in priority order:
 
-1. **A TCP path for same-LAN peers.** Promoted from last to first. It is the
-   only lever that helps a sender whose kernel predates 4.18, it is worth ~3x
-   there, and it is exactly how LocalSend gets 62 MiB/s off the Pixel 4. Wisp
-   already has a non-iroh transport precedent in AOA. Note the scope: this is
-   for peers already on the same LAN, where the relay and hole-punching that
-   justify QUIC are not in play.
+1. **A TCP path for same-LAN peers.** Promoted from last to first, and now
+   priced at **3.9x** on the Pixel 4 by `examples/blob_over_tcp.rs` rather than
+   estimated. The protocol work is done — the spike proves the blob layer runs
+   over a stream pair at 97% of line rate — so what remains is the transport
+   around it:
+   - **TLS over the socket**, pinned to the existing peer identity. This is the
+     real work and the only part with security consequences; do not ship the
+     spike's bare socket.
+   - **Advertising the TCP port** and choosing it only for peers on the same
+     LAN, where the relay and hole-punching that justify QUIC are not in play.
+     Wisp already has a non-iroh transport precedent in AOA.
+   - **Falling back to QUIC** cleanly when the TCP path fails or the peer is not
+     local, without paying the 4-5 s dial twice.
+   - `fsm::start_with_streams` is already in the vendored crate; it is the only
+     upstream change the spike needed.
 2. **Decide what "supported" means for pre-4.18 kernels.** No code change moves
    GSO onto a 2019 device. Every benchmark in this plan before today used the
    worst possible sender, so the numbers users on kernel 4.19+ already see are

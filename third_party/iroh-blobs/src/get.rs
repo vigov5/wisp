@@ -139,6 +139,30 @@ pub mod fsm {
         AtInitial::new(connection, request, counters)
     }
 
+    /// The entry point for a caller that already holds a bidirectional stream
+    /// pair, rather than a QUIC connection to open one on.
+    ///
+    /// Every state after [`AtConnected`] is already generic over
+    /// [`RecvStream`]/[`SendStream`], and the provider side is generic all the
+    /// way to its entry point ([`crate::provider::handle_stream`]). Only
+    /// [`start`] was tied to `iroh`, and only because it needs somewhere to
+    /// call `open_bi` on. This skips that step, which is what lets a non-QUIC
+    /// transport - a LAN TCP socket, say - drive the same get.
+    pub fn start_with_streams<R: RecvStream, W: SendStream>(
+        reader: R,
+        writer: W,
+        request: GetRequest,
+        counters: RequestCounters,
+    ) -> AtConnected<R, W> {
+        AtConnected {
+            start: Instant::now(),
+            reader,
+            writer,
+            request,
+            counters,
+        }
+    }
+
     /// Start with a get many request. Todo: turn this into distinct states.
     pub async fn start_get_many(
         connection: Connection,
