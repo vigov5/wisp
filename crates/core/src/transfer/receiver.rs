@@ -654,7 +654,11 @@ async fn run_session(
             })
             .collect::<Vec<_>>();
         let mut blob_download = match blob_receiver
-            .start_streaming(blob_ticket.clone(), stream_targets)
+            .start_streaming(
+                blob_ticket.clone(),
+                ticket_message.tcp_port,
+                stream_targets,
+            )
             .await
         {
             Ok(download) => download,

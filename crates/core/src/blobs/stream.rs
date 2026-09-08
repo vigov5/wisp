@@ -26,11 +26,10 @@ use std::time::Instant;
 
 use bao_tree::io::BaoContentItem;
 use bytes::Bytes;
-use iroh::endpoint::Connection;
+use bytes::BytesMut;
 use iroh_blobs::Hash;
 use iroh_blobs::format::collection::{Collection, SimpleStore};
 use iroh_blobs::get::fsm;
-use iroh_blobs::get::request::get_blob;
 use iroh_blobs::protocol::{ChunkRanges, ChunkRangesExt, GetRequest};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::mpsc;
@@ -38,6 +37,7 @@ use tracing::{debug, trace};
 
 use super::error::{BlobError, BlobTextError, Result};
 use super::receive::{BlobDownloadUpdate, PROGRESS_EMIT_INTERVAL, ProgressCoalescer};
+use super::source::BlobSource;
 use super::telemetry::BlobTransferTelemetry;
 
 /// Bytes per bao chunk group at iroh's block size (`BlockSize::from_chunk_log(4)`
@@ -76,20 +76,92 @@ pub(crate) struct StreamTarget {
     pub(crate) size: u64,
 }
 
-/// Reads blobs straight off the connection.
+/// Largest blob [`SourceStore`] will hold in memory.
+///
+/// It only ever fetches the two small blobs a collection is made of, so this is
+/// a bound on a manifest and not on a payload. It exists because the size comes
+/// from the peer: without a cap, a provider claiming a huge blob would have us
+/// allocate for it before a single byte was verified.
+const MAX_COLLECTION_BLOB_BYTES: u64 = 1 << 20;
+
+/// Reads blobs straight off whichever transport this transfer is using.
 ///
 /// [`Collection::load`] needs somewhere to read the two small blobs a
 /// collection is made of: its hash sequence, and the metadata naming each
 /// entry. Without a local store, the provider itself is that somewhere.
-struct ConnectionStore(Connection);
+struct SourceStore<'a>(&'a BlobSource);
 
-impl SimpleStore for ConnectionStore {
+impl SimpleStore for SourceStore<'_> {
     async fn load(&self, hash: Hash) -> n0_error::Result<Bytes> {
-        get_blob(self.0.clone(), hash)
-            .bytes()
+        collect_blob(self.0, hash)
             .await
             .map_err(|source| n0_error::anyerr!("fetching blob {hash}: {source}"))
     }
+}
+
+/// Fetches one whole blob into memory over a fresh stream pair.
+///
+/// `iroh-blobs` has `get_blob` for this, but it takes a QUIC connection — the
+/// one thing a transport abstraction cannot hand it.
+async fn collect_blob(source: &BlobSource, hash: Hash) -> Result<Bytes> {
+    let context = || format!("collection blob {hash} over {}", source.label());
+    let (recv, send) = source.open().await?;
+    let connected = fsm::start_with_streams(recv, send, GetRequest::blob(hash), Default::default());
+    let fsm::ConnectedNext::StartRoot(start_root) = connected
+        .next()
+        .await
+        .map_err(|source| BlobError::fetch(context(), source))?
+    else {
+        return Err(BlobError::fetch(
+            context(),
+            BlobTextError::new("expected the request to start at the root"),
+        ));
+    };
+    let (mut curr, size) = start_root
+        .next()
+        .next()
+        .await
+        .map_err(|source| BlobError::fetch(context(), source))?;
+    if size > MAX_COLLECTION_BLOB_BYTES {
+        return Err(BlobError::fetch(
+            context(),
+            BlobTextError::new(format!(
+                "collection blob claims {size} bytes, over the {MAX_COLLECTION_BLOB_BYTES} limit"
+            )),
+        ));
+    }
+    // Placed by offset rather than appended: a linear stream arrives in order,
+    // but relying on that silently would corrupt the manifest if it ever did
+    // not, and this is the blob that names every file.
+    let mut out = BytesMut::zeroed(size as usize);
+    let end = loop {
+        match curr.next().await {
+            fsm::BlobContentNext::More((next, item)) => {
+                if let BaoContentItem::Leaf(leaf) =
+                    item.map_err(|source| BlobError::fetch(context(), source))?
+                {
+                    let start = leaf.offset as usize;
+                    let stop = start.saturating_add(leaf.data.len());
+                    if stop > out.len() {
+                        return Err(BlobError::fetch(
+                            context(),
+                            BlobTextError::new("collection blob wrote past its declared size"),
+                        ));
+                    }
+                    out[start..stop].copy_from_slice(&leaf.data);
+                }
+                curr = next;
+            }
+            fsm::BlobContentNext::Done(end) => break end,
+        }
+    };
+    if let fsm::EndBlobNext::Closing(closing) = end.next() {
+        closing
+            .next()
+            .await
+            .map_err(|source| BlobError::fetch(context(), source))?;
+    }
+    Ok(out.freeze())
 }
 
 /// Fetches every target over `connection`, writing each file to its destination
@@ -99,13 +171,13 @@ impl SimpleStore for ConnectionStore {
 /// store-backed path emits, so the caller's tracker does not care which path
 /// produced it.
 pub(super) async fn stream_collection(
-    connection: Connection,
+    source: BlobSource,
     root_hash: Hash,
     targets: Vec<StreamTarget>,
     update_tx: mpsc::UnboundedSender<BlobDownloadUpdate>,
     telemetry: Option<&BlobTransferTelemetry>,
 ) -> Result<()> {
-    let collection = Collection::load(root_hash, &ConnectionStore(connection.clone()))
+    let collection = Collection::load(root_hash, &SourceStore(&source))
         .await
         .map_err(|source| {
             BlobError::fetch(
@@ -131,7 +203,7 @@ pub(super) async fn stream_collection(
             )
         })?;
         stream_one(
-            &connection,
+            &source,
             hash,
             target,
             done_bytes,
@@ -160,7 +232,7 @@ pub(super) async fn stream_collection(
 /// the progress emitted here stays cumulative.
 #[allow(clippy::too_many_arguments)]
 async fn stream_one(
-    connection: &Connection,
+    source: &BlobSource,
     hash: Hash,
     target: &StreamTarget,
     done_bytes: u64,
@@ -222,11 +294,11 @@ async fn stream_one(
     };
 
     let mut written = resume_at;
-    let start = fsm::start(connection.clone(), request, Default::default());
-    let connected = start
-        .next()
-        .await
-        .map_err(|source| BlobError::fetch(context(), source))?;
+    // One pair per request. On QUIC that is a bi-stream on the existing
+    // connection; on the LAN transport it is a fresh connection and handshake,
+    // which is the trade `super::source` documents.
+    let (recv, send) = source.open().await?;
+    let connected = fsm::start_with_streams(recv, send, request, Default::default());
     let fsm::ConnectedNext::StartRoot(start_root) = connected
         .next()
         .await

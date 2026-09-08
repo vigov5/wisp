@@ -8,6 +8,7 @@ use std::{
 };
 
 use super::error::{BlobError, BlobTextError, Result};
+use super::lan_provider::LanBlobProvider;
 use super::receive::BlobTransportProfile;
 use super::telemetry::{
     BlobProviderTelemetry, TransferEnd, benchmark_run_id, is_enabled as telemetry_enabled,
@@ -267,6 +268,9 @@ pub(crate) struct BlobRegistration {
     _prepared: PreparedStore,
     inner: BlobRegistrationInner,
     ticket: BlobTicket,
+    /// The LAN TCP port serving the same store, when one could be bound.
+    /// Dropped with the registration, which closes the port.
+    lan_tcp: Option<LanBlobProvider>,
 }
 
 #[derive(Debug)]
@@ -326,6 +330,25 @@ impl BlobService {
             BlobFormat::HashSeq,
         );
 
+        // Best effort: a receiver that never learns a port simply uses QUIC, so
+        // failing to bind is a lost speedup rather than a failed transfer.
+        let lan_tcp = match LanBlobProvider::start(
+            prepared.store().as_ref().clone(),
+            self.endpoint.secret_key().clone(),
+        )
+        .await
+        {
+            Ok(provider) => Some(provider),
+            Err(error) => {
+                tracing::warn!(
+                    target: "wisp_core::blobs::send",
+                    %error,
+                    "lan tcp provider unavailable; serving over quic only"
+                );
+                None
+            }
+        };
+
         let inner = match strategy {
             BlobServingStrategy::Internal => {
                 tracing::debug!(
@@ -354,6 +377,7 @@ impl BlobService {
             _prepared: prepared,
             inner,
             ticket,
+            lan_tcp,
         })
     }
 }
@@ -361,6 +385,12 @@ impl BlobService {
 impl BlobRegistration {
     pub(crate) fn ticket(&self) -> &BlobTicket {
         &self.ticket
+    }
+
+    /// Port a peer on this LAN can fetch the same blobs from over TCP, when one
+    /// is being served. Goes in the ticket message beside [`Self::ticket`].
+    pub(crate) fn lan_tcp_port(&self) -> Option<u16> {
+        self.lan_tcp.as_ref().map(LanBlobProvider::port)
     }
 
     pub(crate) async fn shutdown(self) -> Result<()> {

@@ -533,9 +533,7 @@ impl SenderSession {
             &protocol_message::SenderMessage::BlobTicket(protocol_message::BlobTicketMessage {
                 session_id: self.session_id.clone(),
                 ticket: registration.ticket().to_string(),
-                // `None`: this sender serves blobs over QUIC only. The port
-                // goes in once the LAN TCP provider exists on this side.
-                tcp_port: None,
+                tcp_port: registration.lan_tcp_port(),
             }),
         )
         .await?;

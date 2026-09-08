@@ -10,9 +10,11 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, trace};
 
 use super::error::{BlobError, BlobTextError, Result};
+use super::source::{BlobSource, LanTarget};
 use super::stream::{StreamTarget, stream_collection};
 use super::telemetry::{BlobTransferTelemetry, TransferEnd, is_enabled as telemetry_enabled};
 use crate::lan::in_usb_tunnel_subnet;
+use crate::lan_transport::local_ipv4_nets;
 
 /// QUIC MTU-discovery ceiling (max UDP payload, bytes) for the Android↔Android
 /// AOA USB-cable tunnel (`10.42.0.0/30`).
@@ -227,6 +229,56 @@ fn blob_connect_options(addr: &EndpointAddr) -> Option<(ConnectOptions, BlobTran
     ))
 }
 
+/// Picks the transport this transfer's payload will use.
+///
+/// The LAN TCP path is taken only when the sender published a port *and* one of
+/// the addresses in its ticket is on a subnet of ours, and only if the first
+/// dial succeeds. Choosing once, up front, is deliberate: a per-request
+/// decision could leave one transfer split across two transports, and a
+/// per-request fallback would pay the cap on every file of a transfer that was
+/// never going to work.
+///
+/// When TCP is used the QUIC blob dial is **skipped entirely**, which also
+/// avoids the path-finding that measured 2.5 s between manifest and offer on a
+/// receiver advertising nine addresses. Falling back costs the cap (1 s) and
+/// then behaves exactly as before.
+///
+/// Returns the transport profile alongside, because the QUIC arm resolves one
+/// during its dial and the caller reports it.
+async fn choose_source(
+    endpoint: &Endpoint,
+    ticket: &BlobTicket,
+    sender_tcp_port: Option<u16>,
+    transport_profile: BlobTransportProfile,
+    context: &str,
+) -> Result<(BlobSource, BlobTransportProfile)> {
+    let peer = ticket.addr().id;
+    if let Some(target) =
+        crate::lan_transport::tcp_target(ticket.addr(), sender_tcp_port, &local_ipv4_nets())
+    {
+        let lan = Box::new(LanTarget {
+            target,
+            secret: endpoint.secret_key().clone(),
+            peer,
+        });
+        // Prove the path before committing the transfer to it. The probe is a
+        // real connection and handshake, thrown away: the alternative is
+        // discovering on file 1 of 76 that the port is firewalled.
+        match crate::lan_transport::dial(target, &lan.secret, peer).await {
+            Ok(_probe) => {
+                debug!(%target, "blob source: lan tcp");
+                return Ok((BlobSource::LanTcp(lan), transport_profile));
+            }
+            Err(error) => {
+                debug!(%target, %error, "blob source: lan tcp unreachable, falling back to quic");
+            }
+        }
+    }
+    let (connection, transport_profile) =
+        dial_blob_provider(endpoint, ticket.addr(), transport_profile, context).await?;
+    Ok((BlobSource::Quic(connection), transport_profile))
+}
+
 /// Dials the blob provider named by `addr`.
 ///
 /// Per-path dial: relay/Wi-Fi/LAN inherit the endpoint's global transport
@@ -341,9 +393,13 @@ impl BlobReceiver {
     /// only ever needs room for the files themselves. Everything else — the
     /// per-path dial, the update stream, cancellation — behaves the same, so
     /// the caller drives this session exactly like a store-backed one.
+    /// `sender_tcp_port` is what the sender published alongside its ticket. When
+    /// it is set and the sender turns out to be on one of our subnets, the
+    /// payload goes over the LAN TCP transport instead of QUIC.
     pub(crate) async fn start_streaming(
         &self,
         ticket: BlobTicket,
+        sender_tcp_port: Option<u16>,
         targets: Vec<StreamTarget>,
     ) -> Result<BlobDownloadSession> {
         let (update_tx, update_rx) = mpsc::unbounded_channel();
@@ -352,19 +408,31 @@ impl BlobReceiver {
         let benchmark_run_id = self.benchmark_run_id;
         let task = tokio::spawn(async move {
             let ticket_context = format!("ticket {ticket:?}");
-            let (connection, transport_profile) =
-                dial_blob_provider(&endpoint, ticket.addr(), transport_profile, &ticket_context)
-                    .await?;
-            let mut telemetry = telemetry_enabled().then(|| {
-                BlobTransferTelemetry::start(
-                    Instant::now(),
-                    connection.clone(),
-                    transport_profile,
-                    benchmark_run_id,
-                )
-            });
+            let (source, transport_profile) = choose_source(
+                &endpoint,
+                &ticket,
+                sender_tcp_port,
+                transport_profile,
+                &ticket_context,
+            )
+            .await?;
+            // The telemetry reads QUIC's own congestion and path counters, so
+            // it has nothing to read on the LAN transport. Absent rather than
+            // zeroed: a run with no numbers is easier to notice than a run with
+            // numbers that mean nothing.
+            let mut telemetry = match &source {
+                BlobSource::Quic(connection) => telemetry_enabled().then(|| {
+                    BlobTransferTelemetry::start(
+                        Instant::now(),
+                        connection.clone(),
+                        transport_profile,
+                        benchmark_run_id,
+                    )
+                }),
+                BlobSource::LanTcp(_) => None,
+            };
             let result = stream_collection(
-                connection,
+                source,
                 ticket.hash(),
                 targets,
                 update_tx.clone(),
