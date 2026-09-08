@@ -40,20 +40,18 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use bao_tree::io::BaoContentItem;
-use iroh::endpoint::VarInt;
 use iroh_blobs::api::blobs::{AddPathOptions, ImportMode};
 use iroh_blobs::get::fsm;
 use iroh_blobs::protocol::GetRequest;
 use iroh_blobs::provider::events::EventSender;
 use iroh_blobs::provider::{StreamPair, handle_stream};
 use iroh_blobs::store::fs::FsStore;
-use iroh_blobs::util::{
-    AsyncReadRecvStream, AsyncReadRecvStreamExtra, AsyncWriteSendStream, AsyncWriteSendStreamExtra,
-};
+use iroh_blobs::util::{AsyncReadRecvStream, AsyncWriteSendStream};
 use iroh_blobs::{BlobFormat, Hash};
-use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
+use wisp_core::lan_transport::{LanRecvStream, LanSendStream};
 
 /// Buffered file writes on the getter, so a 16 KiB leaf is not a syscall.
 ///
@@ -64,54 +62,21 @@ const WRITE_BUFFER_BYTES: usize = 512 * 1024;
 
 // --- TCP as a RecvStream / SendStream -------------------------------------
 //
-// `AsyncReadRecvStream` and `AsyncWriteSendStream` do all the framing; each
-// side only has to hand over the inner half and answer three questions. The
-// QUIC-shaped ones have no TCP equivalent and are answered honestly rather than
-// emulated: a TCP stream has no per-stream error codes, so `stop`/`reset` shut
-// the half down and `stopped` reports "not stopped".
+// `wisp_core::lan_transport` already decides how a TCP half answers the three
+// questions `iroh-blobs`' adapters ask, two of which have no TCP equivalent.
+// Reusing it keeps that decision in one place; this example differs from the
+// real transport only in having no TLS, which is why it is a measurement tool
+// and not one.
 
-struct TcpRecv(OwnedReadHalf);
+type Recv = AsyncReadRecvStream<LanRecvStream<OwnedReadHalf>>;
+type Send = AsyncWriteSendStream<LanSendStream<OwnedWriteHalf>>;
 
-impl AsyncReadRecvStreamExtra for TcpRecv {
-    fn inner(&mut self) -> &mut (impl tokio::io::AsyncRead + Unpin + Send) {
-        &mut self.0
-    }
-
-    fn stop(&mut self, _code: VarInt) -> std::io::Result<()> {
-        Ok(())
-    }
-
-    fn id(&self) -> u64 {
-        0
-    }
-}
-
-struct TcpSend(OwnedWriteHalf);
-
-impl AsyncWriteSendStreamExtra for TcpSend {
-    fn inner(&mut self) -> &mut (impl AsyncWrite + Unpin + Send) {
-        &mut self.0
-    }
-
-    fn reset(&mut self, _code: VarInt) -> std::io::Result<()> {
-        Ok(())
-    }
-
-    async fn stopped(&mut self) -> std::io::Result<Option<VarInt>> {
-        Ok(None)
-    }
-
-    fn id(&self) -> u64 {
-        0
-    }
-}
-
-fn split(stream: TcpStream) -> (AsyncReadRecvStream<TcpRecv>, AsyncWriteSendStream<TcpSend>) {
+fn split(stream: TcpStream) -> (Recv, Send) {
     stream.set_nodelay(true).ok();
     let (read, write) = stream.into_split();
     (
-        AsyncReadRecvStream::new(TcpRecv(read)),
-        AsyncWriteSendStream::new(TcpSend(write)),
+        AsyncReadRecvStream::new(LanRecvStream::new(read)),
+        AsyncWriteSendStream::new(LanSendStream::new(write)),
     )
 }
 

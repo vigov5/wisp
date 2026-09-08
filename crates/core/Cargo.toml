@@ -25,13 +25,14 @@ irpc.workspace = true
 mdns-sd.workspace = true
 netdev.workspace = true
 rand.workspace = true
-rustls.workspace = true
 reqwest.workspace = true
+rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 time.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
+tokio-rustls.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 walkdir.workspace = true
@@ -39,10 +40,6 @@ walkdir.workspace = true
 [dev-dependencies]
 # `quic_baseline` (examples/) is a benchmark binary, not library code.
 anyhow.workspace = true
-# `lan_tls` produces rustls configs; only its tests drive an actual handshake.
-# Stays a dev-dependency until the transport that dials and accepts lands, so
-# the shipped graph does not carry a TLS stream wrapper nothing calls yet.
-tokio-rustls.workspace = true
 # Only for the E2 congestion-control A/B in `quic_baseline`: iroh re-exports the
 # `ControllerFactory` trait but not the concrete `CubicConfig` / `Bbr3Config`.
 # A dev-dependency keeps it out of the shipped dependency graph, which is what
