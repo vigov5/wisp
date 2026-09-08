@@ -170,7 +170,6 @@ mod tests {
             device_type: crate::protocol::DeviceType::Laptop,
             code: String::new(),
             ticket: "bad-ticket".to_owned(),
-            tcp_port: None,
         };
 
         assert!(nearby_endpoint_from_receiver(receiver).is_err());

@@ -338,17 +338,6 @@ fn device_type_from_txt(txt: &TxtProperties) -> DeviceType {
     }
 }
 
-/// Reads the optional LAN TCP data port from a TXT record.
-///
-/// Absent means the peer serves transfers over QUIC only, which is what every
-/// build before this one does. That is why the key is optional and
-/// [`WISP_MDNS_TXT_VER`] is *not* bumped for it: an added key is ignored by an
-/// older scanner, and a missing key reads as "no TCP" to a newer one, so both
-/// directions of a mixed-version pair keep working.
-fn tcp_port_from_txt(txt: &TxtProperties) -> Option<u16> {
-    txt.get_property_val_str("tcp")?.parse().ok()
-}
-
 fn device_type_to_txt(device_type: DeviceType) -> &'static str {
     match device_type {
         DeviceType::Phone => "phone",
@@ -945,10 +934,6 @@ fn parse_discovery_reply(buf: &[u8], expected_nonce: u64) -> Option<NearbyReceiv
     let ticket = String::from_utf8(buf.get(pos..pos + ticket_len)?.to_vec()).ok()?;
 
     Some(NearbyReceiver {
-        // The broadcast wire format has no room for a TCP port, so a peer only
-        // reachable this way stays on QUIC. That is the case on a network that
-        // drops multicast, which is the reason broadcast discovery exists.
-        tcp_port: None,
         fullname: format!("broadcast-{}", &ticket[..ticket.len().min(12)]),
         label,
         device_type,
@@ -1065,14 +1050,10 @@ impl LanReceiveAdvertisement {
     /// in the mDNS record via [`ServiceInfo::enable_addr_auto`].  The scanner
     /// pings every advertised address; whichever one responds (the real Wi-Fi
     /// IP) determines whether the device is shown.
-    /// `tcp_port`, when given, publishes the LAN TCP transport's port so a peer
-    /// on the same subnet can reach it without paying for a QUIC dial. Pass
-    /// `None` to advertise QUIC only.
     pub fn start(
         ticket: &str,
         device_label: &str,
         device_type: DeviceType,
-        tcp_port: Option<u16>,
     ) -> std::result::Result<Option<Self>, LanError> {
         let all_ips = all_local_ipv4_addrs();
         let seed_ip = match all_ips.first().copied() {
@@ -1109,10 +1090,6 @@ impl LanReceiveAdvertisement {
         ];
         for (i, c) in chunks.iter().enumerate() {
             properties.push((format!("t{i}"), c.clone()));
-        }
-        // Optional by design; see `tcp_port_from_txt`.
-        if let Some(port) = tcp_port {
-            properties.push(("tcp".into(), port.to_string()));
         }
 
         let txt: Vec<(&str, &str)> = properties
@@ -1175,12 +1152,6 @@ pub struct NearbyReceiver {
     /// Always empty for current advertisers (pairing code is not published on LAN).
     pub code: String,
     pub ticket: String,
-    /// Port this peer serves the LAN TCP transport on, when it does.
-    ///
-    /// `None` for a peer that only speaks QUIC, which includes every build
-    /// before the TCP path and every peer found by broadcast rather than mDNS
-    /// (the broadcast responder has its own wire format and does not carry it).
-    pub tcp_port: Option<u16>,
 }
 
 /// Browse for `scan` duration and return the latest snapshot of matching receivers.
@@ -1321,7 +1292,6 @@ pub fn browse_nearby_receivers(
                         device_type: device_type_from_txt(info.get_properties()),
                         code: String::new(),
                         ticket,
-                        tcp_port: tcp_port_from_txt(info.get_properties()),
                     },
                 );
             }
@@ -1435,33 +1405,6 @@ mod tests {
     fn missing_device_type_defaults_to_laptop() {
         let txt = HashMap::<String, String>::new().into_txt_properties();
         assert_eq!(device_type_from_txt(&txt), DeviceType::Laptop);
-    }
-
-    #[test]
-    fn tcp_port_is_optional_and_survives_a_round_trip() {
-        // Absent is the case that has to keep working: it is every peer built
-        // before the TCP path, and every peer found by broadcast.
-        let txt = HashMap::<String, String>::new().into_txt_properties();
-        assert_eq!(tcp_port_from_txt(&txt), None);
-
-        let mut m = HashMap::new();
-        m.insert("tcp".to_owned(), "5300".to_owned());
-        assert_eq!(
-            tcp_port_from_txt(&m.clone().into_txt_properties()),
-            Some(5300)
-        );
-
-        // A peer that publishes nonsense must read as "no TCP" rather than
-        // taking the scan down or being dialled at a wrong port.
-        for bad in ["", "0x14bc", "-1", "70000", "5300 ", "http"] {
-            let mut m = HashMap::new();
-            m.insert("tcp".to_owned(), bad.to_owned());
-            assert_eq!(
-                tcp_port_from_txt(&m.into_txt_properties()),
-                None,
-                "{bad:?} should not parse as a port"
-            );
-        }
     }
 
     #[tokio::test]

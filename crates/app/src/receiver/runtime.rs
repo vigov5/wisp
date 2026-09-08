@@ -586,11 +586,7 @@ impl ReceiverRuntime {
         // Drop the old advertisement (if any) before starting the refreshed one.
         self.clear_advertising();
 
-        // `None`: this receiver serves transfers over QUIC only. The port goes
-        // in here once the LAN TCP listener exists — the advertisement is
-        // plumbed first so a peer can be told about a transport before the
-        // transport has to also learn how to announce itself.
-        match LanReceiveAdvertisement::start(&ticket, &self.config.device_name, device_type, None) {
+        match LanReceiveAdvertisement::start(&ticket, &self.config.device_name, device_type) {
             Ok(Some(advertising)) => {
                 self.advertising = Some(advertising);
                 self.advertised_ticket = Some(ticket);
