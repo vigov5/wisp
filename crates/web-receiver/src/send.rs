@@ -495,6 +495,10 @@ async fn drive_send_files(
             &SenderMessage::BlobTicket(BlobTicketMessage {
                 session_id: session_id.clone(),
                 ticket: ticket.to_string(),
+                // The LAN TCP transport needs a TCP listener and a subnet the
+                // browser shares with its peer; a wasm sender has neither, so
+                // it serves over QUIC and says so.
+                tcp_port: None,
             }),
         )
         .await?;
