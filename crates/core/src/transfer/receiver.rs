@@ -1894,6 +1894,7 @@ mod tests {
                 &SenderMessage::BlobTicket(BlobTicketMessage {
                     session_id: "session-1".to_owned(),
                     ticket: "ticket-text".to_owned(),
+                    tcp_port: None,
                 }),
             )
             .await

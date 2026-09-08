@@ -215,6 +215,21 @@ pub struct Cancel {
 pub struct BlobTicketMessage {
     pub session_id: String,
     pub ticket: String,
+    /// Port the sender also serves this transfer's blobs on over plain TCP,
+    /// when it does.
+    ///
+    /// The sender is the blob provider — it builds the ticket above and the
+    /// receiver pulls — so this is where a second data path has to be named.
+    /// The address is the one already in `ticket`; only the port differs.
+    ///
+    /// Optional and defaulted rather than versioned: this protocol checks
+    /// `MessageEnvelope::version` for an *exact* match, so bumping
+    /// [`PROTOCOL_VERSION`] would make every 2.3.0 peer refuse to talk. An
+    /// added field costs nothing instead — an older peer ignores the extra JSON
+    /// key, and a newer peer reading an older message gets `None`, which means
+    /// "QUIC only" and is the correct reading of a peer that never had this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -417,6 +432,7 @@ mod tests {
             SenderMessage::BlobTicket(BlobTicketMessage {
                 session_id: "session-1".to_owned(),
                 ticket: "ticket".to_owned(),
+                tcp_port: Some(5300),
             }),
             SenderMessage::Cancel(Cancel {
                 session_id: "session-1".to_owned(),
@@ -478,5 +494,52 @@ mod tests {
         let json = serde_json::to_string(&receiver_messages[3]).unwrap();
         assert!(json.contains("\"plan\""));
         assert!(!json.contains("bytes_per_sec"));
+    }
+
+    /// The LAN TCP port has to travel without a `PROTOCOL_VERSION` bump,
+    /// because the envelope version is matched exactly and bumping it would
+    /// make every 2.3.0 peer refuse the conversation. These are the three
+    /// properties that has to rest on.
+    #[test]
+    fn blob_ticket_tcp_port_is_wire_compatible_both_ways() {
+        // 1. A message from a peer that predates the field reads as "QUIC
+        //    only" rather than failing to parse.
+        let old_wire = r#"{"session_id":"s","ticket":"t"}"#;
+        let parsed: BlobTicketMessage = serde_json::from_str(old_wire).unwrap();
+        assert_eq!(parsed.tcp_port, None);
+
+        // 2. A sender with no TCP path emits exactly the bytes it used to, so
+        //    an older peer sees nothing new at all.
+        let quic_only = BlobTicketMessage {
+            session_id: "s".to_owned(),
+            ticket: "t".to_owned(),
+            tcp_port: None,
+        };
+        let json = serde_json::to_string(&quic_only).unwrap();
+        assert!(
+            !json.contains("tcp_port"),
+            "a None port must not appear on the wire: {json}"
+        );
+
+        // 3. A port survives the round trip, and an older peer parsing that
+        //    same JSON ignores the key it does not know. Deserializing into a
+        //    struct without the field is what an older build does.
+        let with_port = BlobTicketMessage {
+            tcp_port: Some(5300),
+            ..quic_only.clone()
+        };
+        let json = serde_json::to_string(&with_port).unwrap();
+        assert_eq!(
+            serde_json::from_str::<BlobTicketMessage>(&json).unwrap(),
+            with_port
+        );
+        #[derive(Deserialize)]
+        struct AsOlderPeerSawIt {
+            session_id: String,
+            ticket: String,
+        }
+        let older: AsOlderPeerSawIt = serde_json::from_str(&json).unwrap();
+        assert_eq!(older.session_id, "s");
+        assert_eq!(older.ticket, "t");
     }
 }
