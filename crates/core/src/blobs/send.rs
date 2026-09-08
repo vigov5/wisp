@@ -261,6 +261,10 @@ pub(crate) struct BlobService {
     endpoint: Endpoint,
     transport_profile: BlobTransportProfile,
     benchmark_run_id: Option<u64>,
+    /// The receiver this transfer is for. The LAN TCP port serves it and
+    /// refuses anyone else; without it there is no LAN port at all, because a
+    /// port that would serve any caller is not what this ships.
+    expected_peer: Option<iroh::PublicKey>,
 }
 
 #[derive(Debug)]
@@ -296,7 +300,15 @@ impl BlobService {
             endpoint,
             transport_profile: BlobTransportProfile::default(),
             benchmark_run_id: None,
+            expected_peer: None,
         }
+    }
+
+    /// Names the peer allowed to fetch over the LAN TCP transport. Without it
+    /// the transport is not offered.
+    pub(crate) fn with_expected_peer(mut self, peer: iroh::PublicKey) -> Self {
+        self.expected_peer = Some(peer);
+        self
     }
 
     pub(crate) fn with_transport_profile(
@@ -330,23 +342,28 @@ impl BlobService {
             BlobFormat::HashSeq,
         );
 
-        // Best effort: a receiver that never learns a port simply uses QUIC, so
-        // failing to bind is a lost speedup rather than a failed transfer.
-        let lan_tcp = match LanBlobProvider::start(
-            prepared.store().as_ref().clone(),
-            self.endpoint.secret_key().clone(),
-        )
-        .await
-        {
-            Ok(provider) => Some(provider),
-            Err(error) => {
-                tracing::warn!(
-                    target: "wisp_core::blobs::send",
-                    %error,
-                    "lan tcp provider unavailable; serving over quic only"
-                );
-                None
-            }
+        // Best effort, and only for a known peer: a receiver that never learns
+        // a port simply uses QUIC, so failing to bind — or not knowing who to
+        // serve — is a lost speedup rather than a failed transfer.
+        let lan_tcp = match self.expected_peer {
+            None => None,
+            Some(expected_peer) => match LanBlobProvider::start(
+                prepared.store().as_ref().clone(),
+                self.endpoint.secret_key().clone(),
+                expected_peer,
+            )
+            .await
+            {
+                Ok(provider) => Some(provider),
+                Err(error) => {
+                    tracing::warn!(
+                        target: "wisp_core::blobs::send",
+                        %error,
+                        "lan tcp provider unavailable; serving over quic only"
+                    );
+                    None
+                }
+            },
         };
 
         let inner = match strategy {

@@ -8,23 +8,21 @@
 //!
 //! # What this port exposes
 //!
-//! The same thing the QUIC blob endpoint exposes: this transfer's store, to
-//! anyone who can name a hash in it. The hashes travel in the ticket, which
-//! goes over the authenticated control connection, so knowing one already
-//! implies having been told. That is parity with the existing path rather than
-//! a new exposure, and the TLS from [`crate::lan_tls`] means the bytes are
-//! still encrypted and the peer still proves an identity.
+//! Only the receiver this transfer is for. The handshake proves which identity
+//! the caller holds, and anything other than the peer the sender is already
+//! talking to is refused before a request is read.
 //!
-//! Pinning the accept side to the receiver's identity would be strictly
-//! stronger, and the identity is right there in [`lan_transport::accept`]'s
-//! return. It is not done here only because the sender does not currently
-//! thread the peer's key down to this layer; if this port ever serves anything
-//! broader than one transfer's files, that stops being an acceptable gap.
+//! That is stricter than the QUIC blob endpoint, which serves this transfer's
+//! store to anyone who can name a hash in it — safe, because the hashes travel
+//! in the ticket over the authenticated control connection, but "safe because
+//! the capability is hard to guess" is weaker than "the wrong peer cannot get
+//! in". There was no reason to carry the weaker property into a new port when
+//! the identity was already in hand.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use iroh::SecretKey;
+use iroh::{PublicKey, SecretKey};
 use iroh_blobs::api::Store;
 use iroh_blobs::provider::events::EventSender;
 use iroh_blobs::provider::{StreamPair, handle_stream};
@@ -43,13 +41,18 @@ pub(crate) struct LanBlobProvider {
 }
 
 impl LanBlobProvider {
-    /// Binds an ephemeral port on every interface and serves `store` on it.
+    /// Binds an ephemeral port on every interface and serves `store` on it to
+    /// `expected_peer` and nobody else.
     ///
     /// Ephemeral rather than fixed: two transfers can be in flight, and a fixed
     /// port would make the second fail to bind or, worse, answer for the first.
     /// The port is published in the ticket message, so it never has to be
     /// guessed.
-    pub(crate) async fn start(store: Store, secret: SecretKey) -> Result<Self> {
+    pub(crate) async fn start(
+        store: Store,
+        secret: SecretKey,
+        expected_peer: PublicKey,
+    ) -> Result<Self> {
         let listener = TcpListener::bind(("0.0.0.0", 0)).await.map_err(|source| {
             BlobError::connect("binding the lan tcp provider".to_owned(), source)
         })?;
@@ -85,6 +88,19 @@ impl LanBlobProvider {
                             return;
                         }
                     };
+                    if identity != expected_peer {
+                        // The handshake proved they hold *an* identity; it is
+                        // the wrong one. Refused before a request is read, so
+                        // nothing about the store is revealed, not even whether
+                        // a given hash exists.
+                        warn!(
+                            %peer,
+                            got = %identity.fmt_short(),
+                            want = %expected_peer.fmt_short(),
+                            "lan_tcp.wrong_peer_refused"
+                        );
+                        return;
+                    }
                     let (recv, send) = lan_transport::stream_halves(stream);
                     let pair = StreamPair::new(id, recv, send, EventSender::DEFAULT);
                     match handle_stream(pair, store).await {
@@ -112,5 +128,58 @@ impl Drop for LanBlobProvider {
         // finish or fail on their own; a transfer that has been torn down has
         // no use for their results either way.
         self.accept.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iroh_blobs::store::mem::MemStore;
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    /// The property that makes this port stricter than the QUIC one: proving
+    /// possession of *an* identity is not enough, it has to be the identity the
+    /// sender is already talking to.
+    ///
+    /// Asserted through the transport rather than by calling the check
+    /// directly, because the thing worth pinning is that a wrong peer gets
+    /// nothing — not that a comparison exists.
+    #[tokio::test]
+    async fn a_peer_that_is_not_the_expected_one_gets_nothing() {
+        let store = MemStore::new();
+        let sender = SecretKey::generate();
+        let receiver = SecretKey::generate();
+        let stranger = SecretKey::generate();
+
+        let provider =
+            LanBlobProvider::start(store.as_ref().clone(), sender.clone(), receiver.public())
+                .await
+                .expect("the provider should bind");
+        let target = SocketAddr::from((Ipv4Addr::LOCALHOST, provider.port()));
+
+        // The expected receiver gets a working, authenticated connection.
+        let welcome = crate::lan_transport::dial(target, &receiver, sender.public()).await;
+        assert!(
+            welcome.is_ok(),
+            "the expected peer must be served: {welcome:?}"
+        );
+
+        // The stranger's TLS handshake succeeds — it holds a real key — and
+        // then it is dropped without being served. Observable as the stream
+        // closing with no response to a request.
+        let intruder = crate::lan_transport::dial(target, &stranger, sender.public())
+            .await
+            .expect("a stranger can still complete a handshake");
+        let (mut recv, mut send) = crate::lan_transport::stream_halves(intruder);
+        use iroh_blobs::util::{RecvStream, SendStream};
+        // Whatever happens to the write, nothing may come back.
+        let _ = send.send(b"a request that must not be answered").await;
+        let _ = send.sync().await;
+        let answer = recv.recv_bytes(1).await;
+        let refused = match &answer {
+            Err(_) => true,
+            Ok(bytes) => bytes.is_empty(),
+        };
+        assert!(refused, "a stranger must be refused, got {answer:?} back");
     }
 }

@@ -520,7 +520,8 @@ impl SenderSession {
         let blob_setup_started = Instant::now();
         let blob_service = BlobService::new(self.endpoint.clone())
             .with_transport_profile(self.blob_transport_profile)
-            .with_session_id(&self.session_id);
+            .with_session_id(&self.session_id)
+            .with_expected_peer(self.request.peer_endpoint_id);
         let registration = blob_service
             .register_with_strategy(prepared, &self.blob_strategy)
             .await
