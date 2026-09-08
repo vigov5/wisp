@@ -45,6 +45,18 @@ use super::telemetry::BlobTransferTelemetry;
 /// boundaries, because that is the finest granularity a range request can name.
 const CHUNK_GROUP_BYTES: u64 = 16 * 1024;
 
+/// Bytes of buffered file writes, coalescing the 16 KiB bao leaves the get fsm
+/// yields into writes large enough that a syscall stops being the unit of work.
+const WRITE_BUFFER_BYTES: usize = 512 * 1024;
+
+/// Leaves allowed to sit between the network and the file.
+///
+/// Bounded so a fast link cannot outrun a slow disk into unbounded memory. At
+/// 16 KiB a leaf this is 1 MiB in flight, which is ample to keep the writer fed
+/// across a scheduling hiccup without being worth accounting for against the
+/// receiver's memory budget.
+const WRITE_QUEUE_LEAVES: usize = 64;
+
 /// Directory under the transfer's record dir where files are built.
 ///
 /// A partial file is only as trustworthy as its verified prefix, and its
@@ -268,7 +280,7 @@ async fn stream_one(
     }
     let resume_at = resumable_prefix_len(sink).await;
 
-    let mut file = tokio::fs::OpenOptions::new()
+    let file = tokio::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(false)
@@ -316,18 +328,43 @@ async fn stream_one(
         .next()
         .await
         .map_err(|source| BlobError::fetch(context(), source))?;
+    // The file is written by its own task, so a leaf's disk write overlaps the
+    // next leaf's arrival. Serialised, the two costs simply added: at 16 KiB a
+    // leaf the loop paid a seek and a write - each a hop through tokio's
+    // blocking pool - for every ~0.5 ms of network time, which pinned app
+    // throughput near 19 MiB/s no matter how fast the link was. Measured phone
+    // to phone: 67.7 MiB/s raw TCP, 33.3 raw QUIC reading the same file, 18.7
+    // through here. Same mistake and same fix as `quic_baseline`'s file source
+    // in `324e7bd`, which was never carried back to this path.
+    let (leaf_tx, leaf_rx) = mpsc::channel::<(u64, Bytes)>(WRITE_QUEUE_LEAVES);
+    let writer = tokio::spawn(write_leaves(file, leaf_rx));
+
+    // `None` means the writer stopped before the stream did, which only a write
+    // error causes; joining below names it.
     let end = loop {
         match curr.next().await {
             fsm::BlobContentNext::More((next, item)) => {
                 // Parent hashes arrive interleaved with the data; they are what
                 // let a suffix be verified, and the fsm consumes them itself.
+                //
+                // An error here returns without joining the writer. That is
+                // deliberate: dropping `leaf_tx` on the way out closes the
+                // channel, so the task flushes what it already has and exits,
+                // and a longer verified prefix is exactly what a resume wants.
+                // Nothing renames the partial on this path.
                 if let BaoContentItem::Leaf(leaf) =
                     item.map_err(|source| BlobError::fetch(context(), source))?
                 {
-                    write_leaf(&mut file, leaf.offset, &leaf.data)
-                        .await
-                        .map_err(|source| BlobError::fetch(context(), source))?;
-                    written = written.max(leaf.offset.saturating_add(leaf.data.len() as u64));
+                    let leaf_end = leaf.offset.saturating_add(leaf.data.len() as u64);
+                    if leaf_tx.send((leaf.offset, leaf.data)).await.is_err() {
+                        break None;
+                    }
+                    // Progress now counts bytes *received* rather than bytes
+                    // already durable, and may lead the file by up to the queue
+                    // plus the buffer. Safe for both consumers: the UI only
+                    // draws it, and a resume re-derives its own start from the
+                    // file's whole chunk groups rather than from this number.
+                    written = written.max(leaf_end);
                     let now = Instant::now();
                     let cumulative = done_bytes.saturating_add(written.min(target.size));
                     if let Some(telemetry) = telemetry {
@@ -339,8 +376,28 @@ async fn stream_one(
                 }
                 curr = next;
             }
-            fsm::BlobContentNext::Done(end) => break end,
+            fsm::BlobContentNext::Done(end) => break Some(end),
         }
+    };
+
+    // Closing the channel is what tells the writer to flush and finish, so it
+    // has to happen before the join.
+    drop(leaf_tx);
+    match writer.await {
+        Ok(Ok(())) => {}
+        Ok(Err(source)) => return Err(BlobError::fetch(context(), source)),
+        Err(join) => {
+            return Err(BlobError::fetch(
+                context(),
+                BlobTextError::new(format!("file writer task failed: {join}")),
+            ));
+        }
+    }
+    let Some(end) = end else {
+        return Err(BlobError::fetch(
+            context(),
+            BlobTextError::new("file writer stopped before the stream ended"),
+        ));
     };
     if let fsm::EndBlobNext::Closing(closing) = end.next() {
         closing
@@ -348,11 +405,6 @@ async fn stream_one(
             .await
             .map_err(|source| BlobError::fetch(context(), source))?;
     }
-
-    file.flush()
-        .await
-        .map_err(|source| BlobError::fetch(context(), source))?;
-    drop(file);
 
     // Every chunk was verified on arrival and the stream ran to completion, so
     // the file is whole and can take its real name.
@@ -364,9 +416,31 @@ async fn stream_one(
     Ok(())
 }
 
-async fn write_leaf(file: &mut tokio::fs::File, offset: u64, data: &Bytes) -> std::io::Result<()> {
-    file.seek(SeekFrom::Start(offset)).await?;
-    file.write_all(data).await
+/// Writes leaves to `file` until the channel closes, coalescing them through a
+/// [`tokio::io::BufWriter`].
+///
+/// Leaves arrive in offset order for a linear stream, so the cursor is tracked
+/// and a seek is issued only where an offset actually jumps — a ranged request
+/// for a resumed file is the only thing that makes it jump, and then just once,
+/// on the first leaf. Skipping the no-op seek is the point: seeking through a
+/// `BufWriter` flushes it, so a seek per leaf would defeat the buffer entirely
+/// and leave the syscall count exactly where it was.
+async fn write_leaves(
+    file: tokio::fs::File,
+    mut rx: mpsc::Receiver<(u64, Bytes)>,
+) -> std::io::Result<()> {
+    let mut file = tokio::io::BufWriter::with_capacity(WRITE_BUFFER_BYTES, file);
+    // `open` leaves the cursor at 0 whatever the resume offset is, so start
+    // unknown and let the first leaf seek.
+    let mut cursor: Option<u64> = None;
+    while let Some((offset, data)) = rx.recv().await {
+        if cursor != Some(offset) {
+            file.seek(SeekFrom::Start(offset)).await?;
+        }
+        file.write_all(&data).await?;
+        cursor = Some(offset.saturating_add(data.len() as u64));
+    }
+    file.flush().await
 }
 
 /// How much of a partial file can be kept: its length rounded down to a whole
