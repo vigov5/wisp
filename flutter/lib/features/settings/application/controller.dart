@@ -127,15 +127,41 @@ class SettingsController extends Notifier<SettingsState> {
   /// Desktop only. Registers/unregisters OS launch-at-startup, persisting the
   /// resulting real state (the OS is the source of truth, so the stored flag is
   /// reconciled to whatever the OS actually reports back).
-  Future<void> setLaunchAtStartup(bool enabled) async {
-    if (state.settings.launchAtStartup == enabled) return;
+  ///
+  /// Returns null when the OS accepted the change, or the reason it didn't.
+  /// The caller owns telling the user — this is not routed through
+  /// [SettingsState.errorMessage], which belongs to [saveSettings] and whose
+  /// presence suppresses the Save page's baseline reset.
+  Future<String?> setLaunchAtStartup(bool enabled) async {
+    // Deliberately no "already at this value" early return: the OS
+    // registration is the source of truth and drifts from the stored flag on
+    // its own (Task Manager / Settings can disable the entry, and an update or
+    // a move leaves it pointing at an executable that no longer exists). If we
+    // skipped the apply whenever the stored flag already matched, a user whose
+    // registration had been disabled outside the app would tick the toggle,
+    // Save, and get no registry write at all — with no way to re-register from
+    // the UI. Re-applying is idempotent, so just always do it.
     // Optimistic UI update; corrected below if the OS disagrees.
     state = state.copyWith(
       settings: state.settings.copyWith(launchAtStartup: enabled),
     );
-    final actual = await DesktopIntegration.instance.applyLaunchAtStartup(
+    final result = await DesktopIntegration.instance.applyLaunchAtStartup(
       enabled,
     );
+    final next = state.settings.copyWith(launchAtStartup: result.enabled);
+    state = state.copyWith(settings: next);
+    await ref.read(settingsRepositoryProvider).save(next);
+    return result.error;
+  }
+
+  /// Desktop only. Records the *real* OS launch-at-startup registration in
+  /// state and prefs without touching the registration itself. The settings
+  /// page queries the OS when it opens; without writing that answer back here
+  /// the stored flag would stay stale forever, and every later comparison
+  /// against it (in the UI or in [setLaunchAtStartup]) would be made against a
+  /// value the OS had already contradicted.
+  Future<void> reconcileLaunchAtStartup(bool actual) async {
+    if (state.settings.launchAtStartup == actual) return;
     final next = state.settings.copyWith(launchAtStartup: actual);
     state = state.copyWith(settings: next);
     await ref.read(settingsRepositoryProvider).save(next);

@@ -274,6 +274,41 @@ void main() {
       expect(prefs.getString('settings.server_url'), 'https://example.com');
     },
   );
+
+  test('reconcileLaunchAtStartup persists the real OS state', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final repo = SettingsRepository(
+      prefs: prefs,
+      randomDeviceName: () => 'Rusty Ridge',
+      defaultDownloadRoot: '/tmp/Wisp',
+    );
+    // A stored flag left over from a registration the OS has since dropped —
+    // disabled in Task Manager, or orphaned by an update that moved the
+    // executable.
+    final seeded = (await repo.loadOrCreate()).copyWith(launchAtStartup: true);
+    await repo.save(seeded);
+    expect(prefs.getBool('settings.launch_at_startup'), isTrue);
+    final container = ProviderContainer(
+      overrides: [
+        settingsRepositoryProvider.overrideWithValue(repo),
+        initialAppSettingsProvider.overrideWithValue(seeded),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container
+        .read(settingsControllerProvider.notifier)
+        .reconcileLaunchAtStartup(false);
+
+    expect(
+      container.read(settingsControllerProvider).settings.launchAtStartup,
+      isFalse,
+    );
+    // Persisting it is the point: the stored flag is what the settings page
+    // compares the toggle against on Save, so a stale `true` would make
+    // re-ticking the toggle a silent no-op.
+    expect(prefs.getBool('settings.launch_at_startup'), isFalse);
+  });
 }
 
 class _DelayedSettingsRepository extends SettingsRepository {

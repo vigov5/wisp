@@ -111,6 +111,13 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
     final enabled = await DesktopIntegration.instance
         .isLaunchAtStartupEnabled();
     if (!mounted) return;
+    // Persist the OS answer too, not just the local baseline: the stored flag
+    // is what Save compares against, so leaving it stale would let a toggle
+    // that looks changed here be a no-op there.
+    await ref
+        .read(settingsControllerProvider.notifier)
+        .reconcileLaunchAtStartup(enabled);
+    if (!mounted) return;
     // Establish the real OS state as the baseline. If the user already flipped
     // the toggle while this was loading, keep their choice (so it stays dirty)
     // and only correct the baseline.
@@ -280,8 +287,14 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
     if (_minimizeToTray != _initialMinimizeToTray) {
       await notifier.setMinimizeToTray(_minimizeToTray);
     }
+    // Held aside rather than folded into SettingsState.errorMessage: that field
+    // gates the baseline reset below, and the rest of the save did succeed.
+    String? launchAtStartupError;
+    final launchAtStartupWanted = _launchAtStartup;
     if (_launchAtStartup != _initialLaunchAtStartup) {
-      await notifier.setLaunchAtStartup(_launchAtStartup);
+      launchAtStartupError = await notifier.setLaunchAtStartup(
+        _launchAtStartup,
+      );
     }
     if (Platform.isWindows &&
         _contextMenuEnabled != _initialContextMenuEnabled) {
@@ -330,11 +343,26 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
       }
     });
 
-    if (state.errorMessage != null && mounted) {
+    if (!mounted) {
+      return;
+    }
+    if (state.errorMessage != null) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(state.errorMessage!)));
-    } else if (mounted) {
+    } else if (launchAtStartupError != null) {
+      // The toggle has already snapped back to the real OS state above, so say
+      // which way it failed and why instead of leaving that unexplained.
+      final verb = launchAtStartupWanted ? 'turn on' : 'turn off';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Settings saved, but Wisp couldn't $verb launch at startup: "
+            '$launchAtStartupError',
+          ),
+        ),
+      );
+    } else {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Settings saved')));

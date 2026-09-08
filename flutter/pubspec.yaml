@@ -62,6 +62,9 @@ dependencies:
   tray_manager: ^0.5.0
   launch_at_startup: ^0.5.0
   local_notifier: ^0.1.6
+  # Windows-only: read/rewrite the HKCU Run entry launch_at_startup owns, to
+  # migrate a pre-quoting value in place (see DesktopIntegration).
+  win32_registry: ^2.1.0
 
 dev_dependencies:
   flutter_test:

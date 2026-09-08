@@ -7,6 +7,7 @@ import 'package:local_notifier/local_notifier.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:win32_registry/win32_registry.dart';
 import 'package:window_manager/window_manager.dart';
 
 /// Desktop-only window/tray/startup integration for Wisp.
@@ -83,20 +84,38 @@ class DesktopIntegration with WindowListener, TrayListener {
     }
   }
 
-  /// Enables or disables OS launch-at-startup. Returns the resulting state.
-  Future<bool> applyLaunchAtStartup(bool enabled) async {
-    if (!isSupported) return false;
+  /// Enables or disables OS launch-at-startup.
+  ///
+  /// Returns the state the OS actually ends up in, plus the failure reason when
+  /// the registration could not be written (a locked-down registry, a denied
+  /// LaunchAgent). Callers must surface a non-null `error`: without it the
+  /// toggle just springs back to its old position and the user is left to guess
+  /// why their choice didn't stick.
+  Future<({bool enabled, String? error})> applyLaunchAtStartup(
+    bool enabled,
+  ) async {
+    if (!isSupported) return (enabled: false, error: null);
     await _ensureStartupConfigured();
+    String? error;
     try {
       if (enabled) {
         await launchAtStartup.enable();
       } else {
         await launchAtStartup.disable();
       }
-    } catch (error) {
-      debugPrint('[desktop] launch-at-startup toggle failed: $error');
+    } catch (failure) {
+      debugPrint('[desktop] launch-at-startup toggle failed: $failure');
+      error = failure.toString();
     }
-    return isLaunchAtStartupEnabled();
+    final actual = await isLaunchAtStartupEnabled();
+    // A silent no-op counts as a failure too: `enable()` can return without
+    // throwing and still leave nothing the OS will act on.
+    if (error == null && actual != enabled) {
+      error = enabled
+          ? 'the registration was not accepted by the system'
+          : 'the registration could not be removed';
+    }
+    return (enabled: actual, error: error);
   }
 
   /// The real OS-level launch-at-startup state (the registry/LaunchAgent entry
@@ -345,14 +364,77 @@ class DesktopIntegration with WindowListener, TrayListener {
   Future<void> _ensureStartupConfigured() async {
     if (_startupConfigured) return;
     final info = await PackageInfo.fromPlatform();
+    final exePath = Platform.resolvedExecutable;
+    // On the plain-registry Windows path, launch_at_startup joins the path and
+    // the args into one unquoted string ("C:\Program Files\Wisp\Wisp.exe
+    // --autostart"), leaving whoever reads it to guess where the path ends.
+    // CreateProcess does eventually find the exe by trying each space-delimited
+    // prefix, but Task Manager's and Settings' Startup lists take only the
+    // first token — so an install under "Program Files" shows up there as a
+    // nameless entry with a blank icon, which reads as broken. Hand the plugin
+    // a pre-quoted path so every reader agrees on it.
+    final bool msix = Platform.isWindows && _isMsixBuild(info.packageName);
     launchAtStartup.setup(
       appName: info.appName,
-      appPath: Platform.resolvedExecutable,
+      // The MSIX branch writes the path into a shortcut's TargetPath, which
+      // takes a bare path — only the registry branch wants quotes.
+      appPath: Platform.isWindows && !msix ? '"$exePath"' : exePath,
       packageName: info.packageName,
       // The marker flag lets a login launch start hidden (see main.dart).
       args: const [autostartFlag],
     );
+    if (Platform.isWindows && !msix) {
+      _migrateUnquotedRunEntry(appName: info.appName, exePath: exePath);
+    }
     _startupConfigured = true;
+  }
+
+  /// Mirrors launch_at_startup's own MSIX detection (`isRunningInMsix`, which
+  /// the package doesn't export): a packaged build runs out of
+  /// `WindowsApps\<packageName>...`. Kept in step with the package so we quote
+  /// exactly the path it writes into the registry, and no other.
+  static bool _isMsixBuild(String packageName) {
+    final exePath = Platform.resolvedExecutable;
+    return exePath.contains('WindowsApps') && exePath.contains(packageName);
+  }
+
+  /// Rewrites a Run entry written before the quoting above into the quoted
+  /// form, for this same executable.
+  ///
+  /// [isLaunchAtStartupEnabled] asks launch_at_startup, which compares the
+  /// stored string against the one it would write today. Adding the quotes
+  /// changes that string, so without this an existing registration would stop
+  /// being recognised on the first launch after an update: the user's toggle
+  /// would silently read as off while the (still working) entry stayed behind
+  /// in the registry.
+  ///
+  /// Only the Run value is touched. `StartupApproved\Run` — where Task Manager
+  /// records whether the entry is allowed to run — is deliberately left alone,
+  /// so an entry the user disabled there stays disabled.
+  void _migrateUnquotedRunEntry({
+    required String appName,
+    required String exePath,
+  }) {
+    RegistryKey? key;
+    try {
+      key = Registry.openPath(
+        RegistryHive.currentUser,
+        path: r'Software\Microsoft\Windows\CurrentVersion\Run',
+        desiredAccessRights: AccessRights.allAccess,
+      );
+      final current = key.getStringValue(appName);
+      if (current != '$exePath $autostartFlag') return;
+      key.createValue(
+        RegistryValue.string(appName, '"$exePath" $autostartFlag'),
+      );
+      debugPrint('[desktop] quoted the legacy launch-at-startup Run entry');
+    } catch (error) {
+      // Nothing to recover: the toggle reads as off and re-ticking it writes a
+      // fresh (quoted) entry.
+      debugPrint('[desktop] launch-at-startup migration failed: $error');
+    } finally {
+      key?.close();
+    }
   }
 
   // --- WindowListener -------------------------------------------------------
