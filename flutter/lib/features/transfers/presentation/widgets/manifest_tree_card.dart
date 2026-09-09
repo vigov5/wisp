@@ -18,6 +18,19 @@ class ManifestTreeCard extends StatefulWidget {
   State<ManifestTreeCard> createState() => _ManifestTreeCardState();
 }
 
+/// Above this many files the card lists paths flat instead of as a tree.
+///
+/// Not a rendering budget — the tree culls rows correctly — but an insertion
+/// one: animated_tree_view expands a folder by inserting its children one at a
+/// time, each with its own 300 ms animation, into a list it re-indexes on every
+/// insert. Expanding a 1911-file folder is therefore ~1911 animated insertions
+/// over ~18 frames that each lay out a viewport's worth of half-grown rows,
+/// which is seconds of frozen UI on the screen that holds Accept. A flat
+/// ListView.builder has neither cost, and a tree of hundreds of siblings was
+/// not readable as a tree anyway. The card header keeps the exact count and
+/// total either way.
+const int _maxTreeItems = 250;
+
 class _ManifestTreeCardState extends State<ManifestTreeCard> {
   late bool _isExpanded;
 
@@ -130,17 +143,89 @@ class _ManifestTreeCardState extends State<ManifestTreeCard> {
           ),
           if (_isExpanded && !isSingleFile) ...[
             const Divider(height: 1),
+            // Both branches do their own scrolling inside this bound. The
+            // tree used to sit in a SingleChildScrollView, which offers an
+            // unbounded height, so the shrink-wrapping list laid out every
+            // row just to measure itself — all 1911 of them for a large
+            // folder, to fill 200 logical pixels.
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 200),
-              child: SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-                child: ManifestTree(items: widget.items),
-              ),
+              child: widget.items.length > _maxTreeItems
+                  ? _FlatManifestList(items: widget.items)
+                  : ManifestTree(
+                      items: widget.items,
+                      physics: const BouncingScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
+                    ),
             ),
           ],
         ],
       ),
+    );
+  }
+}
+
+/// A lazily built, flat listing of every path in a large manifest.
+///
+/// Rows mirror [ManifestTree]'s: a fixed icon slot, the path, and the size
+/// right-aligned in the same column width, so the two branches of the card
+/// look like one widget.
+class _FlatManifestList extends StatelessWidget {
+  const _FlatManifestList({required this.items});
+
+  final List<TransferManifestItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      shrinkWrap: true,
+      primary: false,
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
+      itemCount: items.length,
+      itemExtent: 22,
+      itemBuilder: (context, index) {
+        final item = items[index];
+        return Row(
+          children: [
+            SizedBox(
+              width: 26,
+              child: Icon(
+                Icons.insert_drive_file_outlined,
+                size: 16,
+                color: context.wc.muted,
+              ),
+            ),
+            Expanded(
+              child: Text(
+                item.path,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: wispSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: context.wc.ink,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 108,
+              child: Text(
+                formatBytes(item.sizeBytes),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: wispSans(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: context.wc.muted,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

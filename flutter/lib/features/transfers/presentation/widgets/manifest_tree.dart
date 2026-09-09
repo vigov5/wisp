@@ -7,15 +7,58 @@ import '../../../../theme/wisp_theme.dart';
 import '../../application/manifest.dart';
 import 'transfer_presentation_helpers.dart';
 
-class ManifestTree extends StatelessWidget {
-  const ManifestTree({super.key, required this.items});
+/// The folder tree behind a transfer's "Contents".
+///
+/// Stateful only to keep the built tree between rebuilds. `_buildTree` walks
+/// every item and allocates a node — plus a base64 key — per path segment, and
+/// the parents of this widget rebuild on every event they receive. Rebuilding
+/// the tree there also discarded whatever the user had expanded, since the
+/// expansion state lives on the nodes.
+class ManifestTree extends StatefulWidget {
+  const ManifestTree({
+    super.key,
+    required this.items,
+    this.physics = const NeverScrollableScrollPhysics(),
+    this.padding = const EdgeInsets.only(top: 2, bottom: 6),
+  });
 
   final List<TransferManifestItem> items;
 
+  /// Defaults to "never scrolls" for a caller that nests the tree in its own
+  /// scroll view. A caller that can give it a **bounded** height should pass
+  /// real physics instead and let it scroll itself: the shrink-wrapping
+  /// viewport then lays out only the rows that fit. Inside an unbounded parent
+  /// it lays out all of them, which on a 1911-file folder is ~15k widgets in
+  /// one frame — several seconds of frozen UI, on the very screen that holds
+  /// the Accept button.
+  final ScrollPhysics physics;
+
+  final EdgeInsetsGeometry padding;
+
+  @override
+  State<ManifestTree> createState() => _ManifestTreeState();
+}
+
+class _ManifestTreeState extends State<ManifestTree> {
+  late TreeNode<_ManifestNodeData> _tree;
+
+  @override
+  void initState() {
+    super.initState();
+    _tree = _buildTree(widget.items);
+  }
+
+  @override
+  void didUpdateWidget(ManifestTree oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_sameManifest(oldWidget.items, widget.items)) {
+      _tree = _buildTree(widget.items);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final tree = _buildTree(items);
-    if (tree.children.isEmpty) {
+    if (_tree.children.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 12),
         child: Text('No files', style: Theme.of(context).textTheme.bodyMedium),
@@ -23,15 +66,15 @@ class ManifestTree extends StatelessWidget {
     }
 
     return TreeView.simpleTyped<_ManifestNodeData, TreeNode<_ManifestNodeData>>(
-      tree: tree,
+      tree: _tree,
       showRootNode: false,
       shrinkWrap: true,
       primary: false,
-      physics: const NeverScrollableScrollPhysics(),
+      physics: widget.physics,
       focusToNewNode: false,
       expansionBehavior: ExpansionBehavior.none,
       expansionIndicatorBuilder: noExpansionIndicatorBuilder,
-      padding: const EdgeInsets.only(top: 2, bottom: 6),
+      padding: widget.padding,
       indentation: Indentation(
         width: 10,
         style: IndentStyle.squareJoint,
@@ -146,6 +189,24 @@ class _PathEntry {
   final List<String> segments;
   final BigInt sizeBytes;
   final String fullPath;
+}
+
+/// Only paths and sizes shape the tree, so nothing else is worth comparing.
+/// Identity alone would never match: the callers rebuild their item list from
+/// scratch on every event.
+bool _sameManifest(
+  List<TransferManifestItem> before,
+  List<TransferManifestItem> after,
+) {
+  if (identical(before, after)) return true;
+  if (before.length != after.length) return false;
+  for (var i = 0; i < before.length; i++) {
+    if (before[i].path != after[i].path ||
+        before[i].sizeBytes != after[i].sizeBytes) {
+      return false;
+    }
+  }
+  return true;
 }
 
 TreeNode<_ManifestNodeData> _buildTree(List<TransferManifestItem> items) {
