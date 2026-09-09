@@ -777,7 +777,13 @@ fn map_sender_event(
                 .map(|plan| plan.total_bytes)
                 .unwrap_or(snapshot.total_bytes),
             bytes_sent: snapshot.bytes_transferred,
-            plan: current_plan.clone(),
+            // Deliberately None: see the receiver's progress arm.  The plan is
+            // one path String per file and it cannot change mid-transfer, so
+            // re-sending it on every tick only allocated.  The Dart side
+            // coalesces with `update.plan ?? state.transfer.plan`, and
+            // item_count / total_size above still come from `current_plan`
+            // here, so nothing downstream loses the numbers.
+            plan: None,
             snapshot: {
                 // drift#29: track the latest progress so a later Failed
                 // event can carry it as the "last known snapshot".
@@ -821,8 +827,8 @@ fn map_sender_event(
 #[cfg(test)]
 mod tests {
     use super::{
-        SendRun, failed_event_from_error, is_receiver_decline_cancel,
-        maybe_demote_pre_handshake_failure,
+        CoreSenderEvent, SendRun, failed_event_from_error, is_receiver_decline_cancel,
+        map_sender_event, maybe_demote_pre_handshake_failure,
     };
     use crate::error::{AppError, UserFacingErrorKind};
     use crate::types::{SendEvent, SendPhase};
@@ -990,6 +996,87 @@ mod tests {
         assert_eq!(error.kind(), UserFacingErrorKind::Internal);
         assert_eq!(error.title(), "Wisp internal error");
         assert!(error.message().contains("boom"));
+    }
+
+    /// The plan travels once, on TransferStarted, and never again.
+    ///
+    /// It holds one path String per file and the progress arm used to clone it
+    /// on every tick — up to ten a second — so a 1911-file folder pushed ~19k
+    /// string allocations per second across the bridge for a list that cannot
+    /// change mid-transfer.  The counts must still be right, because they are
+    /// read from the cached plan rather than from the event.
+    #[test]
+    fn progress_events_do_not_carry_the_plan() {
+        use wisp_core::transfer::{
+            TransferPhase, TransferPlan, TransferPlanFile, TransferSnapshot,
+        };
+
+        let plan = TransferPlan::try_new(
+            "session-1".to_owned(),
+            vec![
+                TransferPlanFile {
+                    id: 0,
+                    path: "folder/a.txt".to_owned(),
+                    size: 4,
+                },
+                TransferPlanFile {
+                    id: 1,
+                    path: "folder/b.txt".to_owned(),
+                    size: 8,
+                },
+            ],
+        )
+        .unwrap();
+        // Empty on purpose: the counts below can then only have come from the
+        // cached plan, not from the preview.
+        let preview = crate::types::SelectionPreview {
+            items: Vec::new(),
+            file_count: 0,
+            total_size: 0,
+        };
+        let mut label = "Receiver".to_owned();
+        let mut current_plan = None;
+        let mut current_snapshot = None;
+
+        let started = map_sender_event(
+            &mut label,
+            &preview,
+            &mut current_plan,
+            &mut current_snapshot,
+            CoreSenderEvent::TransferStarted {
+                session_id: "session-1".to_owned(),
+                plan: plan.clone(),
+            },
+        );
+        assert!(matches!(started.phase, SendPhase::Sending));
+        assert_eq!(started.plan.as_ref(), Some(&plan), "the plan travels here");
+
+        let progress = map_sender_event(
+            &mut label,
+            &preview,
+            &mut current_plan,
+            &mut current_snapshot,
+            CoreSenderEvent::TransferProgress {
+                session_id: "session-1".to_owned(),
+                snapshot: TransferSnapshot {
+                    session_id: "session-1".to_owned(),
+                    phase: TransferPhase::Transferring,
+                    total_files: 2,
+                    completed_files: 1,
+                    total_bytes: 12,
+                    bytes_transferred: 7,
+                    active_file_id: Some(1),
+                    active_file_bytes: Some(3),
+                    bytes_per_sec: Some(100),
+                    eta_seconds: Some(1),
+                },
+            },
+        );
+        assert!(matches!(progress.phase, SendPhase::Sending));
+        assert!(progress.plan.is_none(), "and not again on every tick");
+        assert_eq!(progress.item_count, 2);
+        assert_eq!(progress.total_size, 12);
+        assert_eq!(progress.bytes_sent, 7);
     }
 
     /// drift#29 regression: when the run loop ends with an Err outcome

@@ -426,7 +426,16 @@ impl ReceiverSession {
                                 snapshot.total_files as u64,
                                 snapshot.total_bytes,
                                 snapshot.bytes_transferred,
-                                Some(plan.clone()),
+                                // No plan on a progress tick.  The plan holds
+                                // one path String per file, this fires up to
+                                // ten times a second, and every hop clones it:
+                                // a 1911-file folder meant ~19k string
+                                // allocations per second crossing into Dart,
+                                // for a list that has not changed since the
+                                // TransferStarted event that carried it.  The
+                                // UI keeps the last plan it saw; the snapshot
+                                // below is what actually changes.
+                                None,
                                 Some(snapshot.clone()),
                                 Vec::new(),
                                 None,
