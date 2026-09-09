@@ -6,7 +6,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::{Duration, Instant};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument, warn};
 
 use crate::{
     blobs::receive::BlobTransportProfile,
@@ -627,22 +627,57 @@ impl SenderSession {
     /// Dial the peer with a bounded retry (see [`CONNECT_ATTEMPTS`]). Returns
     /// `Ok(None)` if the user cancelled mid-dial, so the caller can finish as a
     /// clean local cancel rather than a connect error.
+    ///
+    /// Every branch logs. This loop used to be silent, which made it
+    /// un-diagnosable: 4 attempts of up to 6 s with 400 ms gaps can burn 25 s,
+    /// and a report of "connecting takes seconds" left nothing behind to
+    /// separate a slow first attempt from a fast one followed by a stall
+    /// somewhere else entirely. On a healthy LAN this is a single
+    /// `connect.established` line at ~20 ms.
     async fn connect_with_retry(
         &self,
         cancel_rx: &mut watch::Receiver<bool>,
     ) -> Result<Option<Connection>> {
         let mut last_err: Option<TransferError> = None;
+        let started = Instant::now();
         for attempt in 0..CONNECT_ATTEMPTS {
+            debug!(
+                attempt = attempt + 1,
+                attempts = CONNECT_ATTEMPTS,
+                candidates = self.request.peer_endpoint_addr.addrs.len(),
+                "connect.attempt_start",
+            );
+            let attempt_started = Instant::now();
             let connect = self
                 .endpoint
                 .connect(self.request.peer_endpoint_addr.clone(), ALPN);
             tokio::select! {
                 res = tokio::time::timeout(CONNECT_ATTEMPT_TIMEOUT, connect) => match res {
-                    Ok(Ok(conn)) => return Ok(Some(conn)),
+                    Ok(Ok(conn)) => {
+                        debug!(
+                            attempt = attempt + 1,
+                            attempt_ms = attempt_started.elapsed().as_millis(),
+                            total_ms = started.elapsed().as_millis(),
+                            "connect.established",
+                        );
+                        return Ok(Some(conn));
+                    }
                     Ok(Err(source)) => {
+                        warn!(
+                            attempt = attempt + 1,
+                            attempt_ms = attempt_started.elapsed().as_millis(),
+                            error = %source,
+                            "connect.attempt_failed",
+                        );
                         last_err = Some(TransferError::other("connecting to peer", source));
                     }
                     Err(_elapsed) => {
+                        warn!(
+                            attempt = attempt + 1,
+                            attempt_ms = attempt_started.elapsed().as_millis(),
+                            timeout_ms = CONNECT_ATTEMPT_TIMEOUT.as_millis(),
+                            "connect.attempt_timeout",
+                        );
                         last_err = Some(TransferError::timeout("connecting to peer"));
                     }
                 },
@@ -655,6 +690,11 @@ impl SenderSession {
                 }
             }
         }
+        warn!(
+            attempts = CONNECT_ATTEMPTS,
+            total_ms = started.elapsed().as_millis(),
+            "connect.exhausted",
+        );
         Err(last_err.unwrap_or_else(|| TransferError::timeout("connecting to peer")))
     }
 
