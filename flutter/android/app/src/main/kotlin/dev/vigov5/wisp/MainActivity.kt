@@ -35,12 +35,18 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 // Extends FlutterFragmentActivity (not FlutterActivity) so local_auth's
@@ -74,6 +80,22 @@ class MainActivity : FlutterFragmentActivity() {
         // and 4096 as the point past which more descriptors buy nothing.
         private const val MIN_OPEN_FD_BUDGET = 256
         private const val MAX_OPEN_FD_BUDGET = 4096
+
+        // How many MediaStore destinations to create, or publish, at once.
+        //
+        // Each one is a binder round trip into MediaProvider, and MediaProvider
+        // serves concurrent transactions on its own threads — it sat at 87% of
+        // a single core while this ran serially, so there was capacity on the
+        // device that a serial loop could not reach.
+        //
+        // Not a measured optimum. The number to beat is 66.7 ms per file
+        // (1911 files in 127.4 s), and both loops now log their elapsed time,
+        // so the next run on a device says whether 8 was the right pick.
+        private const val DESTINATION_CONCURRENCY = 8
+
+        // MediaStore's on-disk name for a row whose IS_PENDING is still set.
+        // Skipped by the folder walk; see [collectTreeFiles].
+        private const val PENDING_MEDIA_PREFIX = ".pending-"
 
         // Depth limit for a transfer path built from a picked folder, matching
         // the core's own cap.  Guards against a provider reporting a cyclic or
@@ -344,11 +366,23 @@ class MainActivity : FlutterFragmentActivity() {
                 // like it had done nothing, and the app ANR'd.  lifecycleScope
                 // resumes on the main thread, which is where result.success
                 // has to be called from.
+                //
+                // [receiveDestMutex] is what the platform thread used to
+                // provide for free: while both ran on the looper they could
+                // not interleave, and the code relies on that.  Off it they
+                // can, and a release landing between two of a create's inserts
+                // clears the list it is still filling — observed on a device
+                // as `created 1911` followed by `discarded 348`, which leaves
+                // Dart holding descriptor paths whose entries are already
+                // closed and deleted.  The lock restores the exclusion the
+                // move took away.
                 "createReceiveDestinations" -> {
                     val paths = call.argument<List<String>>("paths") ?: emptyList()
                     lifecycleScope.launch {
-                        val created = withContext(Dispatchers.IO) {
-                            createReceiveDestinations(paths)
+                        val created = receiveDestMutex.withLock {
+                            withContext(Dispatchers.IO) {
+                                createReceiveDestinations(paths)
+                            }
                         }
                         result.success(created)
                     }
@@ -356,8 +390,8 @@ class MainActivity : FlutterFragmentActivity() {
                 "finishReceiveDestinations" -> {
                     val publish = call.argument<Boolean>("publish") ?: false
                     lifecycleScope.launch {
-                        val published = withContext(Dispatchers.IO) {
-                            releaseReceiveDestinations(publish)
+                        val published = receiveDestMutex.withLock {
+                            releaseReceiveDestinationsConcurrently(publish)
                         }
                         result.success(published)
                     }
@@ -1048,6 +1082,19 @@ class MainActivity : FlutterFragmentActivity() {
         }
         for (child in dir.listFiles()) {
             if (child.name.isBlank()) continue
+            // `.pending-<epoch>-<name>` is the on-disk name MediaStore gives a
+            // row while IS_PENDING is set — never a file the user put there.
+            //
+            // They show up because clearing IS_PENDING returns *before*
+            // MediaProvider renames the file: after a 1911-file receive, 770 of
+            // them still carried pending names 21 s after our publish loop had
+            // finished and reported success on every one. Picking that folder
+            // in the meantime walked names whose rows were no longer pending,
+            // so every open failed — "can't read 770 files" on a folder Wisp
+            // had itself just received.
+            if (child.name.startsWith(PENDING_MEDIA_PREFIX)) {
+                continue
+            }
             val childPath = "$prefix/${sanitizeFileName(child.name)}"
             if (child.isDirectory) {
                 collectTreeFiles(child, childPath, depth + 1, out)
@@ -1175,7 +1222,21 @@ class MainActivity : FlutterFragmentActivity() {
         val pfd: ParcelFileDescriptor,
     )
 
+    // Guards one mutation of the list below.
     private val receiveDestLock = Any()
+
+    // Guards a whole create-or-release *operation*, which is a different
+    // question: each is a loop of thousands of binder calls, and each assumes
+    // the other is not running.  Held across the suspension in the channel
+    // handlers, so `createReceiveDestinations`'s own internal release calls
+    // (its first line, and `abortPartialDestinations`) must stay unlocked —
+    // they already run inside it.
+    //
+    // `onDestroy` also releases without taking it, deliberately: it runs on
+    // the main thread, and blocking there for a create that is 34 s into 1911
+    // MediaStore inserts would re-create the ANR this whole change removed.
+    // At teardown nothing will write through those descriptors anyway.
+    private val receiveDestMutex = Mutex()
     private val openReceiveDestinations = mutableListOf<ReceiveDestination>()
 
     // Creates a pending MediaStore entry per incoming file and returns the
@@ -1187,8 +1248,12 @@ class MainActivity : FlutterFragmentActivity() {
     // they always were.  Only the default Downloads/Wisp target is handled
     // here: a user-chosen SAF folder has no equivalent of `IS_PENDING`, so a
     // partial file would be visible there, and it keeps the copy path.
-    private fun createReceiveDestinations(paths: List<String>): List<Map<String, Any?>> {
-        releaseReceiveDestinations(publish = false)
+    private suspend fun createReceiveDestinations(paths: List<String>): List<Map<String, Any?>> {
+        // Concurrently, like everything else on this path: a retry after a
+        // failed transfer arrives here holding the previous attempt's 1911
+        // destinations, and discarding those serially would put the cost right
+        // back on the critical path it was just taken off.
+        releaseReceiveDestinationsConcurrently(publish = false)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return emptyList()
         // Every destination is a descriptor held for the whole transfer, and
         // this loop had no ceiling at all — a 1911-file folder asked for 1911
@@ -1203,49 +1268,85 @@ class MainActivity : FlutterFragmentActivity() {
             )
             return emptyList()
         }
-        val created = mutableListOf<Map<String, Any?>>()
+        // Concurrent because this sits on the critical path of the *sender's*
+        // decision timeout, and serially it did not fit inside it.  Measured
+        // on a 1911-file folder: 127.4 s of inserts against the sender's 120 s
+        // budget for a decision, which it abandoned 7 s before the receiver
+        // was ready — the user saw "unable to send" and had tapped Accept
+        // within 4 seconds of the offer appearing.  All of that was ours.
+        val started = SystemClock.elapsedRealtime()
+        val created = arrayOfNulls<Map<String, Any?>>(paths.size)
+        val slots = Semaphore(DESTINATION_CONCURRENCY)
+        val giveUp = AtomicBoolean(false)
         try {
-            for (path in paths) {
-                val parts = path.replace('\\', '/').split('/').filter { it.isNotBlank() }
-                if (parts.isEmpty()) return abortPartialDestinations()
-                val fileName = sanitizeFileName(parts.last())
-                val subDir = parts.dropLast(1).joinToString("/")
-                val values = ContentValues().apply {
-                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-                    put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
-                    put(
-                        MediaStore.Downloads.RELATIVE_PATH,
-                        "Download/Wisp${if (subDir.isNotEmpty()) "/$subDir" else ""}",
-                    )
-                    put(MediaStore.Downloads.IS_PENDING, 1)
+            coroutineScope {
+                paths.forEachIndexed { index, path ->
+                    launch(Dispatchers.IO) {
+                        slots.withPermit {
+                            // One failure loses the whole batch — the caller's
+                            // contract is all-or-nothing — so there is no
+                            // point opening another 1900 descriptors for a
+                            // batch already lost.
+                            if (giveUp.get()) return@withPermit
+                            val entry = createOneDestination(path)
+                            if (entry == null) giveUp.set(true) else created[index] = entry
+                        }
+                    }
                 }
-                val uri = contentResolver.insert(
-                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, values,
-                ) ?: return abortPartialDestinations()
-                // "rw" rather than "w": the core seeks when it resumes, and it
-                // reads the current length to know where to resume from.
-                val pfd = contentResolver.openFileDescriptor(uri, "rw")
-                if (pfd == null) {
-                    contentResolver.delete(uri, null, null)
-                    return abortPartialDestinations()
-                }
-                synchronized(receiveDestLock) {
-                    openReceiveDestinations.add(ReceiveDestination(path, uri, pfd))
-                }
-                created.add(
-                    mapOf("transferPath" to path, "fdPath" to "/proc/self/fd/${pfd.fd}"),
-                )
             }
         } catch (e: Exception) {
             Log.w(RECEIVE_TAG, "could not pre-create destinations: ${e.message}")
             return abortPartialDestinations()
         }
-        Log.i(RECEIVE_TAG, "created ${created.size} pending destination(s)")
-        return created
+        if (giveUp.get() || created.any { it == null }) return abortPartialDestinations()
+        // Elapsed, because the number that matters is whether this now fits
+        // inside the sender's budget, and it depends on how many files already
+        // sit in Download/Wisp: a colliding display name makes MediaProvider
+        // uniquify it, which took the per-file cost from 18 ms to 66.7 ms.
+        Log.i(
+            RECEIVE_TAG,
+            "created ${paths.size} pending destination(s) in " +
+                "${SystemClock.elapsedRealtime() - started} ms",
+        )
+        return created.map { it!! }
     }
 
-    private fun abortPartialDestinations(): List<Map<String, Any?>> {
-        releaseReceiveDestinations(publish = false)
+    // One pending entry, or null when it could not be created.
+    //
+    // The descriptor lands in [openReceiveDestinations] before this returns,
+    // so an abort or a publish covers it even when the batch around it fails.
+    private fun createOneDestination(path: String): Map<String, Any?>? {
+        val parts = path.replace('\\', '/').split('/').filter { it.isNotBlank() }
+        if (parts.isEmpty()) return null
+        val fileName = sanitizeFileName(parts.last())
+        val subDir = parts.dropLast(1).joinToString("/")
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+            put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+            put(
+                MediaStore.Downloads.RELATIVE_PATH,
+                "Download/Wisp${if (subDir.isNotEmpty()) "/$subDir" else ""}",
+            )
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = contentResolver.insert(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI, values,
+        ) ?: return null
+        // "rw" rather than "w": the core seeks when it resumes, and it reads
+        // the current length to know where to resume from.
+        val pfd = contentResolver.openFileDescriptor(uri, "rw")
+        if (pfd == null) {
+            contentResolver.delete(uri, null, null)
+            return null
+        }
+        synchronized(receiveDestLock) {
+            openReceiveDestinations.add(ReceiveDestination(path, uri, pfd))
+        }
+        return mapOf("transferPath" to path, "fdPath" to "/proc/self/fd/${pfd.fd}")
+    }
+
+    private suspend fun abortPartialDestinations(): List<Map<String, Any?>> {
+        releaseReceiveDestinationsConcurrently(publish = false)
         return emptyList()
     }
 
@@ -1254,33 +1355,90 @@ class MainActivity : FlutterFragmentActivity() {
     // transfer leaves nothing behind.  Returns transfer path -> final URI for
     // the published files.
     private fun releaseReceiveDestinations(publish: Boolean): Map<String, String> {
-        val held = synchronized(receiveDestLock) {
-            if (openReceiveDestinations.isEmpty()) return emptyMap()
-            openReceiveDestinations.toList().also { openReceiveDestinations.clear() }
-        }
+        val held = takeHeldDestinations() ?: return emptyMap()
+        val started = SystemClock.elapsedRealtime()
         val published = mutableMapOf<String, String>()
         for (dest in held) {
-            try {
-                dest.pfd.close()
-            } catch (_: IOException) {
-            }
-            try {
-                if (publish) {
-                    contentResolver.update(
-                        dest.uri,
-                        ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) },
-                        null, null,
-                    )
-                    published[dest.transferPath] = dest.uri.toString()
-                } else {
-                    contentResolver.delete(dest.uri, null, null)
+            releaseOneDestination(dest, publish)?.let { published[dest.transferPath] = it }
+        }
+        logReleased(publish, held.size, started)
+        return published
+    }
+
+    // The same work, spread across [DESTINATION_CONCURRENCY] threads.
+    //
+    // Publishing is the mirror of creating and cost the same 34 s on a
+    // 1911-file transfer, except it lands *after* the last byte: the files stay
+    // invisible and the receive looks stuck long after it finished. Nothing is
+    // waiting on a timeout here, which is why the serial version above is
+    // still what `onDestroy` calls — it runs on the main thread, where it
+    // cannot suspend.
+    private suspend fun releaseReceiveDestinationsConcurrently(
+        publish: Boolean,
+    ): Map<String, String> {
+        val held = takeHeldDestinations() ?: return emptyMap()
+        val started = SystemClock.elapsedRealtime()
+        val published = java.util.concurrent.ConcurrentHashMap<String, String>()
+        val slots = Semaphore(DESTINATION_CONCURRENCY)
+        coroutineScope {
+            for (dest in held) {
+                launch(Dispatchers.IO) {
+                    slots.withPermit {
+                        releaseOneDestination(dest, publish)?.let {
+                            published[dest.transferPath] = it
+                        }
+                    }
                 }
-            } catch (e: Exception) {
-                Log.w(RECEIVE_TAG, "could not ${if (publish) "publish" else "discard"} ${dest.uri}: ${e.message}")
             }
         }
-        Log.i(RECEIVE_TAG, "${if (publish) "published" else "discarded"} ${held.size} destination(s)")
+        logReleased(publish, held.size, started)
         return published
+    }
+
+    // Claims the whole held set, or null when there is nothing to release.
+    private fun takeHeldDestinations(): List<ReceiveDestination>? =
+        synchronized(receiveDestLock) {
+            if (openReceiveDestinations.isEmpty()) {
+                null
+            } else {
+                openReceiveDestinations.toList().also { openReceiveDestinations.clear() }
+            }
+        }
+
+    // Closes one descriptor and either clears its pending flag or deletes the
+    // entry. Returns the final URI when it was published.
+    private fun releaseOneDestination(dest: ReceiveDestination, publish: Boolean): String? {
+        try {
+            dest.pfd.close()
+        } catch (_: IOException) {
+        }
+        return try {
+            if (publish) {
+                contentResolver.update(
+                    dest.uri,
+                    ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) },
+                    null, null,
+                )
+                dest.uri.toString()
+            } else {
+                contentResolver.delete(dest.uri, null, null)
+                null
+            }
+        } catch (e: Exception) {
+            Log.w(
+                RECEIVE_TAG,
+                "could not ${if (publish) "publish" else "discard"} ${dest.uri}: ${e.message}",
+            )
+            null
+        }
+    }
+
+    private fun logReleased(publish: Boolean, count: Int, startedAt: Long) {
+        Log.i(
+            RECEIVE_TAG,
+            "${if (publish) "published" else "discarded"} $count destination(s) in " +
+                "${SystemClock.elapsedRealtime() - startedAt} ms",
+        )
     }
 
     // A fresh, never-reused directory under the shared `wisp_picked` cache
