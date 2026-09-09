@@ -6,6 +6,7 @@ import 'package:app/features/saved_devices/application/saved_devices_controller.
 import 'package:app/features/saved_devices/application/saved_devices_repository.dart';
 import 'package:app/features/transfers/feature.dart';
 import 'package:app/platform/rust/receiver/fake_source.dart';
+import 'package:app/src/rust/api/error.dart' as rust_error;
 
 void main() {
   test('transfers service starts idle', () {
@@ -121,6 +122,38 @@ void main() {
   });
 
   test(
+    'a second acceptOffer while the first is in flight is dropped',
+    () async {
+      // Regression, measured on a device: tap 2 waited out tap 1's 18.5 s of
+      // destination creation, got the platform lock 1 ms later, and began by
+      // releasing the 1911 descriptors tap 1's live transfer was writing into.
+      // The transfer died 140 ms in, on the first file, and tap 2 then failed
+      // with "no pending offer". Two taps, not an intermittent fetch bug.
+      final source = _SlowAcceptSource();
+      final container = ProviderContainer(
+        overrides: [transfersServiceSourceProvider.overrideWithValue(source)],
+      );
+      addTearDown(container.dispose);
+
+      source.emitIncomingOffer(senderName: 'Maya');
+      await Future<void>.delayed(Duration.zero);
+
+      final notifier = container.read(transfersServiceProvider.notifier);
+      // Both taps before the first has been answered, which is exactly what a
+      // double tap on a screen that takes seconds to respond produces.
+      final first = notifier.acceptOffer();
+      final second = notifier.acceptOffer();
+      await Future.wait([first, second]);
+
+      expect(
+        source.acceptCount,
+        1,
+        reason: 'the platform must see one accept, whatever the user taps',
+      );
+    },
+  );
+
+  test(
     'acceptOffer rolls back to pending offer when backend respond fails',
     () async {
       final source = _FailingOfferResponseSource(throwOnAccept: true);
@@ -132,16 +165,51 @@ void main() {
       source.emitIncomingOffer(senderName: 'Maya');
       await Future<void>.delayed(Duration.zero);
 
-      await expectLater(
-        container.read(transfersServiceProvider.notifier).acceptOffer(),
-        throwsException,
-      );
+      // Deliberately does not rethrow. Both call sites drop the future — an
+      // expression-bodied VoidCallback in the offer card, `unawaited` in the
+      // notification handler — so a rethrow could only land as an unhandled
+      // zone exception, which is exactly what a device log showed:
+      // `Unhandled Exception: Instance of 'UserFacingErrorData'`, with the
+      // reason reaching neither the user nor the log.
+      await container.read(transfersServiceProvider.notifier).acceptOffer();
 
       final state = container.read(transfersServiceProvider);
       expect(state.phase, TransferSessionPhase.offerPending);
       expect(state.offer?.displaySenderName, 'Maya');
     },
   );
+
+  test('acceptOffer surfaces a non-retryable backend failure instead of '
+      'bouncing back silently', () async {
+    // A plain Exception (above) says nothing about whether retrying could
+    // work, so the offer stays put. A UserFacingErrorData that declares
+    // itself non-retryable has to reach the user: the failed phase renders
+    // its title, message and recovery.
+    final source = _FailingOfferResponseSource(
+      throwOnAccept: true,
+      acceptError: const rust_error.UserFacingErrorData(
+        kind: rust_error.UserFacingErrorKindData.permissionDenied,
+        title: 'Cannot save here',
+        message: 'Wisp has no permission to write to Downloads.',
+        recovery: 'Pick a different folder in Settings.',
+        retryable: false,
+      ),
+    );
+    final container = ProviderContainer(
+      overrides: [transfersServiceSourceProvider.overrideWithValue(source)],
+    );
+    addTearDown(container.dispose);
+
+    source.emitIncomingOffer(senderName: 'Maya');
+    await Future<void>.delayed(Duration.zero);
+    await container.read(transfersServiceProvider.notifier).acceptOffer();
+
+    final state = container.read(transfersServiceProvider);
+    expect(state.phase, TransferSessionPhase.failed);
+    expect(state.errorTitle, 'Cannot save here');
+    expect(state.errorMessage, 'Wisp has no permission to write to Downloads.');
+    expect(state.errorRecovery, 'Pick a different folder in Settings.');
+  });
 
   test(
     'declineOffer restores pending offer when backend respond fails',
@@ -233,14 +301,35 @@ void main() {
   });
 }
 
+/// Counts accepts and answers them only after a turn of the event loop, so a
+/// second call can arrive while the first is still in flight.
+class _SlowAcceptSource extends FakeReceiverServiceSource {
+  int acceptCount = 0;
+
+  @override
+  Future<void> respondToOffer({
+    required bool accept,
+    List<String> transferPaths = const [],
+  }) async {
+    if (accept) acceptCount++;
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await super.respondToOffer(accept: accept);
+  }
+}
+
 class _FailingOfferResponseSource extends FakeReceiverServiceSource {
   _FailingOfferResponseSource({
     this.throwOnAccept = false,
     this.throwOnDecline = false,
+    this.acceptError,
   });
 
   final bool throwOnAccept;
   final bool throwOnDecline;
+
+  /// What an accept throws. `null` throws a plain [Exception], which carries
+  /// no claim about whether retrying could work.
+  final Object? acceptError;
 
   @override
   Future<void> respondToOffer({
@@ -248,7 +337,10 @@ class _FailingOfferResponseSource extends FakeReceiverServiceSource {
     List<String> transferPaths = const [],
   }) async {
     await super.respondToOffer(accept: accept);
-    if ((accept && throwOnAccept) || (!accept && throwOnDecline)) {
+    if (accept && throwOnAccept) {
+      throw acceptError ?? Exception('respond failed');
+    }
+    if (!accept && throwOnDecline) {
       throw Exception('respond failed');
     }
   }

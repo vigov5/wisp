@@ -1,10 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../platform/android/transfer_keepalive_channel.dart';
 import '../../../platform/rust/receiver/fake_source.dart';
 import '../../../platform/rust/receiver/source.dart';
+import '../../../src/rust/api/error.dart' as rust_error;
 import '../../../src/rust/api/receiver.dart' as rust_receiver;
 import '../../saved_devices/application/saved_devices_controller.dart';
 import '../../settings/application/controller.dart';
@@ -27,6 +29,10 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
   StreamSubscription<rust_receiver.ReceiverTransferEvent>? _subscription;
   TransferIncomingOffer? _incomingOffer;
   DateTime? _transferStartTime;
+
+  /// True from the moment an accept is taken until it has been answered.
+  /// See [acceptOffer] for what a second one used to do.
+  bool _acceptInFlight = false;
   DateTime? _lastKeepaliveAt;
 
   /// How the in-flight inline-text offer was accepted (Copy/Save), or `null`
@@ -213,6 +219,38 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
     TransferTextDelivery? textDelivery,
     SavedTextLocation? savedText,
   }) async {
+    // A second Accept destroys the transfer the first one started, so the
+    // second is dropped.
+    //
+    // Measured on a device, 1911 files: tap 1 spent 18.5 s creating
+    // destinations, sent the accept, and the transfer began. Tap 2 had been
+    // waiting on the platform lock all that time; it got it 1 ms later and
+    // began, as every accept does, by releasing the previously held
+    // destinations — the 1911 descriptors tap 1's transfer was writing into.
+    // The transfer died 140 ms after starting, always on the first file, and
+    // tap 2 then failed with "no pending offer" because tap 1 had consumed the
+    // offer. That looked like an intermittent fetch bug for hours; it was two
+    // taps.
+    //
+    // Guarded here rather than in the platform layer: nothing down there can
+    // tell a stale batch from a live one, while up here a second accept has no
+    // meaning at all.
+    if (_acceptInFlight) {
+      debugPrint('[receiver] ignoring a second accept while one is in flight');
+      return;
+    }
+    _acceptInFlight = true;
+    try {
+      await _acceptOffer(textDelivery: textDelivery, savedText: savedText);
+    } finally {
+      _acceptInFlight = false;
+    }
+  }
+
+  Future<void> _acceptOffer({
+    TransferTextDelivery? textDelivery,
+    SavedTextLocation? savedText,
+  }) async {
     final source = ref.read(transfersServiceSourceProvider);
     final offer = state.offer ?? _incomingOffer ?? _offerFromFakeSource(source);
     _textDelivery = textDelivery;
@@ -241,17 +279,40 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
                 .toList(growable: false) ??
             const <String>[],
       );
-    } catch (_) {
+    } catch (error) {
       _textDelivery = null;
       _savedText = null;
-      if (offer != null) {
-        _incomingOffer = offer;
-        state = TransferSessionState.offerPending(offer: offer);
-      } else {
+      // Deliberately not rethrown. Both callers drop the future — one is an
+      // expression-bodied VoidCallback, the other an `unawaited` — so a
+      // rethrow could only ever land as `Unhandled Exception: Instance of
+      // 'UserFacingErrorData'`, which is what a device log showed: the reason
+      // the accept failed never reached the user *or* the log.
+      final detail = error is rust_error.UserFacingErrorData
+          ? '${error.kind} ${error.title}: ${error.message}'
+                '${error.recovery == null ? '' : ' — ${error.recovery}'} '
+                '(retryable=${error.retryable})'
+          : '$error';
+      debugPrint('[receiver] accept failed: $detail');
+      if (offer == null) {
         _incomingOffer = null;
         state = const TransferSessionState.idle();
+        return;
       }
-      rethrow;
+      _incomingOffer = offer;
+      // A retryable failure keeps the offer on screen, which is what this
+      // path always did: the sender is still waiting and Accept can be tapped
+      // again. Anything else now says what went wrong — the failed phase
+      // renders title, message and recovery — instead of bouncing the user
+      // back to an unchanged offer card with no explanation.
+      final userFacing = error is rust_error.UserFacingErrorData ? error : null;
+      state = userFacing != null && !userFacing.retryable
+          ? TransferSessionState.failed(
+              offer: offer,
+              errorMessage: userFacing.message,
+              errorTitle: userFacing.title,
+              errorRecovery: userFacing.recovery,
+            )
+          : TransferSessionState.offerPending(offer: offer);
     }
   }
 
