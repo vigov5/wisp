@@ -63,11 +63,17 @@ class MainActivity : FlutterFragmentActivity() {
         private const val PICK_TAG = "WispPick"
         private const val RECEIVE_TAG = "WispReceive"
 
-        // Ceiling on descriptors held open for copy-free sends.  Android
-        // gives a process ~1024 file descriptors and the rest of the app
-        // needs its share, so a pick larger than this copies the overflow
-        // into the cache the way every pick used to.
-        private const val MAX_OPEN_SEND_FDS = 256
+        // Floor and ceiling for [openFdBudget], the number of descriptors
+        // either direction of a transfer may hold open at once.
+        //
+        // The floor is what this used to be, fixed: 256.  That was chosen
+        // against an assumed ~1024-descriptor table, and on a 1911-file folder
+        // it left 1655 files copying into the cache — the exact cost the
+        // descriptor path exists to remove.  The budget is now read from the
+        // process's real limit, with 256 kept as the value we never go below
+        // and 4096 as the point past which more descriptors buy nothing.
+        private const val MIN_OPEN_FD_BUDGET = 256
+        private const val MAX_OPEN_FD_BUDGET = 4096
 
         // Depth limit for a transfer path built from a picked folder, matching
         // the core's own cap.  Guards against a provider reporting a cyclic or
@@ -155,6 +161,32 @@ class MainActivity : FlutterFragmentActivity() {
     // the main thread.
     private val sendFdLock = Any()
     private val openSendFds = mutableListOf<ParcelFileDescriptor>()
+
+    // How many descriptors one direction of a transfer may hold open.
+    //
+    // A quarter of the process's table, not half: send descriptors, receive
+    // destinations, the Flutter engine, every socket and the blob store all
+    // draw on the same limit, and exhausting it does not fail *here* — it
+    // fails the next unrelated open anywhere in the app.  A quarter of the
+    // common 1024-entry table is exactly the 256 this replaced, so no device
+    // gets a smaller budget than before; a device with a larger table gets
+    // proportionally more files sent without a copy.
+    //
+    // Logged once because it decides whether a large folder copies at all,
+    // and the limit is not the same on every ROM.
+    private val openFdBudget: Int by lazy {
+        val limit = try {
+            Os.sysconf(OsConstants._SC_OPEN_MAX)
+        } catch (e: Exception) {
+            Log.w(PICK_TAG, "cannot read the descriptor limit: ${e.message}")
+            0L
+        }
+        val budget = (if (limit > 0L) limit / 4 else 0L)
+            .coerceIn(MIN_OPEN_FD_BUDGET.toLong(), MAX_OPEN_FD_BUDGET.toLong())
+            .toInt()
+        Log.i(PICK_TAG, "descriptor limit $limit, budget $budget per direction")
+        budget
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -304,13 +336,31 @@ class MainActivity : FlutterFragmentActivity() {
                     releaseSendSources()
                     result.success(null)
                 }
+                // Both of these are one MediaStore insert plus one
+                // openFileDescriptor per file, and both are binder round
+                // trips into MediaProvider.  A MethodChannel handler runs on
+                // the platform thread by default, so a 1911-file folder spent
+                // tens of seconds there: the Accept tap that started it looked
+                // like it had done nothing, and the app ANR'd.  lifecycleScope
+                // resumes on the main thread, which is where result.success
+                // has to be called from.
                 "createReceiveDestinations" -> {
                     val paths = call.argument<List<String>>("paths") ?: emptyList()
-                    result.success(createReceiveDestinations(paths))
+                    lifecycleScope.launch {
+                        val created = withContext(Dispatchers.IO) {
+                            createReceiveDestinations(paths)
+                        }
+                        result.success(created)
+                    }
                 }
                 "finishReceiveDestinations" -> {
                     val publish = call.argument<Boolean>("publish") ?: false
-                    result.success(releaseReceiveDestinations(publish))
+                    lifecycleScope.launch {
+                        val published = withContext(Dispatchers.IO) {
+                            releaseReceiveDestinations(publish)
+                        }
+                        result.success(published)
+                    }
                 }
                 "saveToSafUri" -> saveToSafUri(call, result)
                 "openSavedFolder" -> openSavedFolder(call, result)
@@ -1057,7 +1107,7 @@ class MainActivity : FlutterFragmentActivity() {
     private fun openForSend(uri: Uri): String? {
         // A soft budget: two concurrent resolves can overshoot it by the
         // handful they have in flight, which is well inside the headroom.
-        if (synchronized(sendFdLock) { openSendFds.size } >= MAX_OPEN_SEND_FDS) return null
+        if (synchronized(sendFdLock) { openSendFds.size } >= openFdBudget) return null
         val pfd = try {
             contentResolver.openFileDescriptor(uri, "r")
         } catch (e: Exception) {
@@ -1140,6 +1190,19 @@ class MainActivity : FlutterFragmentActivity() {
     private fun createReceiveDestinations(paths: List<String>): List<Map<String, Any?>> {
         releaseReceiveDestinations(publish = false)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return emptyList()
+        // Every destination is a descriptor held for the whole transfer, and
+        // this loop had no ceiling at all — a 1911-file folder asked for 1911
+        // of them at once, against a table the rest of the app shares.  Past
+        // the budget the whole transfer takes the cache route instead: two
+        // writes per byte, but nothing else in the app loses a descriptor.
+        if (paths.size > openFdBudget) {
+            Log.i(
+                RECEIVE_TAG,
+                "${paths.size} file(s) exceeds the $openFdBudget descriptor " +
+                    "budget; receiving into the cache and copying afterwards",
+            )
+            return emptyList()
+        }
         val created = mutableListOf<Map<String, Any?>>()
         try {
             for (path in paths) {
@@ -1332,15 +1395,23 @@ class MainActivity : FlutterFragmentActivity() {
             ?: return result.error("INVALID", "relativeFilePath required", null)
         val mimeType = call.argument<String>("mimeType") ?: "application/octet-stream"
 
-        try {
-            val savedPath = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                saveToDownloadsQ(srcPath, relativeFilePath, mimeType)
-            } else {
-                saveToDownloadsLegacy(srcPath, relativeFilePath)
+        // Copies the file's bytes.  The receiver calls this once per file when
+        // it wrote into its cache instead of straight to the destination, so a
+        // 1911-file folder is 1911 whole-file copies — never on the platform
+        // thread.
+        lifecycleScope.launch {
+            try {
+                val savedPath = withContext(Dispatchers.IO) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        saveToDownloadsQ(srcPath, relativeFilePath, mimeType)
+                    } else {
+                        saveToDownloadsLegacy(srcPath, relativeFilePath)
+                    }
+                }
+                result.success(savedPath)
+            } catch (e: Exception) {
+                result.error("SAVE_FAILED", e.message, null)
             }
-            result.success(savedPath)
-        } catch (e: Exception) {
-            result.error("SAVE_FAILED", e.message, null)
         }
     }
 
@@ -1405,45 +1476,60 @@ class MainActivity : FlutterFragmentActivity() {
         val treeUriStr = call.argument<String>("treeUri")
             ?: return result.error("INVALID", "treeUri required", null)
 
-        try {
-            val treeUri = Uri.parse(treeUriStr)
-            var dir = DocumentFile.fromTreeUri(this, treeUri)
-                ?: throw IOException("Cannot open folder URI")
+        // Same reason as saveToDownloads: one call per received file, each a
+        // whole-file copy plus several SAF queries, so it cannot run on the
+        // platform thread.
+        //
+        // One cost deliberately left in place: DocumentFile.findFile
+        // enumerates the directory, so saving N files into one folder is
+        // O(N^2) queries.  Off the main thread that is slow rather than fatal,
+        // and only the user-chosen-folder path pays it — the default Downloads
+        // target writes straight into pending MediaStore entries and never
+        // reaches here.
+        lifecycleScope.launch {
+            try {
+                val savedUri = withContext(Dispatchers.IO) {
+                    val treeUri = Uri.parse(treeUriStr)
+                    var dir = DocumentFile.fromTreeUri(this@MainActivity, treeUri)
+                        ?: throw IOException("Cannot open folder URI")
 
-            val parts = relativeFilePath.replace('\\', '/').split('/')
-            val fileName = parts.last()
-            val dirParts = if (parts.size > 1) parts.dropLast(1) else emptyList()
+                    val parts = relativeFilePath.replace('\\', '/').split('/')
+                    val fileName = parts.last()
+                    val dirParts = if (parts.size > 1) parts.dropLast(1) else emptyList()
 
-            // Navigate / create subdirectories
-            for (segment in dirParts) {
-                val existing = dir.findFile(segment)
-                dir = if (existing != null && existing.isDirectory) {
-                    existing
-                } else {
-                    dir.createDirectory(segment)
-                        ?: throw IOException("Cannot create directory: $segment")
+                    // Navigate / create subdirectories
+                    for (segment in dirParts) {
+                        val existingDir = dir.findFile(segment)
+                        dir = if (existingDir != null && existingDir.isDirectory) {
+                            existingDir
+                        } else {
+                            dir.createDirectory(segment)
+                                ?: throw IOException("Cannot create directory: $segment")
+                        }
+                    }
+
+                    // Create or overwrite the target file
+                    val mimeType = _guessMimeType(fileName)
+                    val existing = dir.findFile(fileName)
+                    val docFile = if (existing != null && existing.isFile) {
+                        existing  // overwrite by writing to the existing URI
+                    } else {
+                        dir.createFile(mimeType, fileName)
+                            ?: throw IOException("Cannot create file: $fileName")
+                    }
+
+                    contentResolver.openOutputStream(docFile.uri, "wt")?.use { out ->
+                        File(srcPath).inputStream().use { input ->
+                            input.copyTo(out, bufferSize = 65_536)
+                        }
+                    } ?: throw IOException("Cannot open output stream for $fileName")
+
+                    docFile.uri.toString()
                 }
+                result.success(savedUri)
+            } catch (e: Exception) {
+                result.error("SAVE_FAILED", e.message, null)
             }
-
-            // Create or overwrite the target file
-            val mimeType = _guessMimeType(fileName)
-            val existing = dir.findFile(fileName)
-            val docFile = if (existing != null && existing.isFile) {
-                existing  // overwrite by writing to the existing URI
-            } else {
-                dir.createFile(mimeType, fileName)
-                    ?: throw IOException("Cannot create file: $fileName")
-            }
-
-            contentResolver.openOutputStream(docFile.uri, "wt")?.use { out ->
-                File(srcPath).inputStream().use { input ->
-                    input.copyTo(out, bufferSize = 65_536)
-                }
-            } ?: throw IOException("Cannot open output stream for $fileName")
-
-            result.success(docFile.uri.toString())
-        } catch (e: Exception) {
-            result.error("SAVE_FAILED", e.message, null)
         }
     }
 
