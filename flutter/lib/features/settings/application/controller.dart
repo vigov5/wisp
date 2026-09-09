@@ -103,6 +103,17 @@ class SettingsController extends Notifier<SettingsState> {
     await ref.read(settingsRepositoryProvider).save(next);
   }
 
+  /// Android only. Whether to hold the screen awake for the duration of a
+  /// transfer. Live-applied like [setThemeMode]: nothing is registered with the
+  /// OS at set time, the flag is only read when a transfer starts, so there is
+  /// no external state that could drift from the stored value.
+  Future<void> setKeepScreenOnDuringTransfer(bool enabled) async {
+    if (state.settings.keepScreenOnDuringTransfer == enabled) return;
+    final next = state.settings.copyWith(keepScreenOnDuringTransfer: enabled);
+    state = state.copyWith(settings: next);
+    await ref.read(settingsRepositoryProvider).save(next);
+  }
+
   /// Desktop only. Turns minimize-to-tray on/off, persists it, and applies the
   /// window/tray behaviour immediately (live-apply, like [setThemeMode]).
   Future<void> setMinimizeToTray(bool enabled) async {

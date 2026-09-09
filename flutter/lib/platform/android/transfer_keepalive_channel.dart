@@ -9,15 +9,25 @@ class TransferKeepalive {
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   /// Start the foreground service and post the ongoing notification. The
-  /// service holds a partial wake lock + Wi-Fi high-performance lock for its
+  /// service holds a partial wake lock + Wi-Fi low-latency lock for its
   /// lifetime. Idempotent: calling again with new title/body just updates the
   /// notification.
+  ///
+  /// [keepScreenOn] additionally holds the screen awake until [stop]. That is
+  /// separate from the service's locks and cannot be folded into them: a sleeping
+  /// screen puts Wi-Fi into power-save regardless of any lock an app holds, which
+  /// costs ~4x throughput.
   static Future<void> start({
     required String title,
     required String body,
+    bool keepScreenOn = false,
   }) async {
     if (!_supported) return;
-    await _channel.invokeMethod<void>('start', {'title': title, 'body': body});
+    await _channel.invokeMethod<void>('start', {
+      'title': title,
+      'body': body,
+      'keepScreenOn': keepScreenOn,
+    });
   }
 
   /// Update the notification text without restarting the service or touching
@@ -30,7 +40,7 @@ class TransferKeepalive {
     await _channel.invokeMethod<void>('update', {'title': title, 'body': body});
   }
 
-  /// Stop the service and release locks.
+  /// Stop the service, release its locks, and let the screen sleep again.
   static Future<void> stop() async {
     if (!_supported) return;
     await _channel.invokeMethod<void>('stop');

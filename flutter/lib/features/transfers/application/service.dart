@@ -7,6 +7,7 @@ import '../../../platform/rust/receiver/fake_source.dart';
 import '../../../platform/rust/receiver/source.dart';
 import '../../../src/rust/api/receiver.dart' as rust_receiver;
 import '../../saved_devices/application/saved_devices_controller.dart';
+import '../../settings/application/controller.dart';
 import 'connection_path.dart';
 import 'format_utils.dart';
 import 'identity.dart';
@@ -397,6 +398,10 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
     TransferKeepalive.start(
       title: 'Wisp receiving',
       body: senderName.isEmpty ? 'Incoming files' : 'from $senderName',
+      keepScreenOn: ref
+          .read(settingsControllerProvider)
+          .settings
+          .keepScreenOnDuringTransfer,
     ).ignore();
   }
 

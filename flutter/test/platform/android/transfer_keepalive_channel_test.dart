@@ -40,6 +40,27 @@ void main() {
       expect(invocations.first.arguments, {
         'title': 'Wisp sending',
         'body': 'to Maya',
+        'keepScreenOn': false,
+      });
+    });
+
+    test('start defaults keepScreenOn to false', () async {
+      // The screen is held only when a caller asks: the flag reaches here from
+      // a user setting, and a missing argument must not silently mean "on".
+      await TransferKeepalive.start(title: 't', body: 'b');
+      expect(invocations.single.arguments['keepScreenOn'], isFalse);
+    });
+
+    test('start forwards a keepScreenOn request', () async {
+      await TransferKeepalive.start(
+        title: 'Wisp sending',
+        body: 'to Maya',
+        keepScreenOn: true,
+      );
+      expect(invocations.single.arguments, {
+        'title': 'Wisp sending',
+        'body': 'to Maya',
+        'keepScreenOn': true,
       });
     });
 

@@ -34,6 +34,44 @@ void main() {
     expect(state.settings.discoveryServerUrl, defaultRendezvousUrl);
   });
 
+  test('setKeepScreenOnDuringTransfer persists without a save', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final repo = SettingsRepository(
+      prefs: prefs,
+      randomDeviceName: () => 'Rusty Ridge',
+      defaultDownloadRoot: '/tmp/Wisp',
+    );
+    final initialSettings = await repo.loadOrCreate();
+    final container = ProviderContainer(
+      overrides: [
+        settingsRepositoryProvider.overrideWithValue(repo),
+        initialAppSettingsProvider.overrideWithValue(initialSettings),
+      ],
+    );
+    addTearDown(container.dispose);
+    final notifier = container.read(settingsControllerProvider.notifier);
+
+    expect(
+      container
+          .read(settingsControllerProvider)
+          .settings
+          .keepScreenOnDuringTransfer,
+      isTrue,
+    );
+
+    await notifier.setKeepScreenOnDuringTransfer(false);
+
+    expect(
+      container
+          .read(settingsControllerProvider)
+          .settings
+          .keepScreenOnDuringTransfer,
+      isFalse,
+    );
+    // Live-applied, so it must already be on disk without a saveSettings call.
+    expect((await repo.loadOrCreate()).keepScreenOnDuringTransfer, isFalse);
+  });
+
   test('saveSettings updates the stored settings', () async {
     final prefs = await SharedPreferences.getInstance();
     final repo = SettingsRepository(

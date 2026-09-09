@@ -12,6 +12,7 @@ const String _skipClipboardConfirmKey = 'settings.skip_clipboard_confirm';
 const String _themeModeKey = 'settings.theme_mode';
 const String _minimizeToTrayKey = 'settings.minimize_to_tray';
 const String _launchAtStartupKey = 'settings.launch_at_startup';
+const String _keepScreenOnKey = 'settings.keep_screen_on_transfer';
 const String _contextMenuPromptedKey = 'settings.context_menu_prompted';
 
 class SettingsRepository {
@@ -40,6 +41,7 @@ class SettingsRepository {
       themeMode: ThemeMode.system,
       minimizeToTray: false,
       launchAtStartup: false,
+      keepScreenOnDuringTransfer: true,
     );
     await save(seeded);
     return seeded;
@@ -65,6 +67,7 @@ class SettingsRepository {
     );
     await prefs.setBool(_minimizeToTrayKey, settings.minimizeToTray);
     await prefs.setBool(_launchAtStartupKey, settings.launchAtStartup);
+    await prefs.setBool(_keepScreenOnKey, settings.keepScreenOnDuringTransfer);
   }
 
   /// Whether the one-time "add Wisp to the right-click menu?" prompt has been
@@ -92,6 +95,9 @@ class SettingsRepository {
       themeMode: _themeModeFromString(prefs.getString(_themeModeKey)),
       minimizeToTray: prefs.getBool(_minimizeToTrayKey) ?? false,
       launchAtStartup: prefs.getBool(_launchAtStartupKey) ?? false,
+      // Defaults true for installs that predate the key, matching a fresh
+      // install: the slow-transfer trap it avoids is not opt-in behaviour.
+      keepScreenOnDuringTransfer: prefs.getBool(_keepScreenOnKey) ?? true,
     );
   }
 }

@@ -600,6 +600,10 @@ class SendController extends _$SendController {
     TransferKeepalive.start(
       title: 'Wisp sending',
       body: destinationLabel,
+      keepScreenOn: ref
+          .read(settingsControllerProvider)
+          .settings
+          .keepScreenOnDuringTransfer,
     ).ignore();
   }
 

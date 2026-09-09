@@ -614,6 +614,20 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                             setState(() => _skipClipboardConfirm = value);
                           },
                         ),
+                        if (Platform.isAndroid) ...[
+                          const SizedBox(height: 18),
+                          SettingsToggleField(
+                            title: 'Keep screen on while transferring',
+                            subtitle:
+                                'A sleeping screen puts Wi-Fi into power-save '
+                                'and cuts transfer speed to roughly a quarter. '
+                                'Uses more battery.',
+                            value: state.settings.keepScreenOnDuringTransfer,
+                            onChanged: (value) => ref
+                                .read(settingsControllerProvider.notifier)
+                                .setKeepScreenOnDuringTransfer(value),
+                          ),
+                        ],
                         const SizedBox(height: 18),
                         const ReliabilitySettingsSection(),
                         if (Platform.isWindows) ...[

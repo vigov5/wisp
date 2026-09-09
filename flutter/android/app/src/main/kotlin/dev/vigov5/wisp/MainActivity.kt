@@ -23,6 +23,7 @@ import android.provider.Settings
 import android.system.Os
 import android.system.OsConstants
 import android.util.Log
+import android.view.WindowManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.documentfile.provider.DocumentFile
@@ -458,6 +459,22 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
+    // Holds the screen awake for the duration of a transfer.
+    //
+    // FLAG_KEEP_SCREEN_ON only applies while this activity is visible, which is
+    // exactly the case worth covering: a transfer the user is watching, where a
+    // screen timeout would otherwise drop Wi-Fi into power-save and cost ~4x
+    // throughput. Once Wisp is backgrounded the platform sleeps the screen no
+    // matter what an app asks for; from there the foreground service's wake lock
+    // is what keeps the transfer itself running.
+    private fun applyKeepScreenOn(enabled: Boolean) {
+        if (enabled) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
     private fun handleKeepaliveCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "start", "update" -> {
@@ -465,6 +482,11 @@ class MainActivity : FlutterFragmentActivity() {
                 val body = call.argument<String>("body").orEmpty()
                 if (call.method == "start") {
                     ensureNotificationPermission()
+                    // Only "start" carries the flag. "update" fires ~1/s for the
+                    // whole transfer and must not touch the window.
+                    applyKeepScreenOn(
+                        call.argument<Boolean>("keepScreenOn") == true,
+                    )
                 }
                 // Progress ticks ("update", ~1/s for the whole transfer) only
                 // change the notification text — re-post it directly on the
@@ -486,6 +508,7 @@ class MainActivity : FlutterFragmentActivity() {
                 result.success(null)
             }
             "stop" -> {
+                applyKeepScreenOn(false)
                 stopService(Intent(this, TransferKeepaliveService::class.java))
                 result.success(null)
             }

@@ -191,8 +191,17 @@ class TransferKeepaliveService : Service() {
 
         val appContext = applicationContext
         val wm = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        // WIFI_MODE_FULL_HIGH_PERF is deprecated at API 29 in favour of
+        // WIFI_MODE_FULL_LOW_LATENCY. Both branches here used to name the
+        // deprecated constant, so on every device Wisp actually ships to the
+        // modern mode was never requested at all.
+        //
+        // Low latency is not a substitute for keeping the screen awake: the
+        // platform only honours it while the app is foreground *with the screen
+        // on*. A sleeping screen costs ~4x throughput no matter which lock is
+        // held - see AppSettings.keepScreenOnDuringTransfer.
         val wifiMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            WifiManager.WIFI_MODE_FULL_LOW_LATENCY
         } else {
             @Suppress("DEPRECATION")
             WifiManager.WIFI_MODE_FULL_HIGH_PERF

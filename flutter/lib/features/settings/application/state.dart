@@ -12,6 +12,7 @@ class AppSettings {
     this.themeMode = ThemeMode.system,
     this.minimizeToTray = false,
     this.launchAtStartup = false,
+    this.keepScreenOnDuringTransfer = true,
   });
 
   final String deviceName;
@@ -35,6 +36,21 @@ class AppSettings {
   /// logs in. Mirrors the OS-level state (reconciled at Settings open).
   final bool launchAtStartup;
 
+  /// Android only. Holds the screen awake for the duration of a transfer.
+  ///
+  /// Defaults **on**, because letting the screen sleep is not a cosmetic
+  /// choice: it drops Wi-Fi into power-save. Measured on the test rig with
+  /// plain TCP (no Wisp code in the path), 4 GiB over one link: 59-62 MiB/s
+  /// with the screen on, 13-18 MiB/s with it off, and ~40 s to climb back
+  /// after it wakes. That recovery lag is why the symptom is confusing -
+  /// turning the screen on *to read the speed* still shows the low number.
+  ///
+  /// Neither the Wi-Fi lock nor the partial wake lock avoids this: the
+  /// platform only lifts the restriction while the screen is on, so keeping
+  /// it awake is the one lever an app actually has. Costs battery, hence the
+  /// switch.
+  final bool keepScreenOnDuringTransfer;
+
   AppSettings copyWith({
     String? deviceName,
     String? downloadRoot,
@@ -45,6 +61,7 @@ class AppSettings {
     ThemeMode? themeMode,
     bool? minimizeToTray,
     bool? launchAtStartup,
+    bool? keepScreenOnDuringTransfer,
   }) {
     return AppSettings(
       deviceName: deviceName ?? this.deviceName,
@@ -58,6 +75,8 @@ class AppSettings {
       themeMode: themeMode ?? this.themeMode,
       minimizeToTray: minimizeToTray ?? this.minimizeToTray,
       launchAtStartup: launchAtStartup ?? this.launchAtStartup,
+      keepScreenOnDuringTransfer:
+          keepScreenOnDuringTransfer ?? this.keepScreenOnDuringTransfer,
     );
   }
 
@@ -73,7 +92,8 @@ class AppSettings {
           skipClipboardConfirm == other.skipClipboardConfirm &&
           themeMode == other.themeMode &&
           minimizeToTray == other.minimizeToTray &&
-          launchAtStartup == other.launchAtStartup;
+          launchAtStartup == other.launchAtStartup &&
+          keepScreenOnDuringTransfer == other.keepScreenOnDuringTransfer;
 
   @override
   int get hashCode => Object.hash(
@@ -85,6 +105,7 @@ class AppSettings {
     themeMode,
     minimizeToTray,
     launchAtStartup,
+    keepScreenOnDuringTransfer,
   );
 }
 
