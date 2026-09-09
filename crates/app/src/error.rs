@@ -515,10 +515,21 @@ impl From<TransferError> for UserFacingError {
             TransferError::ChannelClosed { .. } => {
                 UserFacingError::from_kind(UserFacingErrorKind::Internal)
             }
+            // The whole chain, not just `source`'s own Display. `{source}`
+            // renders one level, and one level is almost never the cause: a
+            // failed receive read
+            //
+            //   running receiver session: fetching blob content for ticket
+            //   BlobTicket { addr: ... twelve lines of addresses ... }
+            //
+            // on the device, which is two layers of context and no reason at
+            // all — the actual error was the `#[source]` under the one that
+            // got printed. [`format_error_chain`] has been sitting in this
+            // file the whole time; this arm just did not call it.
             TransferError::Other { context, source } => UserFacingError::new(
                 UserFacingErrorKind::Other,
                 "Transfer failed",
-                format!("{context}: {source}"),
+                format!("{context}: {}", format_error_chain(source.as_ref())),
             ),
         }
     }

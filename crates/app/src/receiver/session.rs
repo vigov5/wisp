@@ -460,6 +460,22 @@ impl ReceiverSession {
                     break;
                 }
                 CoreReceiverEvent::Failed { error, .. } => {
+                    // The only place a failed receive is recorded. Without
+                    // this the reason existed in exactly one place — a string
+                    // inside the state the UI renders — so a transfer that
+                    // died 139 ms into `fetch_store` left telemetry saying
+                    // `outcome: failed` and nothing anywhere saying why.
+                    // A failure that arrives as an *event* rather than as the
+                    // session's return value. Not the path a failed fetch
+                    // takes — that one returns Err and is logged where it is
+                    // turned into a `failed_offer_event` below — but the ones
+                    // that do come through here were equally unlogged.
+                    tracing::warn!(
+                        offer_id,
+                        error = %crate::error::format_error_chain(&error),
+                        detail = ?error,
+                        "receive failed"
+                    );
                     let _ = progress_cmd_tx.try_send(ReceiverCommand::OfferFinished {
                         offer_id,
                         // drift#29: carry the plan + latest snapshot +
@@ -614,7 +630,24 @@ impl ReceiverSession {
                 sender_web,
                 sender_ephemeral,
                 "Transfer failed.".to_owned(),
-                UserFacingError::from(error),
+                {
+                    // This is where a failed transfer actually arrives: the
+                    // session task *returns* Err, it does not emit an event.
+                    // The first version of this log went on
+                    // `CoreReceiverEvent::Failed` and never fired once on a
+                    // device, through two reproductions in both directions —
+                    // that arm carries other failures, not this one.
+                    //
+                    // Debug as well as the Display chain, because the chain
+                    // stopped one level short of the cause on the device: three
+                    // layers of "fetching blob content for ..." and no reason.
+                    tracing::warn!(
+                        error = %crate::error::format_error_chain(&error),
+                        detail = ?error,
+                        "receive failed"
+                    );
+                    UserFacingError::from(error)
+                },
                 offer.file_count,
                 offer.total_size,
                 last_progress_bytes,

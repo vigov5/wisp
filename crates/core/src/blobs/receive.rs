@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, trace};
 
-use super::error::{BlobError, BlobTextError, Result};
+use super::error::{BlobError, BlobTextError, Result, error_chain};
 use super::source::{BlobSource, LanTarget};
 use super::stream::{StreamTarget, stream_collection};
 use super::telemetry::{BlobTransferTelemetry, TransferEnd, is_enabled as telemetry_enabled};
@@ -413,7 +413,16 @@ impl BlobReceiver {
         let transport_profile = self.transport_profile;
         let benchmark_run_id = self.benchmark_run_id;
         let task = tokio::spawn(async move {
-            let ticket_context = format!("ticket {ticket:?}");
+            // The hash and the peer, not `{ticket:?}`. This string is the
+            // context on every error out of this task and it reaches the
+            // user's screen: the full Debug of a ticket is a dozen lines of
+            // relay URLs and interface addresses, which pushed the actual
+            // reason off the bottom of a failed-transfer card.
+            let ticket_context = format!(
+                "collection {} from {}",
+                ticket.hash().fmt_short(),
+                ticket.addr().id.fmt_short(),
+            );
             let (source, transport_profile) = choose_source(
                 &endpoint,
                 &ticket,
@@ -455,8 +464,14 @@ impl BlobReceiver {
                     .await;
             }
             if let Err(error) = &result {
+                // `error_chain`, not `to_string()`. `BlobError` is not Clone —
+                // it boxes its source — so this hop has to flatten the error
+                // into text, and flattening one level is what hid the cause of
+                // every failed receive: the update carried
+                // `BlobTextError("fetching blob content for <file>")` with the
+                // reason underneath it already thrown away.
                 let _ = update_tx.send(BlobDownloadUpdate::Failed {
-                    error: BlobError::fetch(ticket_context, BlobTextError::new(error.to_string())),
+                    error: BlobError::fetch(ticket_context, BlobTextError::new(error_chain(error))),
                 });
             }
             result

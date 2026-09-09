@@ -69,6 +69,33 @@ impl fmt::Display for BlobTextError {
 
 impl StdError for BlobTextError {}
 
+/// Every level of an error's Display, joined — for the places that have to
+/// flatten an error into a string.
+///
+/// `to_string()` and `{:#}` both render one level, and one level is almost
+/// never the cause. Flattening a `BlobError` with either drops its `#[source]`,
+/// and a device log showed exactly what that costs: a failed 1911-file receive
+/// arrived as
+///
+/// ```text
+/// Other { context: "running receiver session", source: Blob(Fetch {
+///   context: "collection 68bdc1b3a8 from 76b77179bf",
+///   source: BlobTextError("fetching blob content for dicts/EDICT... (a9e...)") }) }
+/// ```
+///
+/// — three layers of context whose innermost entry is a *stringified* error,
+/// so the reason the fetch failed was gone before it left the crate. Anywhere
+/// an error has to become text, it should become all of it.
+pub(crate) fn error_chain(error: &(dyn StdError + 'static)) -> String {
+    let mut parts = Vec::new();
+    let mut current = Some(error);
+    while let Some(err) = current {
+        parts.push(err.to_string());
+        current = err.source();
+    }
+    parts.join(": ")
+}
+
 impl BlobError {
     pub(crate) fn store_load(path: PathBuf, source: impl StdError + Send + Sync + 'static) -> Self {
         Self::StoreLoad {

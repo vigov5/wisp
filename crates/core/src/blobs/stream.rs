@@ -35,7 +35,7 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tracing::{debug, trace};
 
-use super::error::{BlobError, BlobTextError, Result};
+use super::error::{BlobError, BlobTextError, Result, error_chain};
 use super::receive::{BlobDownloadUpdate, PROGRESS_EMIT_INTERVAL, ProgressCoalescer};
 use super::source::BlobSource;
 use super::telemetry::BlobTransferTelemetry;
@@ -192,9 +192,11 @@ pub(super) async fn stream_collection(
     let collection = Collection::load(root_hash, &SourceStore(&source))
         .await
         .map_err(|source| {
+            // The whole chain: `{:#}` renders one level, which for a nested
+            // error means the context and not the cause. See `error_chain`.
             BlobError::fetch(
                 format!("collection {root_hash}"),
-                BlobTextError::new(format!("{source:#}")),
+                BlobTextError::new(error_chain(&source)),
             )
         })?;
     let hashes: HashMap<&str, Hash> = collection

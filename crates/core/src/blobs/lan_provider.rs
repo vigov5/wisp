@@ -105,6 +105,9 @@ impl LanBlobProvider {
                     let pair = StreamPair::new(id, recv, send, EventSender::DEFAULT);
                     match handle_stream(pair, store).await {
                         Ok(()) => debug!(%peer, peer_id = %identity.fmt_short(), "lan_tcp.served"),
+                        Err(error) if closed_without_request(&error) => {
+                            debug!(%peer, peer_id = %identity.fmt_short(), %error, "lan_tcp.no_request")
+                        }
                         Err(error) => {
                             warn!(%peer, peer_id = %identity.fmt_short(), %error, "lan_tcp.serve_failed")
                         }
@@ -119,6 +122,37 @@ impl LanBlobProvider {
     pub(crate) fn port(&self) -> u16 {
         self.port
     }
+}
+
+/// True when a connection ended before a complete request arrived.
+///
+/// That is the exact shape of the receiver's path probe: `choose_source` dials,
+/// handshakes, shuts the stream down and throws the connection away, to prove
+/// the port is reachable before committing a whole transfer to it. So this is
+/// what a *healthy* transfer's first LAN connection looks like from the
+/// provider's side, and it used to be logged at `warn` as `serve_failed` on
+/// every single successful transfer.
+///
+/// That cost a real diagnosis: reading `serve_failed ... error=early eof` on a
+/// slow 1911-file transfer, I concluded the LAN TCP path had collapsed and the
+/// payload had fallen back to QUIC. It had not — every run used LAN TCP, and
+/// the slowness was per-file connection setup. The comment on the probe's own
+/// `shutdown()` call predicted exactly this: "a warning that fires on every
+/// healthy transfer is a warning nobody reads".
+///
+/// Detected by error *kind* rather than message, walking the source chain,
+/// because the text belongs to whatever io layer produced it. A partial
+/// request that stops mid-way lands here too, which is correct: nothing was
+/// asked for, so nothing was failed to be served.
+fn closed_without_request(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(err) = current {
+        if let Some(io) = err.downcast_ref::<std::io::Error>() {
+            return matches!(io.kind(), std::io::ErrorKind::UnexpectedEof);
+        }
+        current = err.source();
+    }
+    false
 }
 
 impl Drop for LanBlobProvider {
@@ -181,5 +215,46 @@ mod tests {
             Ok(bytes) => bytes.is_empty(),
         };
         assert!(refused, "a stranger must be refused, got {answer:?} back");
+    }
+
+    /// The predicate that decides whether a closed connection is worth a
+    /// warning. It reads the io error *kind* through the source chain, so a
+    /// wrapper crate changing its message text cannot silently turn every
+    /// healthy transfer back into a `serve_failed` warning.
+    #[test]
+    fn a_connection_closed_before_a_request_is_not_a_failure() {
+        use std::io::{Error as IoError, ErrorKind};
+
+        #[derive(Debug)]
+        struct Wrapper(IoError);
+        impl std::fmt::Display for Wrapper {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "reading the request")
+            }
+        }
+        impl std::error::Error for Wrapper {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        // The probe: closed cleanly before asking for anything.
+        let probe = Wrapper(IoError::new(ErrorKind::UnexpectedEof, "early eof"));
+        assert!(super::closed_without_request(&probe));
+
+        // A real mid-serve failure must still warn.
+        let reset = Wrapper(IoError::new(ErrorKind::ConnectionReset, "reset"));
+        assert!(!super::closed_without_request(&reset));
+
+        // And an error with no io layer under it at all.
+        #[derive(Debug)]
+        struct Bare;
+        impl std::fmt::Display for Bare {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "bare")
+            }
+        }
+        impl std::error::Error for Bare {}
+        assert!(!super::closed_without_request(&Bare));
     }
 }
