@@ -158,6 +158,10 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Before anything can reach the network: without the Android context
+        // iroh's resolver cannot read the system DNS config and sends every
+        // lookup to Google's public servers instead.
+        WispNative.install(this)
         initialSharedFilesJob = extractSharedFilesAsync(intent)
         initialSharedText = extractSharedText(intent)
         // Instantiate before configureFlutterEngine so an accessory-attach

@@ -31,6 +31,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [target.'cfg(target_os = "android")'.dependencies]
 tracing = "0.1"
 tracing-android = "0.2"
+# Pinned to the same minor as the copy `iroh-dns`/`netdev` already resolve to:
+# ndk-context keeps its state in a crate-level static, so two semver-
+# incompatible copies would mean initializing one and reading the other.
+ndk-context = "0.1"
+jni = "0.21"
 
 [profile.release]
 codegen-units = 1
