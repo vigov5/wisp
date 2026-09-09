@@ -40,6 +40,13 @@ const Color kAccentRelay = Color(0xFFC78F2A);
 const Color kDanger = Color(0xFFB34A4A);
 const Color kError = Color(0xFFCC3333);
 
+// The filled button on a cancelled transfer's result screen, on both sides.
+// Neutral on purpose: nothing went wrong and nothing succeeded, so the only
+// action left is to dismiss, and neither the cyan of a success nor the red of
+// a failure says that. Named because the sender and the receiver render that
+// screen from different widgets and were drifting apart on it.
+const Color kCancelled = Color(0xFF617B87);
+
 const Color kPrimary = kAccentCyanStrong;
 const Color kPrimaryDark = kAccentCyanStrong;
 const Color kPrimaryLight = Color(0xFFA5F3FC);

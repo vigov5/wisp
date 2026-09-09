@@ -262,6 +262,9 @@ class _TransferStateCard extends StatelessWidget {
     final isSuccessResult =
         state is SendStateResult &&
         viewData.visual.statusLabel.toLowerCase().trim() == 'success';
+    final isCancelledResult =
+        state is SendStateResult &&
+        viewData.visual.statusLabel.toLowerCase().trim() == 'cancelled';
 
     final progress = _buildSharedTransferProgress(
       transfer,
@@ -342,6 +345,7 @@ class _TransferStateCard extends StatelessWidget {
         state: state,
         showFooterButton: showFooterButton,
         isSuccessResult: isSuccessResult,
+        isCancelledResult: isCancelledResult,
         primary: primary,
         accent: accent,
         onExit: onExit,
@@ -360,15 +364,19 @@ class _TransferStateCard extends StatelessWidget {
 ///    (TextButton with red tint).
 /// 2. **Success result** → one "Done" button (primary color) → home.
 /// 3. **Failed / cancelled / declined result** → two buttons side-by-side:
-///    left "Done" (outlined / secondary, back to home, clears draft) and
-///    right "Retry" (filled, accent color, restores the draft and pushes
-///    /send/draft so the user can immediately re-send the same files).
+///    left "Done" (back to home, clears draft) and right "Retry" (filled,
+///    accent color, restores the draft and pushes /send/draft so the user can
+///    immediately re-send the same files). "Done" is outlined for a failure or
+///    a decline, and filled [kCancelled] for a cancel — the receiver's
+///    cancelled screen has always used that neutral fill for the same button,
+///    and the two sides showing the same outcome should not look different.
 /// 4. **Anything else** (e.g. early connecting phase) → no footer button.
 Widget _buildFooter({
   required BuildContext context,
   required SendState state,
   required bool showFooterButton,
   required bool isSuccessResult,
+  required bool isCancelledResult,
   required Color primary,
   required Color accent,
   required VoidCallback onExit,
@@ -456,40 +464,72 @@ Widget _buildFooter({
     );
   }
 
-  // Failure result: side-by-side "Done" + "Retry".  "Retry" is the visually
-  // dominant action (FilledButton in the accent color) because re-sending
-  // the same files is the more likely user intent after a failure; "Done"
-  // (OutlinedButton) is the escape hatch back to home.
+  // Failure result: side-by-side "Done" + "Retry".  After a failure or a
+  // decline "Retry" is the visually dominant action (FilledButton in the
+  // accent color), because re-sending the same files is the more likely user
+  // intent and "Done" is only the escape hatch back to home.
+  //
+  // A cancel inverts that. The user stopped the transfer on purpose, so
+  // dismissing is the expected next step, not retrying: "Done" takes the
+  // filled neutral and "Retry" drops to an outline. That also lands the
+  // sender on the same look as the receiver's cancelled screen, which renders
+  // the same outcome from TransferResultCard with one neutral-filled button.
   return Row(
     children: [
       Expanded(
-        child: OutlinedButton(
-          onPressed: onExit,
-          style: OutlinedButton.styleFrom(
-            foregroundColor: context.wc.ink,
-            minimumSize: const Size(0, 48),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            side: BorderSide(color: context.wc.border),
-          ),
-          child: const Text('Done'),
-        ),
+        child: isCancelledResult
+            ? FilledButton(
+                onPressed: onExit,
+                style: FilledButton.styleFrom(
+                  backgroundColor: kCancelled,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(0, 48),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text('Done'),
+              )
+            : OutlinedButton(
+                onPressed: onExit,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: context.wc.ink,
+                  minimumSize: const Size(0, 48),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  side: BorderSide(color: context.wc.border),
+                ),
+                child: const Text('Done'),
+              ),
       ),
       const SizedBox(width: 12),
       Expanded(
-        child: FilledButton(
-          onPressed: onRetry,
-          style: FilledButton.styleFrom(
-            backgroundColor: accent,
-            foregroundColor: Colors.white,
-            minimumSize: const Size(0, 48),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-          child: const Text('Retry'),
-        ),
+        child: isCancelledResult
+            ? OutlinedButton(
+                onPressed: onRetry,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: context.wc.ink,
+                  minimumSize: const Size(0, 48),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  side: BorderSide(color: context.wc.border),
+                ),
+                child: const Text('Retry'),
+              )
+            : FilledButton(
+                onPressed: onRetry,
+                style: FilledButton.styleFrom(
+                  backgroundColor: accent,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(0, 48),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text('Retry'),
+              ),
       ),
     ],
   );

@@ -250,7 +250,7 @@ _TransferResultVisualData _visualForOutcome(TransferResultOutcome outcome) {
     TransferResultOutcome.cancelled => const _TransferResultVisualData(
       statusLabel: 'Cancelled',
       accentColor: Color(0xFFC0912C),
-      buttonColor: Color(0xFF617B87),
+      buttonColor: kCancelled,
       icon: Icons.do_not_disturb_on_rounded,
     ),
     TransferResultOutcome.failed => const _TransferResultVisualData(

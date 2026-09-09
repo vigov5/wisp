@@ -15,6 +15,7 @@ import 'package:app/features/transfers/presentation/widgets/active_transfer_file
 import 'package:app/features/transfers/presentation/widgets/manifest_tree_card.dart';
 import 'package:app/features/send/presentation/widgets/recipient_avatar.dart';
 import 'package:app/features/settings/settings_providers.dart';
+import 'package:app/theme/wisp_theme.dart';
 import 'package:app/platform/send_transfer_source.dart';
 import 'package:app/src/rust/api/transfer.dart' as rust_transfer;
 import '../../../support/settings_test_overrides.dart';
@@ -514,6 +515,7 @@ void main() {
               SendTransferUpdate update,
               String expectedStatusLabel,
               String expectedSubtitle,
+              bool doneIsNeutralFill,
             })
           >[
             (
@@ -527,6 +529,7 @@ void main() {
               ),
               expectedStatusLabel: 'DECLINED',
               expectedSubtitle: 'Receiver declined',
+              doneIsNeutralFill: false,
             ),
             (
               update: SendTransferUpdate.cancelled(
@@ -539,6 +542,7 @@ void main() {
               ),
               expectedStatusLabel: 'CANCELLED',
               expectedSubtitle: 'Cancelled',
+              doneIsNeutralFill: true,
             ),
             (
               update: SendTransferUpdate.failed(
@@ -557,6 +561,7 @@ void main() {
               ),
               expectedStatusLabel: 'FAILED',
               expectedSubtitle: 'boom',
+              doneIsNeutralFill: false,
             ),
           ];
 
@@ -595,6 +600,23 @@ void main() {
         // selected files.
         expect(find.text('Done'), findsOneWidget);
         expect(find.text('Retry'), findsOneWidget);
+        // A cancel is the one outcome where Done takes the neutral fill, so
+        // the sender's cancelled screen matches the receiver's — the two
+        // render it from different widgets and had drifted apart.
+        if (fixture.doneIsNeutralFill) {
+          final done = find.widgetWithText(FilledButton, 'Done');
+          expect(done, findsOneWidget);
+          final fill = tester.widget<FilledButton>(done).style!.backgroundColor;
+          expect(fill?.resolve(const {}), kCancelled);
+          // A cancel was intentional, so dismissing leads and Retry drops to
+          // an outline — exactly one filled button on the screen.
+          expect(find.widgetWithText(OutlinedButton, 'Retry'), findsOneWidget);
+          expect(find.byType(FilledButton), findsOneWidget);
+        } else {
+          expect(find.widgetWithText(OutlinedButton, 'Done'), findsOneWidget);
+          expect(find.widgetWithText(FilledButton, 'Done'), findsNothing);
+          expect(find.widgetWithText(FilledButton, 'Retry'), findsOneWidget);
+        }
         expect(find.byType(RecipientAvatar).last, findsOneWidget);
       }
     },
