@@ -5168,7 +5168,7 @@ dependencies = [
 
 [[package]]
 name = "wisp"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -5189,7 +5189,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-app"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -5212,7 +5212,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-core"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -5250,7 +5250,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-server"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -5271,7 +5271,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-web-receiver"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -5300,7 +5300,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-wire"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "base64",
  "bincode",
