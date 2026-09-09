@@ -270,7 +270,10 @@ class SendController extends _$SendController {
 
     final transferSource = ref.read(sendTransferSourceProvider);
     final transferToken = ++_activeTransferToken;
-    _transferStartTime = DateTime.now();
+    // Deliberately not anchored here: the clock starts when bytes start, in
+    // `_handleTransferUpdate`. Only cleared, so a retry can't inherit the
+    // previous run's anchor.
+    _transferStartTime = null;
     _startKeepalive(
       destinationLabel:
           validatedRequest.lanDestinationLabel ?? validatedRequest.code ?? '',
@@ -514,6 +517,17 @@ class SendController extends _$SendController {
       connectionCandidates: update.connectionCandidates,
       error: update.error ?? currentState.transfer.error,
     );
+
+    // Start the clock at the first byte, not at the tap on Send. Between the
+    // two sit the manifest hash (66 s for a 6.2 GB file), the dial, and an
+    // unbounded wait on the receiver's human — none of which the sender moved
+    // any bytes during, so charging them to the transfer made both the
+    // reported time and the average speed meaningless. The receiver has always
+    // anchored on its first `receiving` event, so the two devices used to
+    // report different durations for the same transfer; now they agree.
+    if (update.phase == SendTransferUpdatePhase.sending) {
+      _transferStartTime ??= DateTime.now();
+    }
 
     Duration? duration;
     String? avgSpeedLabel;

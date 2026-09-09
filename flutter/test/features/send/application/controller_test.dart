@@ -569,6 +569,117 @@ void main() {
   });
 
   test(
+    'send controller measures the transfer from the first byte, not from Send',
+    () async {
+      // Regression: the duration was anchored at startTransfer, so it also
+      // charged the manifest hash, the dial and the (unbounded) wait on the
+      // receiver's human to the transfer — inflating the reported time and
+      // deflating the average speed by the same factor.
+      final fakeSource = FakeSendTransferSource();
+      final container = ProviderContainer(
+        overrides: [
+          initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          sendTransferSourceProvider.overrideWithValue(fakeSource),
+        ],
+      );
+      addTearDown(container.dispose);
+      addTearDown(fakeSource.close);
+
+      final controller = container.read(sendControllerProvider.notifier);
+      controller.beginDraft([
+        SendPickedFile(
+          path: '/tmp/report.pdf',
+          name: 'report.pdf',
+          sizeBytes: BigInt.from(1024),
+        ),
+      ]);
+      controller.updateDestinationCode('ABC123');
+      controller.startTransfer(controller.buildSendRequest()!);
+
+      // Stand-in for everything that happens before a byte moves, kept an
+      // order of magnitude longer than the transfer window below so the
+      // assertion can tell the two apart under load.
+      const wait = Duration(milliseconds: 800);
+      const onTheWire = Duration(milliseconds: 20);
+      await Future<void>.delayed(wait);
+      fakeSource.emit(
+        SendTransferUpdate(
+          phase: SendTransferUpdatePhase.sending,
+          destinationLabel: 'Laptop',
+          statusMessage: 'Sending files.',
+          itemCount: BigInt.one,
+          totalSize: BigInt.from(1024),
+          bytesSent: BigInt.zero,
+          totalBytes: BigInt.from(1024),
+        ),
+      );
+      // Long enough to survive the `inMilliseconds > 0` guard on the average.
+      await Future<void>.delayed(onTheWire);
+      fakeSource.emit(
+        SendTransferUpdate.completed(
+          destinationLabel: 'Laptop',
+          statusMessage: 'Sent successfully',
+          itemCount: BigInt.one,
+          totalSize: BigInt.from(1024),
+          bytesSent: BigInt.from(1024),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 1050));
+
+      final result =
+          (container.read(sendControllerProvider) as SendStateResult).result;
+      expect(result.duration, isNotNull);
+      expect(result.duration!, greaterThanOrEqualTo(onTheWire));
+      expect(result.duration!, lessThan(wait));
+      expect(result.averageSpeedLabel, isNotNull);
+    },
+  );
+
+  test(
+    'send controller reports no duration when the transfer never started',
+    () async {
+      // A decline moves no bytes, so there is no transfer to time. It used to
+      // report the length of the wait and an average speed of 0 B/s.
+      final fakeSource = FakeSendTransferSource();
+      final container = ProviderContainer(
+        overrides: [
+          initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          sendTransferSourceProvider.overrideWithValue(fakeSource),
+        ],
+      );
+      addTearDown(container.dispose);
+      addTearDown(fakeSource.close);
+
+      final controller = container.read(sendControllerProvider.notifier);
+      controller.beginDraft([
+        SendPickedFile(
+          path: '/tmp/report.pdf',
+          name: 'report.pdf',
+          sizeBytes: BigInt.from(1024),
+        ),
+      ]);
+      controller.updateDestinationCode('ABC123');
+      controller.startTransfer(controller.buildSendRequest()!);
+
+      fakeSource.emit(
+        SendTransferUpdate.declined(
+          destinationLabel: 'Laptop',
+          statusMessage: 'Receiver declined',
+          itemCount: BigInt.one,
+          totalSize: BigInt.from(1024),
+          bytesSent: BigInt.zero,
+          totalBytes: BigInt.from(1024),
+        ),
+      );
+
+      final result =
+          (container.read(sendControllerProvider) as SendStateResult).result;
+      expect(result.duration, isNull);
+      expect(result.averageSpeedLabel, isNull);
+    },
+  );
+
+  test(
     'send controller propagates remoteTicket from update into transfer state',
     () {
       // Regression: code-based sends used to leave `lastTicket` null in saved
