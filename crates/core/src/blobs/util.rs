@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use iroh_blobs::{
     BlobFormat,
@@ -8,6 +7,7 @@ use iroh_blobs::{
         blobs::{AddPathOptions, ImportMode},
     },
 };
+use tokio::task::JoinSet;
 use tracing::{instrument, trace};
 
 use super::descriptor::{self, DescriptorHandles};
@@ -17,18 +17,22 @@ use crate::{
     transfer::path::{input_root_name, normalize_transfer_path},
 };
 
+/// A file the walk found, waiting to be read and hashed.
+#[derive(Debug)]
+pub(super) struct PendingImport {
+    /// The input this file was discovered under, for the error message. Every
+    /// file of one input reports the input's path, not its own, which is what
+    /// the serial version did.
+    pub(super) input_display: String,
+    pub(super) transfer_path: String,
+    pub(super) local_path: PathBuf,
+}
+
 #[derive(Debug)]
 pub(super) struct ImportedFile {
     pub(super) transfer_path: String,
     pub(super) temp_tag: TempTag,
     pub(super) size_bytes: u64,
-}
-
-#[derive(Debug)]
-pub(super) struct ImportFilesResult {
-    pub(super) files: Vec<ImportedFile>,
-    pub(super) walk_metadata: Duration,
-    pub(super) import_hash: Duration,
 }
 
 #[instrument(skip_all, fields(input_path = %input.path().display()))]
@@ -128,6 +132,203 @@ fn absolute_input_path(path: PathBuf) -> Result<PathBuf, FsPlanError> {
         .join(path))
 }
 
+/// Ceiling on files read and hashed at once, whatever the core count.
+///
+/// Past a handful the work stops being CPU-bound and starts queueing on the
+/// flash, and every extra slot is one more tokio worker held by a synchronous
+/// read (see [`import_pending`]).
+const MAX_IMPORT_CONCURRENCY: usize = 8;
+
+/// Overrides [`import_concurrency`]. `1` restores the old serial behaviour,
+/// which is how the two are compared on a device without rebuilding.
+const IMPORT_CONCURRENCY_ENV: &str = "WISP_IMPORT_CONCURRENCY";
+
+/// How many files to hash at once: half the cores, at least one.
+///
+/// Half rather than all because the read-and-hash inside iroh-blobs is
+/// synchronous — `init_outboard` drives a `std::io::BufReader`, there is no
+/// `spawn_blocking` under it — so each in-flight import occupies a runtime
+/// worker outright. The runtime is `new_multi_thread` with the default worker
+/// count, so filling it would stall mDNS, the pairing keepalive and the FRB
+/// event pump for the whole hash, which on 6.2 GB is 66 seconds.
+///
+/// Half the cores is a starting point, not a measured optimum: the serial
+/// import ran at 94 MB/s where the same phone reads sequentially at 160, so
+/// the ceiling is disk, not cores, and where between 1 and 8 that ceiling is
+/// reached has to be measured per device. [`IMPORT_CONCURRENCY_ENV`] is how.
+pub(super) fn import_concurrency() -> usize {
+    if let Some(raw) = std::env::var_os(IMPORT_CONCURRENCY_ENV) {
+        if let Some(parsed) = raw
+            .to_str()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+        {
+            let clamped = parsed.clamp(1, MAX_IMPORT_CONCURRENCY);
+            trace!(
+                requested = parsed,
+                concurrency = clamped,
+                "{IMPORT_CONCURRENCY_ENV} set"
+            );
+            return clamped;
+        }
+    }
+    let cores = std::thread::available_parallelism()
+        .map(|cores| cores.get())
+        .unwrap_or(1);
+    (cores / 2).clamp(1, MAX_IMPORT_CONCURRENCY)
+}
+
+/// Reads and hashes every pending file, up to `concurrency` at once, and
+/// returns them in the order the walk found them.
+///
+/// Why this is worth concurrency at all: the store's actor answers an
+/// `ImportPath` command by spawning it as its own task, so N commands in
+/// flight really do occupy N runtime workers rather than queueing behind one
+/// actor loop. The hash is 39% of a large send's wall clock — 66 s of the
+/// 6.2 GB case, before a single byte leaves the device — and it cannot be
+/// overlapped with the transfer itself, because the collection hash needs
+/// every file's hash before there is a ticket to send. Across files is
+/// therefore the only axis available.
+///
+/// Order and errors are deliberately identical to the serial version: results
+/// land in their original slots, and the error reported is the lowest-indexed
+/// one, not whichever task happened to fail first. On the first failure no new
+/// file is started, so at most `concurrency` extra files are read before the
+/// call returns.
+pub(super) async fn import_pending(
+    store: &Store,
+    pending: Vec<PendingImport>,
+    concurrency: usize,
+) -> BlobResult<Vec<ImportedFile>> {
+    let concurrency = concurrency.max(1);
+    trace!(
+        files = pending.len(),
+        concurrency, "importing files into blob store"
+    );
+
+    let mut results: Vec<Option<BlobResult<ImportedFile>>> =
+        (0..pending.len()).map(|_| None).collect();
+    let mut tasks: JoinSet<(usize, BlobResult<ImportedFile>)> = JoinSet::new();
+    let mut next = 0usize;
+    let mut failed = false;
+
+    while next < pending.len() && tasks.len() < concurrency {
+        tasks.spawn(import_one(store.clone(), &pending[next], next));
+        next += 1;
+    }
+
+    while let Some(joined) = tasks.join_next().await {
+        let (index, result) = match joined {
+            Ok(pair) => pair,
+            // The import task panicked. Reporting it beats leaving the send
+            // hanging on a slot that will never be filled.
+            Err(source) => {
+                return Err(BlobError::import_files(
+                    "an import task".to_owned(),
+                    BlobTextError::new(format!("task failed: {source}")),
+                ));
+            }
+        };
+        failed |= result.is_err();
+        results[index] = Some(result);
+        if !failed && next < pending.len() {
+            tasks.spawn(import_one(store.clone(), &pending[next], next));
+            next += 1;
+        }
+    }
+
+    let mut imported = Vec::with_capacity(results.len());
+    for slot in results {
+        match slot {
+            Some(result) => imported.push(result?),
+            // Only reachable once a failure stopped the queue, and then only
+            // after the `?` above has already returned.
+            None => break,
+        }
+    }
+    trace!(imported_count = imported.len(), "finished importing files");
+    Ok(imported)
+}
+
+/// One file's read + hash, owning everything so it can be spawned.
+fn import_one(
+    store: Store,
+    pending: &PendingImport,
+    index: usize,
+) -> impl std::future::Future<Output = (usize, BlobResult<ImportedFile>)> + Send + 'static {
+    let input_display = pending.input_display.clone();
+    let transfer_path = pending.transfer_path.clone();
+    let local_path = pending.local_path.clone();
+    async move {
+        let result = async {
+            let tag = store
+                .add_path_with_opts(AddPathOptions {
+                    path: local_path.clone(),
+                    format: BlobFormat::Raw,
+                    mode: ImportMode::TryReference,
+                })
+                .temp_tag()
+                .await
+                .map_err(|source| {
+                    BlobError::import_files(
+                        input_display.clone(),
+                        BlobTextError::new(format!("importing {}: {source}", local_path.display())),
+                    )
+                })?;
+            let size_bytes = descriptor::metadata(&local_path)
+                .map_err(|source| {
+                    BlobError::import_files(
+                        input_display.clone(),
+                        BlobTextError::new(format!(
+                            "reading metadata for {}: {source}",
+                            local_path.display()
+                        )),
+                    )
+                })?
+                .len();
+            Ok(ImportedFile {
+                transfer_path,
+                temp_tag: tag,
+                size_bytes,
+            })
+        }
+        .await;
+        (index, result)
+    }
+}
+
+/// Registers a descriptor input and walks it into its files, in walk order.
+///
+/// The serial half of an import: `stat` and `read_dir` only, so it stays
+/// serial — the order of the files, and of any error, is exactly what it was.
+pub(super) fn walk_input(
+    input: SendInput,
+    handles: &mut DescriptorHandles,
+) -> BlobResult<Vec<PendingImport>> {
+    let input_display = input.path().display().to_string();
+    // Before anything looks at the path.  Everything downstream — the stat in
+    // the walk, the store's own open, and every read while serving — goes
+    // through the descriptor from here on.
+    if input.is_file_descriptor() {
+        handles.register(input.path());
+    }
+    let files = walk_files(input)
+        .map_err(|source| BlobError::import_files(input_display.clone(), source))?;
+    Ok(files
+        .into_iter()
+        .map(|(transfer_path, local_path)| PendingImport {
+            input_display: input_display.clone(),
+            transfer_path,
+            local_path,
+        })
+        .collect())
+}
+
+/// One input's walk and import.
+///
+/// Test-only: [`super::send::PreparedStore::prepare`] walks every input before
+/// importing any of them, so that all the files of a multi-input send share one
+/// concurrency window rather than one per input — which matters most on
+/// Android, where a folder arrives as one descriptor input *per file*.
 #[instrument(skip(store), fields(input_path = %input.path().display()))]
 #[cfg(test)]
 pub(super) async fn import_files(
@@ -135,74 +336,8 @@ pub(super) async fn import_files(
     input: SendInput,
     handles: &mut DescriptorHandles,
 ) -> BlobResult<Vec<ImportedFile>> {
-    Ok(import_files_with_timings(store, input, handles)
-        .await?
-        .files)
-}
-
-#[instrument(skip(store), fields(input_path = %input.path().display()))]
-pub(super) async fn import_files_with_timings(
-    store: &Store,
-    input: SendInput,
-    handles: &mut DescriptorHandles,
-) -> BlobResult<ImportFilesResult> {
-    let path_display = input.path().display().to_string();
-    // Before anything looks at the path.  Everything downstream — the stat in
-    // the walk, the store's own open, and every read while serving — goes
-    // through the descriptor from here on.
-    if input.is_file_descriptor() {
-        handles.register(input.path());
-    }
-    let walk_started = Instant::now();
-    let files = walk_files(input)
-        .map_err(|source| BlobError::import_files(path_display.clone(), source))?;
-    let walk_metadata = walk_started.elapsed();
-
-    let import_started = Instant::now();
-    let mut imported = Vec::with_capacity(files.len());
-    for (transfer_path, local_path) in files {
-        trace!(
-            transfer_path = %transfer_path,
-            local_path = %local_path.display(),
-            "importing file into blob store"
-        );
-        let tag = store
-            .add_path_with_opts(AddPathOptions {
-                path: local_path.clone(),
-                format: BlobFormat::Raw,
-                mode: ImportMode::TryReference,
-            })
-            .temp_tag()
-            .await
-            .map_err(|source| {
-                BlobError::import_files(
-                    path_display.clone(),
-                    BlobTextError::new(format!("importing {}: {source}", local_path.display())),
-                )
-            })?;
-        imported.push(ImportedFile {
-            transfer_path,
-            temp_tag: tag,
-            size_bytes: descriptor::metadata(&local_path)
-                .map_err(|source| {
-                    BlobError::import_files(
-                        path_display.clone(),
-                        BlobTextError::new(format!(
-                            "reading metadata for {}: {source}",
-                            local_path.display()
-                        )),
-                    )
-                })?
-                .len(),
-        });
-    }
-    let import_hash = import_started.elapsed();
-    trace!(imported_count = imported.len(), "finished importing files");
-    Ok(ImportFilesResult {
-        files: imported,
-        walk_metadata,
-        import_hash,
-    })
+    let pending = walk_input(input, handles)?;
+    import_pending(store, pending, import_concurrency()).await
 }
 
 #[cfg(test)]
@@ -215,10 +350,25 @@ mod tests {
 
     use iroh_blobs::{api::Store, store::mem::MemStore};
 
-    use super::{DescriptorHandles, import_files, walk_files};
+    use super::{
+        DescriptorHandles, MAX_IMPORT_CONCURRENCY, PendingImport, import_concurrency, import_files,
+        import_pending, walk_files,
+    };
     use crate::fs_plan::SendInput;
 
     type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+    /// The whole error chain as one string: `{:#}` renders only the outermost
+    /// message, so the file that actually failed lives in a source below it.
+    fn error_chain(error: &dyn std::error::Error) -> String {
+        let mut parts = vec![error.to_string()];
+        let mut current = error.source();
+        while let Some(source) = current {
+            parts.push(source.to_string());
+            current = source.source();
+        }
+        parts.join(": ")
+    }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
         static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -232,6 +382,199 @@ mod tests {
             NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
         );
         std::env::temp_dir().join(unique)
+    }
+
+    /// Prints how import wall clock scales with concurrency. Asserts nothing.
+    ///
+    /// ```text
+    /// cargo test -p wisp-core --release -- --ignored --nocapture import_scaling
+    /// ```
+    ///
+    /// Measures the CPU half only: the files are in the page cache after the
+    /// warm-up pass, so this shows how far BLAKE3 + outboard writing scale
+    /// across cores and nothing about flash. The disk half is what decides the
+    /// default on a phone, and that has to be measured on the phone — set
+    /// `WISP_IMPORT_CONCURRENCY` and send the same folder twice.
+    ///
+    /// A fresh store root per run on purpose: a store that already holds a
+    /// hash can skip the work, which would make every run after the first
+    /// look free.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "measurement, not a check"]
+    async fn import_scaling() -> Result<()> {
+        use iroh_blobs::store::fs::FsStore;
+        use std::time::Instant;
+
+        const FILES: usize = 400;
+        const FILE_BYTES: usize = 2 * 1024 * 1024;
+
+        let root = unique_temp_dir("wisp-import-scaling");
+        let input = root.join("input");
+        std::fs::create_dir_all(&input)?;
+        for index in 0..FILES {
+            // Varied content so nothing dedups into one blob.
+            let mut data = vec![0u8; FILE_BYTES];
+            data[..8].copy_from_slice(&(index as u64).to_le_bytes());
+            std::fs::write(input.join(format!("f{index:04}.bin")), &data)?;
+        }
+        let total_mib = (FILES * FILE_BYTES) as f64 / (1024.0 * 1024.0);
+        println!("{FILES} files, {total_mib:.0} MiB total");
+
+        let run = |concurrency: usize, label: &'static str| {
+            let input = input.clone();
+            let store_root = root.join(format!("store-{label}"));
+            async move {
+                let store = FsStore::load(&store_root).await.expect("store");
+                let mut handles = DescriptorHandles::new();
+                let pending =
+                    super::walk_input(SendInput::from(input), &mut handles).expect("walk");
+                let started = Instant::now();
+                let imported = import_pending(store.as_ref(), pending, concurrency)
+                    .await
+                    .expect("import");
+                let elapsed = started.elapsed();
+                assert_eq!(imported.len(), FILES);
+                elapsed
+            }
+        };
+
+        // Warm the page cache so the comparison is CPU, not first-read I/O.
+        let _ = run(1, "warmup").await;
+
+        let mut baseline = None;
+        for concurrency in [1usize, 2, 4, 8] {
+            let label: &'static str = match concurrency {
+                1 => "c1",
+                2 => "c2",
+                4 => "c4",
+                _ => "c8",
+            };
+            let elapsed = run(concurrency, label).await;
+            let seconds = elapsed.as_secs_f64();
+            let speedup = baseline.map(|base: f64| base / seconds).unwrap_or(1.0);
+            println!(
+                "concurrency {concurrency}: {seconds:6.2} s  {:6.1} MiB/s  {speedup:.2}x",
+                total_mib / seconds
+            );
+            if baseline.is_none() {
+                baseline = Some(seconds);
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A folder of many files imports in walk order whatever the concurrency,
+    /// and reports the same sizes.
+    ///
+    /// The point of the concurrency is that files finish out of order; the
+    /// point of this test is that nothing downstream can tell. Order decides
+    /// the collection's contents, the transfer plan's file ids and therefore
+    /// which file the receiver's progress bar calls active, so a result that
+    /// depended on completion order would be a silent wire-visible bug.
+    #[tokio::test]
+    async fn concurrent_import_keeps_walk_order() -> Result<()> {
+        let root = unique_temp_dir("wisp-concurrent-import");
+        let input = root.join("input");
+        std::fs::create_dir_all(&input)?;
+        // Deliberately uneven: a uniform set could come back in order by luck.
+        for index in 0..40u32 {
+            let size = if index % 4 == 0 { 64 * 1024 } else { 16 };
+            std::fs::write(
+                input.join(format!("f{index:03}.bin")),
+                vec![index as u8; size],
+            )?;
+        }
+
+        let serial = {
+            let store: Store = MemStore::new().into();
+            let mut handles = DescriptorHandles::new();
+            let pending = super::walk_input(SendInput::from(input.clone()), &mut handles)?;
+            import_pending(&store, pending, 1).await?
+        };
+        let concurrent = {
+            let store: Store = MemStore::new().into();
+            let mut handles = DescriptorHandles::new();
+            let pending = super::walk_input(SendInput::from(input.clone()), &mut handles)?;
+            import_pending(&store, pending, MAX_IMPORT_CONCURRENCY).await?
+        };
+
+        assert_eq!(serial.len(), 40);
+        let paths = |files: &[super::ImportedFile]| {
+            files
+                .iter()
+                .map(|file| (file.transfer_path.clone(), file.size_bytes))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(paths(&serial), paths(&concurrent));
+        // And the same bytes: identical hashes, not just identical names.
+        let hashes = |files: &[super::ImportedFile]| {
+            files
+                .iter()
+                .map(|file| file.temp_tag.hash())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(hashes(&serial), hashes(&concurrent));
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// With two unreadable files in flight at once, the error reported is the
+    /// earlier one in walk order — not whichever task happened to fail first.
+    #[tokio::test]
+    async fn concurrent_import_reports_the_first_failure_in_order() -> Result<()> {
+        let root = unique_temp_dir("wisp-concurrent-import-error");
+        std::fs::create_dir_all(&root)?;
+        let good = root.join("good.bin");
+        std::fs::write(&good, b"ok")?;
+
+        // Missing files fail the store's own open. Two of them, far enough
+        // apart that a serial run would stop at the first.
+        let pending = vec![
+            PendingImport {
+                input_display: root.display().to_string(),
+                transfer_path: "good.bin".to_owned(),
+                local_path: good.clone(),
+            },
+            PendingImport {
+                input_display: root.display().to_string(),
+                transfer_path: "early-missing.bin".to_owned(),
+                local_path: root.join("early-missing.bin"),
+            },
+            PendingImport {
+                input_display: root.display().to_string(),
+                transfer_path: "late-missing.bin".to_owned(),
+                local_path: root.join("late-missing.bin"),
+            },
+        ];
+
+        let store: Store = MemStore::new().into();
+        let error = import_pending(&store, pending, MAX_IMPORT_CONCURRENCY)
+            .await
+            .expect_err("a missing file must fail the import");
+        let message = error_chain(&error);
+        assert!(
+            message.contains("early-missing.bin"),
+            "expected the earlier failure, got: {message}"
+        );
+        assert!(
+            !message.contains("late-missing.bin"),
+            "expected only the earlier failure, got: {message}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn import_concurrency_stays_within_its_bounds() {
+        let concurrency = import_concurrency();
+        assert!(
+            (1..=MAX_IMPORT_CONCURRENCY).contains(&concurrency),
+            "concurrency {concurrency} outside 1..={MAX_IMPORT_CONCURRENCY}"
+        );
     }
 
     #[tokio::test]

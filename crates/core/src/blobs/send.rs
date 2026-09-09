@@ -13,7 +13,7 @@ use super::receive::BlobTransportProfile;
 use super::telemetry::{
     BlobProviderTelemetry, TransferEnd, benchmark_run_id, is_enabled as telemetry_enabled,
 };
-use super::util::import_files_with_timings;
+use super::util::{PendingImport, import_concurrency, import_pending, walk_input};
 use crate::blobs::descriptor::DescriptorHandles;
 use crate::fs_plan::SendInput;
 use iroh::{
@@ -177,30 +177,44 @@ impl PreparedStore {
         let mut files_out = Vec::new();
         let mut timings = PrepareTimings::default();
         let mut descriptors = DescriptorHandles::new();
+
+        // Walk every input first, then hash all of their files under one
+        // concurrency window. Walking is `stat` and `read_dir`, so it stays
+        // serial and the file order — and the order of any error — is what it
+        // always was. Hashing is the expensive half and now overlaps across
+        // files; see `import_pending`. One window for the whole send, not one
+        // per input, because Android hands over a folder as one descriptor
+        // input per file: per-input windows would leave 1911 inputs of one
+        // file each running strictly serially, which is the case this exists
+        // for.
+        let walk_started = Instant::now();
+        let mut pending: Vec<PendingImport> = Vec::new();
         for input in inputs {
             let input_display = input.path().display().to_string();
             trace!(input_path = %input_display, "processing import input path");
-            let imported = import_files_with_timings(&store, input, &mut descriptors)
-                .await
-                .map_err(|source| {
-                    BlobError::import_files(
-                        input_display.clone(),
-                        BlobTextError::new(format!("{source:#}")),
-                    )
-                })?;
-            timings.walk_metadata = timings.walk_metadata.saturating_add(imported.walk_metadata);
-            timings.import_hash = timings.import_hash.saturating_add(imported.import_hash);
-            for file in imported.files {
-                let transfer_path = file.transfer_path.clone();
-                if !seen_transfer_paths.insert(transfer_path.clone()) {
-                    return Err(BlobError::duplicate_transfer_path(transfer_path));
-                }
-                collection.extend([(transfer_path.clone(), file.temp_tag.hash())]);
-                files_out.push(PreparedFile {
-                    path: transfer_path,
-                    size: file.size_bytes,
-                });
+            pending.extend(walk_input(input, &mut descriptors).map_err(|source| {
+                BlobError::import_files(
+                    input_display.clone(),
+                    BlobTextError::new(format!("{source:#}")),
+                )
+            })?);
+        }
+        timings.walk_metadata = walk_started.elapsed();
+
+        let import_started = Instant::now();
+        let imported = import_pending(&store, pending, import_concurrency()).await?;
+        timings.import_hash = import_started.elapsed();
+
+        for file in imported {
+            let transfer_path = file.transfer_path.clone();
+            if !seen_transfer_paths.insert(transfer_path.clone()) {
+                return Err(BlobError::duplicate_transfer_path(transfer_path));
             }
+            collection.extend([(transfer_path.clone(), file.temp_tag.hash())]);
+            files_out.push(PreparedFile {
+                path: transfer_path,
+                size: file.size_bytes,
+            });
         }
 
         files_out.sort_by(|left, right| left.path.cmp(&right.path));
