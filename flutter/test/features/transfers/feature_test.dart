@@ -399,6 +399,67 @@ void main() {
     expect(find.text('wants to send you 2 files (3.0 KB).'), findsNothing);
   });
 
+  testWidgets('the card being replaced stops taking taps', (tester) async {
+    // AnimatedSwitcher keeps the outgoing card in the tree for its whole 400 ms
+    // fade, and a fade does not stop it receiving taps — FadeTransition is
+    // Opacity, which hit-tests at any opacity. Stacked *under* the incoming
+    // card, it caught taps that the new card had nothing to absorb at that
+    // spot: a double tap on Save/Accept therefore accepted twice, and the
+    // second accept released the descriptors the first one's transfer was
+    // writing into.
+    final source = FakeReceiverServiceSource();
+    final router = _buildReceiveFeatureRouter(size: const Size(440, 560));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          // Off, like the neighbouring tests — this one drives a repeating
+          // in-card animation that pumpAndSettle can never settle. The
+          // AnimatedSwitcher transition under test is separate from it and
+          // runs regardless.
+          transferReviewAnimationProvider.overrideWithValue(false),
+          initialAppSettingsProvider.overrideWithValue(testAppSettings),
+          receiverServiceSourceProvider.overrideWithValue(source),
+          transfersServiceSourceProvider.overrideWithValue(source),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+
+    source.emitIncomingOffer(senderName: 'Maya');
+    await tester.pumpAndSettle();
+    await _waitForReceiveTransferRoute(tester, router);
+
+    // Matched on `ignoring: true`, not on the type: Material wraps button
+    // content in IgnorePointer(ignoring: false) of its own, so byType finds
+    // widgets that have nothing to do with this.
+    Finder blockedSave() => find.ancestor(
+      of: find.text('Save'),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is IgnorePointer && widget.ignoring,
+      ),
+    );
+
+    // Before the switch the offer card takes taps normally.
+    expect(blockedSave(), findsNothing);
+
+    await tester.tap(find.text('Save'));
+    // Mid-fade: both cards are mounted, which is the window a second tap
+    // used to land in.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('RECEIVING'), findsOneWidget, reason: 'new card is up');
+    expect(find.text('Save'), findsOneWidget, reason: 'old card still mounted');
+    expect(
+      blockedSave(),
+      findsWidgets,
+      reason: 'the outgoing card must not be tappable while it fades',
+    );
+
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('cancelling a receiving transfer shows the cancelled result', (
     tester,
   ) async {

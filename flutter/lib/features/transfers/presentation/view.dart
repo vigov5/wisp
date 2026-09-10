@@ -33,6 +33,31 @@ class TransfersFeature extends ConsumerWidget {
         duration: const Duration(milliseconds: 400),
         switchInCurve: Curves.easeOut,
         switchOutCurve: Curves.easeIn,
+        // The card being replaced stays in the tree, fading, for the whole
+        // 400 ms — and a fade does not stop it receiving taps: `FadeTransition`
+        // is `Opacity`, which hit-tests at any opacity, including zero. The
+        // default layout stacks the outgoing card *under* the incoming one, so
+        // a tap that lands where the new card has nothing to absorb it falls
+        // through to whatever the old card had at that spot.
+        //
+        // A user double-tapping Accept therefore triggered two accepts, 400 ms
+        // being squarely inside a human double tap. The second one released the
+        // 1911 descriptors the first one's transfer was already writing into
+        // and killed it 140 ms in, which read as an intermittent fetch bug for
+        // hours. The service refuses a second accept now, but the window is not
+        // specific to Accept: the same stray tap could reach Decline on a card
+        // that is on its way out, or any other action on any phase change.
+        //
+        // Ignoring pointers on the outgoing children only, so the incoming card
+        // stays responsive from its first frame rather than going deaf for
+        // 400 ms.
+        layoutBuilder: (currentChild, previousChildren) => Stack(
+          alignment: Alignment.center,
+          children: <Widget>[
+            ...previousChildren.map((child) => IgnorePointer(child: child)),
+            ?currentChild,
+          ],
+        ),
         child: switch (state.phase) {
           TransferSessionPhase.connecting => ConnectingCard(
             key: const ValueKey('connecting'),
