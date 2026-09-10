@@ -5164,6 +5164,7 @@ dependencies = [
  "blake3",
  "bytes",
  "flume",
+ "futures-buffered",
  "futures-lite",
  "if-addrs",
  "iroh",
