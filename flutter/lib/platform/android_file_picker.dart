@@ -178,6 +178,21 @@ class AndroidFilePicker {
     });
   }
 
+  /// Asks a pick that is still preparing files to stop.
+  ///
+  /// Returns as soon as the flag is set rather than waiting for the unwind:
+  /// the native side closes the descriptors it opened and deletes any partial
+  /// copies itself, then the pick future resolves empty, exactly as a
+  /// dismissed system picker does.
+  static Future<void> cancelPick() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('cancelPick');
+    } on PlatformException catch (e) {
+      debugPrint('[AndroidFilePicker] cancelPick failed: ${e.message}');
+    }
+  }
+
   /// Opens the system file picker and returns one [NativeSource] per selected
   /// file, each already openable by the core — normally as a live descriptor
   /// path, and only as a cache copy where the platform left no alternative.

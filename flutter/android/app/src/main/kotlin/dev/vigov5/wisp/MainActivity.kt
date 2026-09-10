@@ -183,6 +183,14 @@ class MainActivity : FlutterFragmentActivity() {
     // the import.  Released together with the cache copies when the draft is
     // cleared (`releaseSendSources`).
     //
+    // Set by the "cancelPick" channel call while a pick is still resolving.
+    //
+    // Checked between files rather than mid-file: a folder pick spends its time
+    // in a loop of one binder round trip per file — 27-37 s for 1911 of them —
+    // so a cancel lands within one of those, which is close enough to instant
+    // and needs no way to interrupt a call already in flight.
+    private val pickCancelled = AtomicBoolean(false)
+
     // Guarded by [sendFdLock]: resolves run on Dispatchers.IO (a share intent
     // can land while a pick is still resolving) while the release comes in on
     // the main thread.
@@ -330,6 +338,8 @@ class MainActivity : FlutterFragmentActivity() {
                         return@setMethodCallHandler
                     }
                     pendingResult = result
+                    // A cancel from the previous pick must not kill this one.
+                    pickCancelled.set(false)
                     val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE)
                         type = "*/*"
@@ -344,6 +354,7 @@ class MainActivity : FlutterFragmentActivity() {
                         return@setMethodCallHandler
                     }
                     pendingFolderResult = result
+                    pickCancelled.set(false)
                     val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
                     @Suppress("DEPRECATION")
                     startActivityForResult(intent, REQUEST_CODE_PICK_FOLDER)
@@ -361,6 +372,13 @@ class MainActivity : FlutterFragmentActivity() {
                 }
                 "releaseSendSources" -> {
                     releaseSendSources()
+                    result.success(null)
+                }
+                "cancelPick" -> {
+                    // Only a flag. The resolve loop owns the unwinding, so this
+                    // returns at once rather than making the UI wait on cleanup
+                    // it cannot see.
+                    pickCancelled.set(true)
                     result.success(null)
                 }
                 // Both of these are one MediaStore insert plus one
@@ -491,7 +509,11 @@ class MainActivity : FlutterFragmentActivity() {
         ) return null
         val uris = sharedUris(intent)
         Log.i(SHARE_TAG, "share intent ${intent.action}: ${uris.size} uri(s)")
-        val resolved = resolveSendSources(uris)
+        // A share has no cancel affordance of its own, so this only fires if a
+        // cancel flag outlived the pick that set it. An empty share is the
+        // right answer either way: it is what the caller already renders when
+        // nothing could be read.
+        val resolved = resolveSendSources(uris) ?: return emptyShare()
         if (resolved.sources.size < uris.size) {
             Log.w(
                 SHARE_TAG,
@@ -764,7 +786,7 @@ class MainActivity : FlutterFragmentActivity() {
                             lastEmit = copied
                             emitPickProgress(copied, copyTotal, index, uris.size)
                         }
-                    }
+                    } ?: return@withContext cancelledPick()
                     val bytesCopied = resolved.sources
                         .filter { it["copied"] == true }
                         .sumOf { it["size"] as Long }
@@ -830,7 +852,7 @@ class MainActivity : FlutterFragmentActivity() {
                                 emitPickProgress(0L, 0L, resolved, total)
                             }
                         },
-                    )
+                    ) ?: return@withContext cancelledPick()
                     mapOf(
                         // A tree has no filesystem path, so the URI is what the
                         // draft keys this item by.
@@ -887,16 +909,18 @@ class MainActivity : FlutterFragmentActivity() {
     // Each returned map carries `path` (what Rust opens), `name` (what the
     // receiver sees — a descriptor path ends in the fd number, so the real
     // name has to travel separately), `size` and `copied`.
+    /// `null` when the user cancelled part-way; see [pickCancelled].
     private fun resolveSendSources(
         uris: List<Uri>,
         onCopyProgress: (copiedTotal: Long, copyTotal: Long, index: Int) -> Unit = { _, _, _ -> },
-    ): SendSources {
+    ): SendSources? {
         val names = uris.map { sanitizeFileName(resolveFileName(it)) }
         val sizes = uris.map { resolveSize(it) ?: 0L }
         val resolved = arrayOfNulls<Map<String, Any?>>(uris.size)
         val rejected = mutableListOf<Map<String, Any?>>()
 
         for (index in uris.indices.sortedByDescending { sizes[it] }) {
+            if (pickCancelled.get()) return null
             val fdPath = openForSend(uris[index]) ?: continue
             resolved[index] = mapOf(
                 "path" to fdPath,
@@ -912,6 +936,7 @@ class MainActivity : FlutterFragmentActivity() {
         val copyTotal = uris.indices.filter { resolved[it] == null }.sumOf { sizes[it] }
         var copiedBefore = 0L
         for (index in uris.indices) {
+            if (pickCancelled.get()) return null
             if (resolved[index] != null) continue
             // Refuse up front what the disk cannot hold, rather than writing
             // gigabytes and discovering it at the far end.  A provider that
@@ -987,11 +1012,24 @@ class MainActivity : FlutterFragmentActivity() {
     // directory is handed over as a single ordinary source — the core walks it
     // and derives the same relative paths.  So the two kinds mix within one
     // folder without either needing to know about the other.
+    // What a cancelled pick hands back.
+    //
+    // Null, which is the same shape a dismissed system picker produces, so no
+    // caller needs a new case for it. The descriptors opened before the cancel
+    // are closed here: nothing partly prepared may reach Dart, or the draft
+    // would hold paths to files the core can no longer read.
+    private fun cancelledPick(): Map<String, Any?>? {
+        Log.i(PICK_TAG, "pick cancelled, releasing what was opened")
+        releaseSendSources()
+        return null
+    }
+
+    /// `null` when the user cancelled part-way; see [pickCancelled].
     private fun resolveTreeSources(
         root: FastDocumentFile,
         onCopyProgress: (copiedTotal: Long) -> Unit = {},
         onFileProgress: (resolved: Int, total: Int) -> Unit = { _, _ -> },
-    ): TreeSources {
+    ): TreeSources? {
         val rootName = sanitizeFileName(root.name.ifBlank { "folder" })
         val files = mutableListOf<TreeFile>()
         collectTreeFiles(root, rootName, 1, files)
@@ -1007,6 +1045,7 @@ class MainActivity : FlutterFragmentActivity() {
             // progress signal was the fallback copy's byte count — and the
             // descriptor budget fix removed the copy, so the folder that most
             // needed a progress bar was the one that stopped emitting any.
+            if (pickCancelled.get()) return null
             onFileProgress(opened, files.size)
             val fdPath = openForSend(file.doc.uri) ?: continue
             claimed[index] = true
@@ -1031,6 +1070,11 @@ class MainActivity : FlutterFragmentActivity() {
             // derives exactly the transfer paths the descriptors carry.
             val mirrorRoot = File(newPickedDir(), rootName)
             for (file in leftovers) {
+                if (pickCancelled.get()) {
+                    // Half-written copies are this loop's own mess to clear.
+                    mirrorRoot.deleteRecursively()
+                    return null
+                }
                 // Drop the folder name — it is already `mirrorRoot`.
                 val relative = file.transferPath.substringAfter('/', "")
                 if (relative.isEmpty()) continue

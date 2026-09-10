@@ -106,6 +106,24 @@ void main() {
     expect(empty.fraction, isNull);
   });
 
+  test('cancelPick is a no-op off Android', () async {
+    // Asserted from the host, which is not Android, so what this pins is the
+    // guard: no channel call and no MissingPluginException on desktop, where
+    // there is no native picker to cancel. The Android side of it — the flag,
+    // the unwind, the descriptors closed — is not reachable from here and is
+    // covered by the Kotlin path instead.
+    final calls = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          calls.add(call.method);
+          return null;
+        });
+
+    await AndroidFilePicker.cancelPick();
+
+    expect(calls, isEmpty);
+  });
+
   test('clamps malformed native counters to zero', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (_) async {
