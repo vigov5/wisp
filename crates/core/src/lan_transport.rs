@@ -49,6 +49,29 @@ use crate::lan_tls;
 /// better than having raced.
 pub const LAN_TCP_CONNECT_CAP: Duration = Duration::from_millis(1_000);
 
+/// Per-attempt cap for a dial that is part of a transfer already committed to
+/// this transport, and how many attempts it gets.
+///
+/// Separate from [`LAN_TCP_CONNECT_CAP`] because they answer different
+/// questions. That one bounds a *decision* — is this port reachable, or should
+/// the transfer take QUIC instead — and being impatient is the point of it.
+/// This one is inside a transfer whose path is already chosen, where the same
+/// impatience just loses the transfer.
+///
+/// It bit as soon as the collection fetch became concurrent: eight files in
+/// flight means eight TCP connects and eight TLS handshakes competing, on both
+/// phones, against eight files' worth of disk writes and BAO verification.
+/// Two of four test transfers died on `no answer within 1000 ms` about three
+/// seconds in — a lost SYN or a scheduling hiccup, not an unreachable port,
+/// since the probe had just proved the port answers and hundreds of files had
+/// already arrived through it.
+///
+/// Retried rather than merely lengthened: a dial that fails because a packet
+/// was dropped recovers on the next attempt in milliseconds, where one long
+/// cap would sit and wait out the loss.
+pub const LAN_TCP_REQUEST_CAP: Duration = Duration::from_secs(3);
+pub const LAN_TCP_REQUEST_ATTEMPTS: usize = 3;
+
 /// One of this device's IPv4 interfaces, as an address and its real netmask.
 ///
 /// A netmask rather than the 3-octet compare used elsewhere in this module's
@@ -134,10 +157,61 @@ pub type LanStream = TlsStream<TcpStream>;
 /// The cap covers the connect *and* the handshake together, because to the
 /// caller they are one wait: what matters is how long before falling back to
 /// QUIC, not which half was slow.
+///
+/// This is the *decision* dial — the probe in `blobs::receive::choose_source`.
+/// A dial for one request of a transfer already using this transport wants
+/// [`dial_for_request`] instead.
 pub async fn dial(
     target: SocketAddr,
     secret: &SecretKey,
     expected_peer: PublicKey,
+) -> Result<LanStream> {
+    dial_with_cap(target, secret, expected_peer, LAN_TCP_CONNECT_CAP).await
+}
+
+/// Dials for one request of a transfer already committed to this transport,
+/// retrying a few times before giving up on it.
+///
+/// See [`LAN_TCP_REQUEST_CAP`] for why this is not the same wait as the probe's.
+pub async fn dial_for_request(
+    target: SocketAddr,
+    secret: &SecretKey,
+    expected_peer: PublicKey,
+) -> Result<LanStream> {
+    let mut last = None;
+    for attempt in 1..=LAN_TCP_REQUEST_ATTEMPTS {
+        match dial_with_cap(target, secret, expected_peer, LAN_TCP_REQUEST_CAP).await {
+            Ok(stream) => {
+                if attempt > 1 {
+                    debug!(%target, attempt, "lan_tcp.dialed after a retry");
+                }
+                return Ok(stream);
+            }
+            Err(error) => {
+                debug!(
+                    %target,
+                    attempt,
+                    attempts = LAN_TCP_REQUEST_ATTEMPTS,
+                    %error,
+                    "lan_tcp.request_dial_failed"
+                );
+                last = Some(error);
+                if attempt < LAN_TCP_REQUEST_ATTEMPTS {
+                    // Short enough not to matter against a 3 s cap, long
+                    // enough to let whatever was contending finish.
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
+        }
+    }
+    Err(last.expect("at least one attempt always runs"))
+}
+
+async fn dial_with_cap(
+    target: SocketAddr,
+    secret: &SecretKey,
+    expected_peer: PublicKey,
+    cap: Duration,
 ) -> Result<LanStream> {
     let config = lan_tls::client_config(secret, expected_peer)?;
     let connect = async {
@@ -157,7 +231,7 @@ pub async fn dial(
             .await
             .map_err(|source| connect_failed(target, source))
     };
-    match tokio::time::timeout(LAN_TCP_CONNECT_CAP, connect).await {
+    match tokio::time::timeout(cap, connect).await {
         Ok(result) => {
             let stream = result?;
             debug!(%target, "lan_tcp.dialed");
@@ -165,10 +239,7 @@ pub async fn dial(
         }
         Err(_) => Err(BlobError::connect(
             format!("lan tcp {target}"),
-            BlobTextError::new(format!(
-                "no answer within {} ms",
-                LAN_TCP_CONNECT_CAP.as_millis()
-            )),
+            BlobTextError::new(format!("no answer within {} ms", cap.as_millis())),
         )),
     }
 }

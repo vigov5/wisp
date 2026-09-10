@@ -60,7 +60,11 @@ impl BlobSource {
                 Ok((BlobRecv::Quic(recv), BlobSend::Quic(send)))
             }
             Self::LanTcp(lan) => {
-                let stream = lan_transport::dial(lan.target, &lan.secret, lan.peer).await?;
+                // `dial_for_request`, not `dial`: the probe already decided
+                // this transport, so a slow handshake here is a hiccup to
+                // retry rather than a reason to abandon the transfer.
+                let stream =
+                    lan_transport::dial_for_request(lan.target, &lan.secret, lan.peer).await?;
                 let (recv, send) = lan_transport::stream_halves(stream);
                 Ok((BlobRecv::Lan(recv), BlobSend::Lan(send)))
             }
