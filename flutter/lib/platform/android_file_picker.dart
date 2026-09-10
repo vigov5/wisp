@@ -90,10 +90,27 @@ class AndroidPickProgress {
   /// Number of items in the selection.
   final int count;
 
-  /// Copy fraction in [0, 1], or null when [totalBytes] is unknown.
+  /// True when this describes files being opened rather than bytes copied.
+  ///
+  /// The two phases of a pick report differently because they cost
+  /// differently: copying is bounded by bytes, opening a descriptor is one
+  /// binder round trip per file whatever its size.
+  bool get countsFiles => totalBytes <= 0 && count > 0 && bytesCopied == 0;
+
+  /// Progress in [0, 1], or null when neither bytes nor a file count are
+  /// known.
+  ///
+  /// Falls back to files: a folder pick reports no total byte count, so
+  /// [totalBytes] alone left every folder on an indeterminate bar — including
+  /// the 1911-file folder that spends half a minute here.
   double? get fraction {
-    if (totalBytes <= 0) return null;
-    return (bytesCopied / totalBytes).clamp(0.0, 1.0);
+    if (totalBytes > 0) {
+      return (bytesCopied / totalBytes).clamp(0.0, 1.0);
+    }
+    if (count > 0 && countsFiles) {
+      return (index / count).clamp(0.0, 1.0);
+    }
+    return null;
   }
 }
 

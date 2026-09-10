@@ -43,23 +43,68 @@ void main() {
 
       final result = await AndroidFilePicker.pickFiles();
 
-      expect(
-        result.sources.map((source) => source.path),
-        ['/proc/self/fd/42', '/cache/two.bin'],
-      );
-      expect(
-        result.sources.map((source) => source.name),
-        ['holiday.mp4', 'two.bin'],
-      );
-      expect(
-        result.sources.map((source) => source.fromDescriptor),
-        [true, false],
-      );
+      expect(result.sources.map((source) => source.path), [
+        '/proc/self/fd/42',
+        '/cache/two.bin',
+      ]);
+      expect(result.sources.map((source) => source.name), [
+        'holiday.mp4',
+        'two.bin',
+      ]);
+      expect(result.sources.map((source) => source.fromDescriptor), [
+        true,
+        false,
+      ]);
       expect(result.sources.first.sizeBytes, BigInt.from(6000000000));
       expect(result.bytesCopied, BigInt.from(4096));
       expect(result.copyElapsed, const Duration(milliseconds: 125));
     },
   );
+
+  test('pick progress falls back to a file count when there are no bytes', () {
+    // The descriptor phase copies nothing, so it reports files. Before this,
+    // `fraction` keyed off totalBytes alone and every folder pick — including
+    // the 1911-file one that spends ~30 s opening descriptors — sat on an
+    // indeterminate bar with no numbers at all.
+    const files = AndroidPickProgress(
+      bytesCopied: 0,
+      totalBytes: 0,
+      index: 480,
+      count: 1911,
+    );
+    expect(files.countsFiles, isTrue);
+    expect(files.fraction, closeTo(480 / 1911, 1e-9));
+
+    // A copy still reports bytes, and must not be described as files.
+    const bytes = AndroidPickProgress(
+      bytesCopied: 512,
+      totalBytes: 2048,
+      index: 1,
+      count: 4,
+    );
+    expect(bytes.countsFiles, isFalse);
+    expect(bytes.fraction, closeTo(0.25, 1e-9));
+
+    // A copy whose total is unknown stays indeterminate rather than being
+    // mistaken for a file count.
+    const unknown = AndroidPickProgress(
+      bytesCopied: 4096,
+      totalBytes: 0,
+      index: 0,
+      count: 1,
+    );
+    expect(unknown.countsFiles, isFalse);
+    expect(unknown.fraction, isNull);
+
+    // Nothing known at all.
+    const empty = AndroidPickProgress(
+      bytesCopied: 0,
+      totalBytes: 0,
+      index: 0,
+      count: 0,
+    );
+    expect(empty.fraction, isNull);
+  });
 
   test('clamps malformed native counters to zero', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

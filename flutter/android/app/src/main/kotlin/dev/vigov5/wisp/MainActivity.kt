@@ -107,6 +107,11 @@ class MainActivity : FlutterFragmentActivity() {
         // 8 MB (≈375 events for a 3 GB file) while still animating smoothly.
         private const val PROGRESS_EMIT_BYTES = 8L * 1024 * 1024
 
+        // Files resolved between two "onPickProgress" events, for the phase
+        // that opens a descriptor per file rather than copying bytes. 16 puts
+        // a 1911-file folder at ~120 events over ~27 s.
+        private const val PROGRESS_EMIT_FILES = 16
+
         // Free space the fallback copy has to leave behind.  Filling /data
         // does not merely fail the copy: the platform starts killing
         // processes and the device stays wedged until something clears the
@@ -803,12 +808,29 @@ class MainActivity : FlutterFragmentActivity() {
                 val res = withContext(Dispatchers.IO) {
                     val startedNanos = SystemClock.elapsedRealtimeNanos()
                     var lastEmit = 0L
-                    val tree = resolveTreeSources(rootDoc) { copied ->
-                        if (copied - lastEmit >= PROGRESS_EMIT_BYTES) {
-                            lastEmit = copied
-                            emitPickProgress(copied, 0L, 0, 1)
-                        }
-                    }
+                    var lastFileEmit = -PROGRESS_EMIT_FILES
+                    val tree = resolveTreeSources(
+                        rootDoc,
+                        onCopyProgress = { copied ->
+                            if (copied - lastEmit >= PROGRESS_EMIT_BYTES) {
+                                lastEmit = copied
+                                emitPickProgress(copied, 0L, 0, 1)
+                            }
+                        },
+                        onFileProgress = { resolved, total ->
+                            // Throttled by file count for the same reason the
+                            // copy is throttled by bytes: 1911 channel hops in
+                            // 27 s would cost more than the work they describe.
+                            // Every 16 gives ~4 updates a second, which a
+                            // progress bar cannot use more of anyway.
+                            if (resolved - lastFileEmit >= PROGRESS_EMIT_FILES ||
+                                resolved == total
+                            ) {
+                                lastFileEmit = resolved
+                                emitPickProgress(0L, 0L, resolved, total)
+                            }
+                        },
+                    )
                     mapOf(
                         // A tree has no filesystem path, so the URI is what the
                         // draft keys this item by.
@@ -968,6 +990,7 @@ class MainActivity : FlutterFragmentActivity() {
     private fun resolveTreeSources(
         root: FastDocumentFile,
         onCopyProgress: (copiedTotal: Long) -> Unit = {},
+        onFileProgress: (resolved: Int, total: Int) -> Unit = { _, _ -> },
     ): TreeSources {
         val rootName = sanitizeFileName(root.name.ifBlank { "folder" })
         val files = mutableListOf<TreeFile>()
@@ -975,10 +998,19 @@ class MainActivity : FlutterFragmentActivity() {
 
         val sources = mutableListOf<Map<String, Any?>>()
         val claimed = BooleanArray(files.size)
+        var opened = 0
         for (index in files.indices.sortedByDescending { files[it].doc.size }) {
             val file = files[index]
+            // Reported per file, because this loop is the one the user waits
+            // through now. Opening a descriptor is a binder round trip, ~14 ms
+            // each, so a 1911-file folder sat here for 27-37 s. The only
+            // progress signal was the fallback copy's byte count — and the
+            // descriptor budget fix removed the copy, so the folder that most
+            // needed a progress bar was the one that stopped emitting any.
+            onFileProgress(opened, files.size)
             val fdPath = openForSend(file.doc.uri) ?: continue
             claimed[index] = true
+            opened += 1
             sources.add(
                 mapOf(
                     "path" to fdPath,
@@ -988,6 +1020,7 @@ class MainActivity : FlutterFragmentActivity() {
                 ),
             )
         }
+        onFileProgress(opened, files.size)
         val leftovers = files.filterIndexed { index, _ -> !claimed[index] }
         val rejected = mutableListOf<Map<String, Any?>>()
 

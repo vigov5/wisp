@@ -19,6 +19,10 @@ class PickProgressDialog extends StatelessWidget {
         final copied = progress?.bytesCopied ?? 0;
         final total = progress?.totalBytes ?? 0;
         final multiple = (progress?.count ?? 1) > 1;
+        // Opening a descriptor per file is not copying, and saying "copying"
+        // through half a minute of it is both wrong and alarming — the whole
+        // point of the descriptor path is that nothing is duplicated.
+        final countsFiles = progress?.countsFiles ?? false;
 
         return AlertDialog(
           backgroundColor: context.wc.surface,
@@ -35,7 +39,10 @@ class PickProgressDialog extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                multiple
+                countsFiles
+                    ? 'Opening the selected files so they are ready to send. '
+                          'Nothing is being copied.'
+                    : multiple
                     ? 'Copying selected files so they are ready to send.'
                     : 'Copying the selected file so it is ready to send.',
                 style: wispSans(
@@ -56,7 +63,10 @@ class PickProgressDialog extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                total > 0
+                countsFiles
+                    ? '${progress?.index ?? 0} / ${progress?.count ?? 0} files'
+                          '${fraction != null ? '  ·  ${(fraction * 100).round()}%' : ''}'
+                    : total > 0
                     ? '${formatBytes(BigInt.from(copied))} / ${formatBytes(BigInt.from(total))}'
                           '${fraction != null ? '  ·  ${(fraction * 100).round()}%' : ''}'
                     : formatBytes(BigInt.from(copied)),
