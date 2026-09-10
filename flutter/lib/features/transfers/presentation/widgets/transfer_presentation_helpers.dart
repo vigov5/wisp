@@ -68,7 +68,11 @@ Widget buildFailureSubtitle({
       Text(
         title,
         textAlign: TextAlign.center,
-        style: wispSans(fontSize: 15, fontWeight: FontWeight.w700, color: accent),
+        style: wispSans(
+          fontSize: 15,
+          fontWeight: FontWeight.w700,
+          color: accent,
+        ),
       ),
       const SizedBox(height: 6),
       buildSubtitleText(message),
@@ -114,6 +118,50 @@ Widget buildSubtitleWithBroadcast(String text, String? broadcast) {
         ),
       ),
     ],
+  );
+}
+
+/// True once every byte has moved but the transfer has not reported a result.
+///
+/// What happens in that window is real work and takes real time — the receiver
+/// writes each file to its final destination and clears its pending flag,
+/// measured at 23-26 s for 1911 files — but nothing on either screen said so.
+/// The speed reading disappears with the last byte and both sides fell back to
+/// a bare "Sending"/"Receiving files...", which looks like a transfer that has
+/// stalled and invites the user to close the app in the middle of it.
+bool isFinishingUp({
+  required BigInt bytesTransferred,
+  required BigInt totalBytes,
+}) => totalBytes > BigInt.zero && bytesTransferred >= totalBytes;
+
+/// The line shown while that finishing work runs.
+Widget buildFinalizingLine(String detail) {
+  return Builder(
+    builder: (context) => Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(
+            text: detail,
+            style: wispSans(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: context.wc.muted,
+              height: 1.4,
+            ),
+          ),
+          TextSpan(
+            text: '  ·  keep Wisp open',
+            style: wispSans(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: context.wc.ink,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+      textAlign: TextAlign.center,
+    ),
   );
 }
 

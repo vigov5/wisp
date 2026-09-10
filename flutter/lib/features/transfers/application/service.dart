@@ -8,6 +8,7 @@ import '../../../platform/rust/receiver/fake_source.dart';
 import '../../../platform/rust/receiver/source.dart';
 import '../../../src/rust/api/error.dart' as rust_error;
 import '../../../src/rust/api/receiver.dart' as rust_receiver;
+import '../../../src/rust/api/transfer.dart' as rust_transfer;
 import '../../saved_devices/application/saved_devices_controller.dart';
 import '../../settings/application/controller.dart';
 import 'connection_path.dart';
@@ -391,6 +392,8 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
       speedLabel: snapshot == null ? null : _formatRate(snapshot.bytesPerSec),
       etaLabel: snapshot == null ? null : _formatEta(snapshot.etaSeconds),
       connectionPath: ConnectionPathInfo.fromReceiver(event.connectionPath),
+      isFinalizing:
+          snapshot?.phase == rust_transfer.TransferPhaseData.finalizing,
     );
   }
 

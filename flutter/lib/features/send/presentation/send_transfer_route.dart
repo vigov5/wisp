@@ -295,8 +295,23 @@ class _TransferStateCard extends StatelessWidget {
             ? SendingStripMode.transferring
             : SendingStripMode.waitingOnRecipient);
 
+    // The sender has no finalizing phase of its own — only the receiver's
+    // tracker marks one — so this is derived from the byte count. It is the
+    // same window: the last byte has gone and the receiver is still writing
+    // files, which on 1911 of them is another 25 s of the sender showing
+    // "Sending" with no speed.
+    final sendFinishingUp =
+        progress != null &&
+        state is SendStateTransferring &&
+        isFinishingUp(
+          bytesTransferred: progress.bytesTransferred,
+          totalBytes: progress.totalBytes,
+        );
+
     final Widget subtitle;
-    if (progress != null && state is SendStateTransferring) {
+    if (sendFinishingUp) {
+      subtitle = buildFinalizingLine('Waiting for the other device to save');
+    } else if (progress != null && state is SendStateTransferring) {
       subtitle = buildSpeedLine(
         speedLabel: progress.speedLabel ?? '',
         etaLabel: progress.etaLabel,

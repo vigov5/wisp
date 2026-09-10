@@ -33,8 +33,20 @@ class ReceivingCard extends ConsumerWidget {
       broadcastLabel: displaySender(offer.sender.displayName),
     ).primary;
 
+    // Checked before the speed line: once the last byte has landed a stale
+    // speed reading is worse than no reading, because the thing left to say is
+    // that the device is still writing files.
+    final finishingUp =
+        progress.isFinalizing ||
+        isFinishingUp(
+          bytesTransferred: progress.bytesTransferred,
+          totalBytes: progress.totalBytes,
+        );
+
     final Widget subtitle;
-    if (progress.speedLabel != null) {
+    if (finishingUp) {
+      subtitle = buildFinalizingLine('Saving files to this device');
+    } else if (progress.speedLabel != null) {
       subtitle = buildSpeedLine(
         speedLabel: progress.speedLabel!,
         etaLabel: progress.etaLabel,
@@ -51,7 +63,7 @@ class ReceivingCard extends ConsumerWidget {
 
     return SizedBox.expand(
       child: TransferFlowLayout(
-        statusLabel: 'Receiving',
+        statusLabel: finishingUp ? 'Finalizing' : 'Receiving',
         statusColor: const Color(0xFFD4A824),
         subtitle: subtitle,
         explainer: null,

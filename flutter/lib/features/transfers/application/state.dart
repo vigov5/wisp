@@ -59,6 +59,7 @@ class TransferTransferProgress {
     this.speedLabel,
     this.etaLabel,
     this.connectionPath,
+    this.isFinalizing = false,
   });
 
   final BigInt bytesTransferred;
@@ -70,6 +71,12 @@ class TransferTransferProgress {
   final String? speedLabel;
   final String? etaLabel;
   final ConnectionPathInfo? connectionPath;
+
+  /// The core's own `Finalizing` phase: bytes are in and the receiver is
+  /// writing each file to its destination. Authoritative where it exists —
+  /// only the receiver's tracker marks it, so the sender derives the same
+  /// window from its byte count instead.
+  final bool isFinalizing;
 
   double get progressFraction {
     if (totalBytes == BigInt.zero) {
