@@ -22,11 +22,15 @@
 use std::collections::HashMap;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use bao_tree::io::BaoContentItem;
 use bytes::Bytes;
 use bytes::BytesMut;
+use futures_buffered::BufferedStreamExt;
+use futures_lite::stream::{self, StreamExt};
 use iroh_blobs::Hash;
 use iroh_blobs::format::collection::{Collection, SimpleStore};
 use iroh_blobs::get::fsm;
@@ -39,6 +43,38 @@ use super::error::{BlobError, BlobTextError, Result, error_chain};
 use super::receive::{BlobDownloadUpdate, PROGRESS_EMIT_INTERVAL, ProgressCoalescer};
 use super::source::BlobSource;
 use super::telemetry::BlobTransferTelemetry;
+
+/// Ceiling on files fetched at once, whatever the device.
+const MAX_FETCH_CONCURRENCY: usize = 8;
+
+/// How many of a collection's files to fetch at the same time.
+///
+/// Sequentially, every file's connection setup was serialised with every other
+/// file's data. On the LAN transport that setup is a whole TCP connection and
+/// TLS handshake *per request* — `BlobSource::LanTcp` is documented as dialled
+/// per request, and a device log counted 3828 dials for two 1911-file
+/// transfers, one per file plus a probe and the collection each. Measured, it
+/// costs 41-49 ms a file, which for 1911 files is 79 s of a 79 s transfer:
+/// 389 MB at the link's own rate is about 5 s of data. The fast direction of
+/// the test rig has nine times the bandwidth of the slow one and finished a
+/// folder only 1.49x sooner, which is what it looks like when bandwidth is not
+/// the bottleneck.
+///
+/// This overlaps the setup with other files' data rather than removing it.
+/// Removing it means reusing connections, and that is blocked upstream:
+/// `iroh_blobs::provider::handle_stream` takes its `StreamPair` by value and
+/// `into_writer`/`into_reader` consume it, so one connection serves exactly
+/// one request. Multiplexing would mean our own framing on both sides of the
+/// LAN path, gated behind a capability so released peers keep working.
+///
+/// Eight because the work is network and disk I/O, not CPU: these are polled
+/// on one task, and the only per-file cost that scales is a writer task with a
+/// bounded queue and a 512 KiB buffer. Not a measured optimum — the number to
+/// beat is 41 ms a file, and `fetch_store` in the transfer telemetry reports
+/// it directly.
+fn fetch_concurrency() -> usize {
+    MAX_FETCH_CONCURRENCY
+}
 
 /// Bytes per bao chunk group at iroh's block size (`BlockSize::from_chunk_log(4)`
 /// - 16 chunks of 1 KiB). A resumed file has to restart on one of these
@@ -204,9 +240,15 @@ pub(super) async fn stream_collection(
         .map(|(name, hash)| (name.as_str(), *hash))
         .collect();
 
-    let mut done_bytes = 0_u64;
-    let mut progress = ProgressCoalescer::new(PROGRESS_EMIT_INTERVAL);
-    for target in &targets {
+    // Hashes resolved up front so the concurrent part below cannot fail on a
+    // lookup, which keeps its only failure mode the fetch itself.
+    //
+    // An index rather than a `&StreamTarget`, so the closure below takes a
+    // fully owned item: a closure argument carrying a lifetime has to satisfy
+    // `FnOnce` for *any* lifetime, which the compiler cannot prove for a
+    // future that borrows from the same scope.
+    let mut planned: Vec<(Hash, usize)> = Vec::with_capacity(targets.len());
+    for (index, target) in targets.iter().enumerate() {
         let hash = *hashes.get(target.transfer_path.as_str()).ok_or_else(|| {
             BlobError::fetch(
                 format!("collection {root_hash}"),
@@ -216,25 +258,46 @@ pub(super) async fn stream_collection(
                 )),
             )
         })?;
-        stream_one(
-            &source,
-            hash,
-            target,
-            done_bytes,
-            &update_tx,
-            &mut progress,
-            telemetry,
-        )
-        .await?;
-        done_bytes = done_bytes.saturating_add(target.size);
+        planned.push((hash, index));
+    }
+    let total_bytes: u64 = targets.iter().map(|target| target.size).sum();
+
+    // Shared, because the files no longer finish in order.
+    let received = AtomicU64::new(0);
+    let progress = Mutex::new(ProgressCoalescer::new(PROGRESS_EMIT_INTERVAL));
+
+    let concurrency = fetch_concurrency();
+    trace!(files = planned.len(), concurrency, "streaming collection");
+    let mut fetches = stream::iter(planned)
+        .map(|(hash, index)| {
+            stream_one(
+                &source,
+                hash,
+                &targets[index],
+                &received,
+                &update_tx,
+                &progress,
+                telemetry,
+            )
+        })
+        .buffered_ordered(concurrency);
+    // Ordered, not unordered: results arrive in the order the manifest lists
+    // them, so the error reported for a failed transfer is the first file that
+    // failed rather than whichever task lost the race.
+    while let Some(result) = fetches.next().await {
+        result?;
     }
 
     // Never let throttling hide the final position from the resume record.
-    if let Some(bytes_received) = progress.flush_pending(Instant::now()) {
+    if let Some(bytes_received) = progress
+        .lock()
+        .expect("progress mutex is never held across a panic")
+        .flush_pending(Instant::now())
+    {
         let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
     }
     let _ = update_tx.send(BlobDownloadUpdate::Progress {
-        bytes_received: done_bytes,
+        bytes_received: total_bytes,
     });
     let _ = update_tx.send(BlobDownloadUpdate::Done);
     Ok(())
@@ -242,16 +305,19 @@ pub(super) async fn stream_collection(
 
 /// Fetches one blob into `target.destination`.
 ///
-/// `done_bytes` is how much of the whole transfer landed before this file, so
-/// the progress emitted here stays cumulative.
+/// `received` is the whole transfer's byte count, which this adds its own
+/// progress to. It used to take `done_bytes` — the total of the files before
+/// this one — which only works while files are fetched in order. On return
+/// this file has contributed exactly `target.size`, so the sum across all of
+/// them is the transfer total whatever order they finish in.
 #[allow(clippy::too_many_arguments)]
 async fn stream_one(
     source: &BlobSource,
     hash: Hash,
     target: &StreamTarget,
-    done_bytes: u64,
+    received: &AtomicU64,
     update_tx: &mpsc::UnboundedSender<BlobDownloadUpdate>,
-    progress: &mut ProgressCoalescer,
+    progress: &Mutex<ProgressCoalescer>,
     telemetry: Option<&BlobTransferTelemetry>,
 ) -> Result<()> {
     let context = || format!("{} ({hash})", target.transfer_path);
@@ -266,6 +332,9 @@ async fn stream_one(
         // can only be asked of a path.)
         if tokio::fs::metadata(&target.destination).await.is_ok() {
             trace!(path = %target.transfer_path, "destination already complete, skipping");
+            // Still contributes its bytes: a skipped file is a finished one,
+            // and the total has to add up either way.
+            received.fetch_add(target.size, Ordering::Relaxed);
             return Ok(());
         }
         if let Some(parent) = target.destination.parent() {
@@ -308,6 +377,10 @@ async fn stream_one(
     };
 
     let mut written = resume_at;
+    // What this file has already added to `received`. Resumed bytes count as
+    // received, exactly as they did when the caller accumulated them.
+    let mut contributed = resume_at.min(target.size);
+    received.fetch_add(contributed, Ordering::Relaxed);
     // One pair per request. On QUIC that is a bi-stream on the existing
     // connection; on the LAN transport it is a fresh connection and handshake,
     // which is the trade `super::source` documents.
@@ -368,11 +441,22 @@ async fn stream_one(
                     // file's whole chunk groups rather than from this number.
                     written = written.max(leaf_end);
                     let now = Instant::now();
-                    let cumulative = done_bytes.saturating_add(written.min(target.size));
+                    let reached = written.min(target.size);
+                    let cumulative = if reached > contributed {
+                        let delta = reached - contributed;
+                        contributed = reached;
+                        received.fetch_add(delta, Ordering::Relaxed) + delta
+                    } else {
+                        received.load(Ordering::Relaxed)
+                    };
                     if let Some(telemetry) = telemetry {
                         telemetry.observe_progress(now, cumulative);
                     }
-                    if let Some(bytes_received) = progress.observe(now, cumulative) {
+                    let emit = progress
+                        .lock()
+                        .expect("progress mutex is never held across a panic")
+                        .observe(now, cumulative);
+                    if let Some(bytes_received) = emit {
                         let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
                     }
                 }
@@ -414,6 +498,14 @@ async fn stream_one(
         tokio::fs::rename(sink, &target.destination)
             .await
             .map_err(|source| BlobError::fetch(context(), source))?;
+    }
+    // Topped up so the invariant the caller relies on holds by construction: a
+    // finished file has contributed exactly its manifest size, whatever the
+    // leaves added up to. Without it a blob whose real length disagreed with
+    // the manifest would leave the shared counter short, and a progress bar
+    // that stops at 98% is a bug report.
+    if target.size > contributed {
+        received.fetch_add(target.size - contributed, Ordering::Relaxed);
     }
     Ok(())
 }
@@ -466,6 +558,132 @@ mod tests {
                 .expect("clock")
                 .as_nanos()
         ))
+    }
+
+    /// The whole streaming path, over a real LAN provider, with more files
+    /// than the concurrency window.
+    ///
+    /// This is the first end-to-end test of it, added with the change that
+    /// made the fetch concurrent — the part worth pinning is not that files
+    /// arrive but that the *accounting* survives them arriving out of order.
+    /// Sequentially the caller kept a running `done_bytes` and each file added
+    /// its own progress on top; concurrently that is a shared counter fed by
+    /// deltas, which is exactly the kind of bookkeeping that silently
+    /// double-counts or loses a file and shows up as a progress bar that
+    /// overshoots or never reaches the end.
+    #[tokio::test]
+    async fn a_collection_streams_concurrently_and_accounts_for_every_byte() {
+        use crate::blobs::source::LanTarget;
+        use iroh::SecretKey;
+        use iroh_blobs::format::collection::Collection;
+        use iroh_blobs::store::mem::MemStore;
+        use std::net::{Ipv4Addr, SocketAddr};
+
+        // Deliberately above MAX_FETCH_CONCURRENCY so the window is actually
+        // full, and of differing sizes so the files cannot finish in step.
+        const FILES: usize = 20;
+
+        let store = MemStore::new();
+        let sender = SecretKey::generate();
+        let receiver = SecretKey::generate();
+
+        let mut collection = Collection::default();
+        let mut expected: Vec<(String, Vec<u8>)> = Vec::with_capacity(FILES);
+        for index in 0..FILES {
+            // Sizes straddle the 16 KiB leaf boundary so some files take one
+            // content item and others several.
+            let len = 1 + (index * 4096) % 70_000;
+            let body = vec![b'a' + (index % 26) as u8; len];
+            let tag = store
+                .add_bytes(bytes::Bytes::from(body.clone()))
+                .temp_tag()
+                .await
+                .expect("adding a blob");
+            let name = format!("dir{}/file{index:02}.bin", index % 3);
+            collection.extend([(name.clone(), tag.hash())]);
+            expected.push((name, body));
+        }
+        let root = collection
+            .store(store.as_ref())
+            .await
+            .expect("storing the collection");
+
+        let provider = super::super::lan_provider::LanBlobProvider::start(
+            store.as_ref().clone(),
+            sender.clone(),
+            receiver.public(),
+        )
+        .await
+        .expect("the provider should bind");
+        let source = BlobSource::LanTcp(Box::new(LanTarget {
+            target: SocketAddr::from((Ipv4Addr::LOCALHOST, provider.port())),
+            secret: receiver.clone(),
+            peer: sender.public(),
+        }));
+
+        let root_dir = unique_dir("wisp-stream-concurrent");
+        let parts = root_dir.join("parts");
+        std::fs::create_dir_all(&parts).expect("parts dir");
+        let targets = expected
+            .iter()
+            .map(|(name, body)| StreamTarget {
+                transfer_path: name.clone(),
+                destination: root_dir.join(name),
+                partial: parts.join(name),
+                platform_descriptor: false,
+                size: body.len() as u64,
+            })
+            .collect::<Vec<_>>();
+        let total: u64 = targets.iter().map(|target| target.size).sum();
+
+        let (update_tx, mut update_rx) = mpsc::unbounded_channel();
+        stream_collection(source, root.hash(), targets, update_tx, None)
+            .await
+            .expect("the collection should stream");
+
+        // Every file, byte for byte, at its real name.
+        for (name, body) in &expected {
+            let landed = std::fs::read(root_dir.join(name))
+                .unwrap_or_else(|error| panic!("{name} should exist: {error}"));
+            assert_eq!(landed, *body, "{name} should match what was sent");
+        }
+
+        // And the accounting.
+        let mut progress = Vec::new();
+        let mut done = false;
+        while let Ok(update) = update_rx.try_recv() {
+            match update {
+                BlobDownloadUpdate::Progress { bytes_received } => {
+                    // Double counting shows up here: two files adding the same
+                    // bytes would carry the running total past the end.
+                    assert!(
+                        bytes_received <= total,
+                        "progress {bytes_received} ran past the total {total}"
+                    );
+                    progress.push(bytes_received);
+                }
+                BlobDownloadUpdate::Done => done = true,
+                BlobDownloadUpdate::Failed { error } => {
+                    panic!("unexpected failure: {error}")
+                }
+            }
+        }
+        assert!(done, "the stream should report Done");
+        // The last Progress is the closing announcement, sent unconditionally,
+        // so it would read as the total even if the counter had lost a file.
+        // The one before it is the counter's own value: reaching the total
+        // there means every file ran and contributed.
+        assert!(
+            progress.len() >= 2,
+            "expected accounted progress, got {progress:?}"
+        );
+        assert_eq!(
+            progress[progress.len() - 2],
+            total,
+            "the counter must reach the total on its own, got {progress:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root_dir);
     }
 
     #[tokio::test]

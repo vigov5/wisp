@@ -5222,6 +5222,7 @@ dependencies = [
  "bytes",
  "filetime",
  "flume",
+ "futures-buffered",
  "futures-lite",
  "if-addrs",
  "iroh",

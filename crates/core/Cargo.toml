@@ -18,6 +18,9 @@ base64.workspace = true
 bincode.workspace = true
 flume.workspace = true
 futures-lite.workspace = true
+# Bounded-concurrency stream combinators (`buffered`). Already in the tree as a
+# dependency of iroh's `n0-future`, so this adds a direct use, not a crate.
+futures-buffered = "0.2"
 if-addrs.workspace = true
 iroh.workspace = true
 iroh-blobs.workspace = true
