@@ -22,9 +22,10 @@
 use std::collections::HashMap;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use bao_tree::io::BaoContentItem;
 use bytes::Bytes;
@@ -44,36 +45,160 @@ use super::receive::{BlobDownloadUpdate, PROGRESS_EMIT_INTERVAL, ProgressCoalesc
 use super::source::BlobSource;
 use super::telemetry::BlobTransferTelemetry;
 
-/// Ceiling on files fetched at once, whatever the device.
-const MAX_FETCH_CONCURRENCY: usize = 8;
+/// Ceiling on requests in flight at once, whatever the device.
+const MAX_FETCH_SLICES: usize = 4;
 
-/// How many of a collection's files to fetch at the same time.
+/// Files named by one request, and the size at which one is closed early.
 ///
-/// Sequentially, every file's connection setup was serialised with every other
-/// file's data. On the LAN transport that setup is a whole TCP connection and
-/// TLS handshake *per request* — `BlobSource::LanTcp` is documented as dialled
-/// per request, and a device log counted 3828 dials for two 1911-file
-/// transfers, one per file plus a probe and the collection each. Measured, it
-/// costs 41-49 ms a file, which for 1911 files is 79 s of a 79 s transfer:
-/// 389 MB at the link's own rate is about 5 s of data. The fast direction of
-/// the test rig has nine times the bandwidth of the slow one and finished a
-/// folder only 1.49x sooner, which is what it looks like when bandwidth is not
-/// the bottleneck.
+/// A batch is the unit a worker takes, so it is also the unit of imbalance.
+/// Fixed slices of the file list were tried first and were badly wrong: the
+/// 1911-file folder has a median file of 33 KB and a largest of 64.8 MB, with
+/// 46% of its bytes in five files, so a quarter of the *list* was nowhere near
+/// a quarter of the *work*. Whichever slice caught the big files ran on alone
+/// and the phase sums fell to 36% of four times the wall clock — a window
+/// two-thirds idle — while the wall went from 15.6 s to 37.7 s.
 ///
-/// This overlaps the setup with other files' data rather than removing it.
-/// Removing it means reusing connections, and that is blocked upstream:
-/// `iroh_blobs::provider::handle_stream` takes its `StreamPair` by value and
-/// `into_writer`/`into_reader` consume it, so one connection serves exactly
-/// one request. Multiplexing would mean our own framing on both sides of the
-/// LAN path, gated behind a capability so released peers keep working.
+/// The byte cap is what keeps a batch from hiding a large file behind
+/// sixty-three small ones; the file cap is what keeps a folder of tiny files
+/// from paying a round trip each. Neither can split a single file, so the floor
+/// is the largest file over the rate one stream sustains, and going finer than
+/// that buys nothing.
+const FETCH_BATCH_FILES: usize = 64;
+const FETCH_BATCH_BYTES: u64 = 8 * 1024 * 1024;
+
+/// How many pieces a collection's files are fetched in.
 ///
-/// Eight because the work is network and disk I/O, not CPU: these are polled
-/// on one task, and the only per-file cost that scales is a writer task with a
-/// bounded queue and a 512 KiB buffer. Not a measured optimum — the number to
-/// beat is 41 ms a file, and `fetch_store` in the transfer telemetry reports
-/// it directly.
-fn fetch_concurrency() -> usize {
-    MAX_FETCH_CONCURRENCY
+/// A slice is one `GetRequest` naming many children, so it costs one dial and
+/// one round trip however many files it carries. This replaced a request per
+/// file, which on the LAN transport meant a whole TCP connection and TLS
+/// handshake each — `BlobSource::LanTcp` is dialled per request, and a device
+/// log counted 3828 dials for two 1911-file transfers.
+///
+/// [`FetchSplit`] measured what that cost, P4 to P7, 1911 files / 408 MB in
+/// 15.6 s, phase sums divided by the eight then in flight:
+///
+/// | phase | wall-equivalent | per file |
+/// |---|---|---|
+/// | body (data + verify) | 6.63 s | 27.7 ms |
+/// | dial (connect + TLS) | 3.99 s | 16.7 ms |
+/// | header (first round trip) | 2.15 s | 9.0 ms |
+/// | sink (opening the destination) | 1.68 s | 7.0 ms |
+/// | finish | 0.48 s | 2.0 ms |
+///
+/// Per-request overhead was 8.3 s of the 15.6 — a little over half. Two things
+/// made it up, and one request per slice removes both:
+///
+/// - **Round trips.** `dial` is a TCP connect and a TLS handshake, `header` is
+///   the wait for the first response byte (`AtConnected::next` writes the
+///   request and reads nothing), so a file costs **three**. 5733 of them for
+///   one folder. Loopback on a Pixel 7 dials in 590 us against 16.7 ms on
+///   Wi-Fi, so 96.5% of a dial is the link, and the two phases agree on what
+///   one round trip costs from opposite directions: 14.0 ms / 2 for the dial,
+///   7.6 ms / 1 for the header.
+/// - **The shape.** Eight futures polled from one task charge a future's wait
+///   for its turn to whichever phase it is in. Running the same 1911 files over
+///   loopback, where there is no link to wait for, still read 2.68 ms of dial,
+///   1.39 ms of header and 3.55 ms of sink — about 2 s of the 15.6 that was
+///   nothing but taking turns.
+///
+/// What is *not* in it, each refuted by measurement rather than reasoned away:
+/// rebuilding the rustls config per dial (2-4 us), the disk (the writer's own
+/// seeks and writes total 1.2 s for all 408 MB, 1% of the sum), verification
+/// (inside `body`, which runs at 61.6 MB/s — 79% of the rig's raw ceiling), and
+/// the destination open being a FUSE path walk (the same four calls cost 322 us
+/// against a `/proc/self/fd/<n>` naming a distinct file, so the descriptor-dup
+/// trick that fixed the send side does not apply here).
+///
+/// Several workers rather than one request for everything, because a single
+/// stream would have to fill the link on its own and that rate is not known:
+/// raw single-stream TCP on this rig is 67.7 MiB/s, but this path measured
+/// 18.7 MiB/s before the writer task existed and has not been measured since.
+///
+/// Four, measured: 10.31 s over three runs (10,198 / 10,504 / 10,229 ms), with
+/// `body` about three quarters of the wall.
+///
+/// **Eight was tried and is worse** — 10,973 ms, and the data phase fell from
+/// 80% of the link's raw rate to 72%. The whole of `body` nearly doubled when
+/// the streams did (26.6 s to 58.1 s summed), which is what it looks like when
+/// four already saturate the link: the extra streams divide the same bandwidth
+/// and add contention on the local work as well (`sink` 2.7 s to 2.95 s of
+/// wall). Do not raise it on the theory that more parallelism hides latency —
+/// the per-file round trips this used to pay are gone, so there is no longer
+/// latency there to hide.
+///
+/// Each worker pulls [`FETCH_BATCH_FILES`]-sized batches from a shared cursor,
+/// so the folder costs three round trips per batch — of the order of 200 for
+/// 1911 files, against 5733 for one request each.
+fn fetch_slices() -> usize {
+    MAX_FETCH_SLICES
+}
+
+/// Where a collection's fetch time went, summed over its files.
+///
+/// Sums, not wall time: with `slices` requests in flight a phase's sum can
+/// reach `slices x` the wall clock, so what compares against the wall is
+/// `sum / slices`. That comparison is the point — it says whether a phase
+/// is what the transfer waits *on* or merely something it does. A folder of
+/// small files can spend nearly all of its time before any byte arrives, and
+/// no single throughput number tells that apart from a slow link; asking
+/// "where did it go" twice without being able to answer it is what this is
+/// for.
+///
+/// `write` overlaps every other phase deliberately (that is the writer task's
+/// whole reason to exist), so it is the one figure that says nothing on its
+/// own — compare it against `body`, which contains the backpressure it causes.
+#[derive(Default)]
+struct FetchSplit {
+    files: AtomicU64,
+    /// Preparing the destination: `create_dir_all`, `open`, the resume probe.
+    sink_nanos: AtomicU64,
+    /// [`BlobSource::open`] — on the LAN transport a connect and a TLS
+    /// handshake per request, which is what this whole struct exists to size.
+    dial_nanos: AtomicU64,
+    /// Request written, root header read: the round trips before any data.
+    header_nanos: AtomicU64,
+    /// First leaf to last: the data, and the verification it passes through.
+    body_nanos: AtomicU64,
+    /// After the last leaf — draining the writer, closing, renaming.
+    finish_nanos: AtomicU64,
+    /// Inside the writer task: the seeks, writes and the final flush.
+    write_nanos: AtomicU64,
+}
+
+impl FetchSplit {
+    /// Charges the time since `since` to `counter` and returns the new mark, so
+    /// a caller walking its phases never has to name an instant twice.
+    fn charge(counter: &AtomicU64, since: Instant) -> Instant {
+        let now = Instant::now();
+        counter.fetch_add(
+            u64::try_from(now.duration_since(since).as_nanos()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+        now
+    }
+
+    fn log(&self, wall: Duration, slices: usize, bytes: u64) {
+        let ms = |counter: &AtomicU64| counter.load(Ordering::Relaxed) / 1_000_000;
+        let files = self.files.load(Ordering::Relaxed);
+        // Per file in microseconds: a mean dial in whole milliseconds rounds
+        // the interesting range (tens of ms) to one significant figure.
+        let mean_us = |counter: &AtomicU64| counter.load(Ordering::Relaxed) / 1_000 / files.max(1);
+        debug!(
+            files,
+            slices,
+            bytes,
+            wall_ms = wall.as_millis(),
+            sink_ms = ms(&self.sink_nanos),
+            dial_ms = ms(&self.dial_nanos),
+            header_ms = ms(&self.header_nanos),
+            body_ms = ms(&self.body_nanos),
+            finish_ms = ms(&self.finish_nanos),
+            write_ms = ms(&self.write_nanos),
+            dial_mean_us = mean_us(&self.dial_nanos),
+            header_mean_us = mean_us(&self.header_nanos),
+            "fetch.split"
+        );
+    }
 }
 
 /// Bytes per bao chunk group at iroh's block size (`BlockSize::from_chunk_log(4)`
@@ -235,21 +360,26 @@ pub(super) async fn stream_collection(
                 BlobTextError::new(error_chain(&source)),
             )
         })?;
-    let hashes: HashMap<&str, Hash> = collection
+
+    // Name to (request offset, hash).
+    //
+    // The root blob is a hash sequence whose entry 0 is the metadata blob and
+    // whose entry `i + 1` is file `i`, and the provider resolves request offset
+    // `k` as hash sequence entry `k - 1` (`provider::handle_get_impl`). So file
+    // `i` is at offset `i + 2`, which `Collection::read_fsm_all` agrees with
+    // from the other direction. The hash travels with the offset because
+    // `AtStartChild::next` takes it, and validates the blob against it.
+    let located: HashMap<&str, (u64, Hash)> = collection
         .iter()
-        .map(|(name, hash)| (name.as_str(), *hash))
+        .enumerate()
+        .map(|(index, (name, hash))| (name.as_str(), (index as u64 + 2, *hash)))
         .collect();
 
-    // Hashes resolved up front so the concurrent part below cannot fail on a
-    // lookup, which keeps its only failure mode the fetch itself.
-    //
-    // An index rather than a `&StreamTarget`, so the closure below takes a
-    // fully owned item: a closure argument carrying a lifetime has to satisfy
-    // `FnOnce` for *any* lifetime, which the compiler cannot prove for a
-    // future that borrows from the same scope.
-    let mut planned: Vec<(Hash, usize)> = Vec::with_capacity(targets.len());
+    // Resolved up front so the fetching below cannot fail on a lookup, which
+    // keeps its only failure mode the fetch itself.
+    let mut planned: Vec<PlannedFile> = Vec::with_capacity(targets.len());
     for (index, target) in targets.iter().enumerate() {
-        let hash = *hashes.get(target.transfer_path.as_str()).ok_or_else(|| {
+        let (offset, hash) = *located.get(target.transfer_path.as_str()).ok_or_else(|| {
             BlobError::fetch(
                 format!("collection {root_hash}"),
                 BlobTextError::new(format!(
@@ -258,35 +388,78 @@ pub(super) async fn stream_collection(
                 )),
             )
         })?;
-        planned.push((hash, index));
+        planned.push(PlannedFile {
+            offset,
+            hash,
+            index,
+        });
     }
+    // Ascending, because a provider walks a request's offsets in order and so
+    // hands the children back in order. A slice of consecutive offsets is
+    // therefore a slice the provider can serve without seeking about.
+    planned.sort_unstable_by_key(|file| file.offset);
     let total_bytes: u64 = targets.iter().map(|target| target.size).sum();
 
-    // Shared, because the files no longer finish in order.
+    // Shared, because the slices do not finish in step.
     let received = AtomicU64::new(0);
     let progress = Mutex::new(ProgressCoalescer::new(PROGRESS_EMIT_INTERVAL));
 
-    let concurrency = fetch_concurrency();
-    trace!(files = planned.len(), concurrency, "streaming collection");
-    let mut fetches = stream::iter(planned)
-        .map(|(hash, index)| {
-            stream_one(
-                &source,
-                hash,
-                &targets[index],
-                &received,
-                &update_tx,
-                &progress,
-                telemetry,
-            )
-        })
-        .buffered_ordered(concurrency);
-    // Ordered, not unordered: results arrive in the order the manifest lists
-    // them, so the error reported for a failed transfer is the first file that
-    // failed rather than whichever task lost the race.
-    while let Some(result) = fetches.next().await {
-        result?;
+    // Batched by size as well as by count; see [`FETCH_BATCH_BYTES`].
+    let mut batches: Vec<Vec<PlannedFile>> = Vec::new();
+    let mut batch: Vec<PlannedFile> = Vec::new();
+    let mut batch_bytes = 0u64;
+    for file in planned {
+        batch_bytes = batch_bytes.saturating_add(targets[file.index].size);
+        batch.push(file);
+        if batch.len() >= FETCH_BATCH_FILES || batch_bytes >= FETCH_BATCH_BYTES {
+            batches.push(std::mem::take(&mut batch));
+            batch_bytes = 0;
+        }
     }
+    if !batch.is_empty() {
+        batches.push(batch);
+    }
+    let workers = fetch_slices().min(batches.len()).max(1);
+    trace!(
+        files = targets.len(),
+        batches = batches.len(),
+        workers,
+        "streaming collection"
+    );
+    let split = Arc::new(FetchSplit::default());
+    let started = Instant::now();
+
+    // A shared cursor rather than a batch each: a worker that draws a batch of
+    // small files comes straight back for another, so no worker can be left
+    // holding the transfer up while the others have nothing to do.
+    let next_batch = AtomicUsize::new(0);
+    let mut fetches = stream::iter(0..workers)
+        .map(|_| async {
+            loop {
+                let index = next_batch.fetch_add(1, Ordering::Relaxed);
+                let Some(batch) = batches.get(index) else {
+                    return Ok(());
+                };
+                stream_slice(
+                    &source, root_hash, &targets, batch, &received, &update_tx, &progress,
+                    telemetry, &split,
+                )
+                .await?;
+            }
+        })
+        .buffered_ordered(workers);
+    // The first error is held rather than returned, so the split is logged for
+    // a failed transfer too — which is when the question of where the time went
+    // is usually being asked.
+    let mut outcome = Ok(());
+    while let Some(result) = fetches.next().await {
+        if let Err(error) = result {
+            outcome = Err(error);
+            break;
+        }
+    }
+    split.log(started.elapsed(), workers, total_bytes);
+    outcome?;
 
     // Never let throttling hide the final position from the resume record.
     if let Some(bytes_received) = progress
@@ -303,54 +476,286 @@ pub(super) async fn stream_collection(
     Ok(())
 }
 
-/// Fetches one blob into `target.destination`.
-///
-/// `received` is the whole transfer's byte count, which this adds its own
-/// progress to. It used to take `done_bytes` — the total of the files before
-/// this one — which only works while files are fetched in order. On return
-/// this file has contributed exactly `target.size`, so the sum across all of
-/// them is the transfer total whatever order they finish in.
-#[allow(clippy::too_many_arguments)]
-async fn stream_one(
-    source: &BlobSource,
+/// One file's place in the request that will carry it.
+#[derive(Debug, Clone, Copy)]
+struct PlannedFile {
+    /// Offset in the get request; see `stream_collection` for how it is derived.
+    offset: u64,
+    /// The child's hash, which `AtStartChild::next` validates the blob against.
     hash: Hash,
-    target: &StreamTarget,
+    /// Index into the caller's `targets`.
+    index: usize,
+}
+
+/// Fetches one slice of a collection over a single connection.
+///
+/// Every file in `slice` is named by one `GetRequest`, so the whole slice costs
+/// one dial and one round trip rather than three per file, and the fsm walks
+/// from child to child without returning to the network in between.
+#[allow(clippy::too_many_arguments)]
+async fn stream_slice(
+    source: &BlobSource,
+    root_hash: Hash,
+    targets: &[StreamTarget],
+    slice: &[PlannedFile],
     received: &AtomicU64,
     update_tx: &mpsc::UnboundedSender<BlobDownloadUpdate>,
     progress: &Mutex<ProgressCoalescer>,
     telemetry: Option<&BlobTransferTelemetry>,
+    split: &Arc<FetchSplit>,
 ) -> Result<()> {
-    let context = || format!("{} ({hash})", target.transfer_path);
+    let mut mark = Instant::now();
+    let context = || format!("collection {root_hash}");
 
-    // Where the bytes actually go. A descriptor is written in place; a path is
-    // built under the record dir and renamed at the end.
-    let sink = if target.platform_descriptor {
+    // A request has to name every child's ranges before any of it is sent, so
+    // the resume probes happen here rather than lazily. They are in the slice
+    // rather than in `stream_collection` so the slices probe in parallel: a
+    // folder's worth of sequential stats ahead of the first byte would be a
+    // visible pause before anything moved.
+    let mut wanted: HashMap<u64, (usize, Hash, u64)> = HashMap::with_capacity(slice.len());
+    let mut builder = GetRequest::builder();
+    for file in slice {
+        let target = &targets[file.index];
+        if !target.platform_descriptor && tokio::fs::metadata(&target.destination).await.is_ok() {
+            // A file already at its real name is finished: it only got that
+            // name after its last chunk verified. Left out of the request
+            // entirely, and still contributing its bytes, because a skipped
+            // file is a finished one and the total has to add up either way.
+            trace!(path = %target.transfer_path, "destination already complete, skipping");
+            received.fetch_add(target.size, Ordering::Relaxed);
+            split.files.fetch_add(1, Ordering::Relaxed);
+            continue;
+        }
+        let resume_at = resumable_prefix_len(sink_path(target)).await;
+        if resume_at > 0 {
+            debug!(path = %target.transfer_path, resume_at, "resuming partial file");
+        }
+        // Anything past the last whole chunk group cannot be named by a range
+        // request, so it is refetched rather than trusted.
+        builder = builder.offset(
+            file.offset,
+            if resume_at == 0 {
+                ChunkRanges::all()
+            } else {
+                ChunkRanges::bytes(resume_at..)
+            },
+        );
+        wanted.insert(file.offset, (file.index, file.hash, resume_at));
+    }
+    if wanted.is_empty() {
+        FetchSplit::charge(&split.sink_nanos, mark);
+        return Ok(());
+    }
+    let request = builder.build(root_hash);
+    mark = FetchSplit::charge(&split.sink_nanos, mark);
+
+    // One connection for the whole slice. On QUIC this is a bi-stream on the
+    // existing connection; on the LAN transport it is a connect and a TLS
+    // handshake, which is why there is one of these per slice and not per file.
+    let (recv, send) = source.open().await?;
+    mark = FetchSplit::charge(&split.dial_nanos, mark);
+
+    let connected = fsm::start_with_streams(recv, send, request, Default::default());
+    let mut pending = match connected
+        .next()
+        .await
+        .map_err(|source| BlobError::fetch(context(), source))?
+    {
+        fsm::ConnectedNext::StartChild(child) => Some(child),
+        // Offset 0 is the collection itself, which is already loaded and never
+        // requested, so the provider has no reason to offer it.
+        fsm::ConnectedNext::StartRoot(_) => {
+            return Err(BlobError::fetch(
+                context(),
+                BlobTextError::new("the provider started at the collection root, unrequested"),
+            ));
+        }
+        fsm::ConnectedNext::Closing(_) => None,
+    };
+    mark = FetchSplit::charge(&split.header_nanos, mark);
+
+    while let Some(child) = pending {
+        // Keyed by the offset the provider actually reached rather than by the
+        // order asked for, which is what `AtStartChild::offset` is documented
+        // to be for.
+        let offset = child.offset();
+        let Some(&(index, hash, resume_at)) = wanted.get(&offset) else {
+            return Err(BlobError::fetch(
+                context(),
+                BlobTextError::new(format!("the provider offered offset {offset}, unrequested")),
+            ));
+        };
+        let target = &targets[index];
+        let file_context = || format!("{} ({hash})", target.transfer_path);
+
+        let sink = sink_path(target);
+        let file = open_sink(target, sink, resume_at).await?;
+        mark = FetchSplit::charge(&split.sink_nanos, mark);
+
+        let (mut curr, _size) = child
+            .next(hash)
+            .next()
+            .await
+            .map_err(|source| BlobError::fetch(file_context(), source))?;
+        mark = FetchSplit::charge(&split.header_nanos, mark);
+
+        let mut written = resume_at;
+        // What this file has already added to `received`. Resumed bytes count
+        // as received, exactly as they did when the caller accumulated them.
+        let mut contributed = resume_at.min(target.size);
+        received.fetch_add(contributed, Ordering::Relaxed);
+
+        // The file is written by its own task, so a leaf's disk write overlaps
+        // the next leaf's arrival. Serialised, the two costs simply added: at
+        // 16 KiB a leaf the loop paid a seek and a write - each a hop through
+        // tokio's blocking pool - for every ~0.5 ms of network time, which
+        // pinned app throughput near 19 MiB/s no matter how fast the link was.
+        // Measured phone to phone: 67.7 MiB/s raw TCP, 33.3 raw QUIC reading
+        // the same file, 18.7 through here. Same mistake and same fix as
+        // `quic_baseline`'s file source in `324e7bd`, which was never carried
+        // back to this path.
+        let (leaf_tx, leaf_rx) = mpsc::channel::<(u64, Bytes)>(WRITE_QUEUE_LEAVES);
+        let writer = tokio::spawn(write_leaves(file, leaf_rx, Arc::clone(split)));
+
+        // `None` means the writer stopped before the stream did, which only a
+        // write error causes; joining below names it.
+        let end = loop {
+            match curr.next().await {
+                fsm::BlobContentNext::More((next, item)) => {
+                    // Parent hashes arrive interleaved with the data; they are
+                    // what let a suffix be verified, and the fsm consumes them
+                    // itself.
+                    //
+                    // An error here returns without joining the writer. That is
+                    // deliberate: dropping `leaf_tx` on the way out closes the
+                    // channel, so the task flushes what it already has and
+                    // exits, and a longer verified prefix is exactly what a
+                    // resume wants. Nothing renames the partial on this path.
+                    if let BaoContentItem::Leaf(leaf) =
+                        item.map_err(|source| BlobError::fetch(file_context(), source))?
+                    {
+                        let leaf_end = leaf.offset.saturating_add(leaf.data.len() as u64);
+                        if leaf_tx.send((leaf.offset, leaf.data)).await.is_err() {
+                            break None;
+                        }
+                        // Progress now counts bytes *received* rather than bytes
+                        // already durable, and may lead the file by up to the
+                        // queue plus the buffer. Safe for both consumers: the UI
+                        // only draws it, and a resume re-derives its own start
+                        // from the file's whole chunk groups rather than from
+                        // this number.
+                        written = written.max(leaf_end);
+                        let now = Instant::now();
+                        let reached = written.min(target.size);
+                        let cumulative = if reached > contributed {
+                            let delta = reached - contributed;
+                            contributed = reached;
+                            received.fetch_add(delta, Ordering::Relaxed) + delta
+                        } else {
+                            received.load(Ordering::Relaxed)
+                        };
+                        if let Some(telemetry) = telemetry {
+                            telemetry.observe_progress(now, cumulative);
+                        }
+                        let emit = progress
+                            .lock()
+                            .expect("progress mutex is never held across a panic")
+                            .observe(now, cumulative);
+                        if let Some(bytes_received) = emit {
+                            let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
+                        }
+                    }
+                    curr = next;
+                }
+                fsm::BlobContentNext::Done(end) => break Some(end),
+            }
+        };
+        mark = FetchSplit::charge(&split.body_nanos, mark);
+
+        // Closing the channel is what tells the writer to flush and finish, so
+        // it has to happen before the join.
+        drop(leaf_tx);
+        match writer.await {
+            Ok(Ok(())) => {}
+            Ok(Err(source)) => return Err(BlobError::fetch(file_context(), source)),
+            Err(join) => {
+                return Err(BlobError::fetch(
+                    file_context(),
+                    BlobTextError::new(format!("file writer task failed: {join}")),
+                ));
+            }
+        }
+        let Some(end) = end else {
+            return Err(BlobError::fetch(
+                file_context(),
+                BlobTextError::new("file writer stopped before the stream ended"),
+            ));
+        };
+
+        // Every chunk was verified on arrival and the stream ran to completion,
+        // so the file is whole and can take its real name.
+        if !target.platform_descriptor {
+            tokio::fs::rename(sink, &target.destination)
+                .await
+                .map_err(|source| BlobError::fetch(file_context(), source))?;
+        }
+        // Topped up so the invariant the caller relies on holds by
+        // construction: a finished file has contributed exactly its manifest
+        // size, whatever the leaves added up to. Without it a blob whose real
+        // length disagreed with the manifest would leave the shared counter
+        // short, and a progress bar that stops at 98% is a bug report.
+        if target.size > contributed {
+            received.fetch_add(target.size - contributed, Ordering::Relaxed);
+        }
+        split.files.fetch_add(1, Ordering::Relaxed);
+
+        pending = match end.next() {
+            fsm::EndBlobNext::MoreChildren(more) => Some(more),
+            fsm::EndBlobNext::Closing(closing) => {
+                closing
+                    .next()
+                    .await
+                    .map_err(|source| BlobError::fetch(context(), source))?;
+                None
+            }
+        };
+        mark = FetchSplit::charge(&split.finish_nanos, mark);
+    }
+
+    Ok(())
+}
+
+/// Where a target's bytes are written.
+///
+/// A descriptor is already the final location and is written in place; a path
+/// is built under the record dir and renamed onto its destination at the end,
+/// so a file at its real name is finished by construction.
+fn sink_path(target: &StreamTarget) -> &Path {
+    if target.platform_descriptor {
         &target.destination
     } else {
-        // A file already at its real name is finished: it only got that name
-        // after its last chunk verified. (A descriptor always exists, so this
-        // can only be asked of a path.)
-        if tokio::fs::metadata(&target.destination).await.is_ok() {
-            trace!(path = %target.transfer_path, "destination already complete, skipping");
-            // Still contributes its bytes: a skipped file is a finished one,
-            // and the total has to add up either way.
-            received.fetch_add(target.size, Ordering::Relaxed);
-            return Ok(());
-        }
+        &target.partial
+    }
+}
+
+/// Opens `sink` for writing and trims it back to `resume_at`.
+async fn open_sink(target: &StreamTarget, sink: &Path, resume_at: u64) -> Result<tokio::fs::File> {
+    let context = || target.transfer_path.clone();
+    if !target.platform_descriptor {
+        // Only a path needs its parents; a descriptor's is not a directory that
+        // can be created, and the destination's parent is what the rename at
+        // the end lands in.
         if let Some(parent) = target.destination.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
                 .map_err(|source| BlobError::fetch(context(), source))?;
         }
-        &target.partial
-    };
-    if let Some(parent) = sink.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|source| BlobError::fetch(context(), source))?;
+        if let Some(parent) = sink.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|source| BlobError::fetch(context(), source))?;
+        }
     }
-    let resume_at = resumable_prefix_len(sink).await;
-
     let file = tokio::fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -358,156 +763,10 @@ async fn stream_one(
         .open(sink)
         .await
         .map_err(|source| BlobError::fetch(context(), source))?;
-    // Anything past the last whole chunk group cannot be named by a range
-    // request, so it is refetched rather than trusted.
     file.set_len(resume_at)
         .await
         .map_err(|source| BlobError::fetch(context(), source))?;
-    if resume_at > 0 {
-        debug!(path = %target.transfer_path, resume_at, "resuming partial file");
-    }
-
-    // `get_blob` always fetches a whole blob, so a resumed file needs its own
-    // ranged request. Byte bounds are converted outward to whole chunks; the
-    // offset is already chunk-group aligned, so nothing is skipped.
-    let request = if resume_at == 0 {
-        GetRequest::blob(hash)
-    } else {
-        GetRequest::blob_ranges(hash, ChunkRanges::bytes(resume_at..))
-    };
-
-    let mut written = resume_at;
-    // What this file has already added to `received`. Resumed bytes count as
-    // received, exactly as they did when the caller accumulated them.
-    let mut contributed = resume_at.min(target.size);
-    received.fetch_add(contributed, Ordering::Relaxed);
-    // One pair per request. On QUIC that is a bi-stream on the existing
-    // connection; on the LAN transport it is a fresh connection and handshake,
-    // which is the trade `super::source` documents.
-    let (recv, send) = source.open().await?;
-    let connected = fsm::start_with_streams(recv, send, request, Default::default());
-    let fsm::ConnectedNext::StartRoot(start_root) = connected
-        .next()
-        .await
-        .map_err(|source| BlobError::fetch(context(), source))?
-    else {
-        // A single-blob request has no children, so the fsm can only be at the
-        // root here.
-        return Err(BlobError::fetch(
-            context(),
-            BlobTextError::new("expected the request to start at the root"),
-        ));
-    };
-    let (mut curr, _size) = start_root
-        .next()
-        .next()
-        .await
-        .map_err(|source| BlobError::fetch(context(), source))?;
-    // The file is written by its own task, so a leaf's disk write overlaps the
-    // next leaf's arrival. Serialised, the two costs simply added: at 16 KiB a
-    // leaf the loop paid a seek and a write - each a hop through tokio's
-    // blocking pool - for every ~0.5 ms of network time, which pinned app
-    // throughput near 19 MiB/s no matter how fast the link was. Measured phone
-    // to phone: 67.7 MiB/s raw TCP, 33.3 raw QUIC reading the same file, 18.7
-    // through here. Same mistake and same fix as `quic_baseline`'s file source
-    // in `324e7bd`, which was never carried back to this path.
-    let (leaf_tx, leaf_rx) = mpsc::channel::<(u64, Bytes)>(WRITE_QUEUE_LEAVES);
-    let writer = tokio::spawn(write_leaves(file, leaf_rx));
-
-    // `None` means the writer stopped before the stream did, which only a write
-    // error causes; joining below names it.
-    let end = loop {
-        match curr.next().await {
-            fsm::BlobContentNext::More((next, item)) => {
-                // Parent hashes arrive interleaved with the data; they are what
-                // let a suffix be verified, and the fsm consumes them itself.
-                //
-                // An error here returns without joining the writer. That is
-                // deliberate: dropping `leaf_tx` on the way out closes the
-                // channel, so the task flushes what it already has and exits,
-                // and a longer verified prefix is exactly what a resume wants.
-                // Nothing renames the partial on this path.
-                if let BaoContentItem::Leaf(leaf) =
-                    item.map_err(|source| BlobError::fetch(context(), source))?
-                {
-                    let leaf_end = leaf.offset.saturating_add(leaf.data.len() as u64);
-                    if leaf_tx.send((leaf.offset, leaf.data)).await.is_err() {
-                        break None;
-                    }
-                    // Progress now counts bytes *received* rather than bytes
-                    // already durable, and may lead the file by up to the queue
-                    // plus the buffer. Safe for both consumers: the UI only
-                    // draws it, and a resume re-derives its own start from the
-                    // file's whole chunk groups rather than from this number.
-                    written = written.max(leaf_end);
-                    let now = Instant::now();
-                    let reached = written.min(target.size);
-                    let cumulative = if reached > contributed {
-                        let delta = reached - contributed;
-                        contributed = reached;
-                        received.fetch_add(delta, Ordering::Relaxed) + delta
-                    } else {
-                        received.load(Ordering::Relaxed)
-                    };
-                    if let Some(telemetry) = telemetry {
-                        telemetry.observe_progress(now, cumulative);
-                    }
-                    let emit = progress
-                        .lock()
-                        .expect("progress mutex is never held across a panic")
-                        .observe(now, cumulative);
-                    if let Some(bytes_received) = emit {
-                        let _ = update_tx.send(BlobDownloadUpdate::Progress { bytes_received });
-                    }
-                }
-                curr = next;
-            }
-            fsm::BlobContentNext::Done(end) => break Some(end),
-        }
-    };
-
-    // Closing the channel is what tells the writer to flush and finish, so it
-    // has to happen before the join.
-    drop(leaf_tx);
-    match writer.await {
-        Ok(Ok(())) => {}
-        Ok(Err(source)) => return Err(BlobError::fetch(context(), source)),
-        Err(join) => {
-            return Err(BlobError::fetch(
-                context(),
-                BlobTextError::new(format!("file writer task failed: {join}")),
-            ));
-        }
-    }
-    let Some(end) = end else {
-        return Err(BlobError::fetch(
-            context(),
-            BlobTextError::new("file writer stopped before the stream ended"),
-        ));
-    };
-    if let fsm::EndBlobNext::Closing(closing) = end.next() {
-        closing
-            .next()
-            .await
-            .map_err(|source| BlobError::fetch(context(), source))?;
-    }
-
-    // Every chunk was verified on arrival and the stream ran to completion, so
-    // the file is whole and can take its real name.
-    if !target.platform_descriptor {
-        tokio::fs::rename(sink, &target.destination)
-            .await
-            .map_err(|source| BlobError::fetch(context(), source))?;
-    }
-    // Topped up so the invariant the caller relies on holds by construction: a
-    // finished file has contributed exactly its manifest size, whatever the
-    // leaves added up to. Without it a blob whose real length disagreed with
-    // the manifest would leave the shared counter short, and a progress bar
-    // that stops at 98% is a bug report.
-    if target.size > contributed {
-        received.fetch_add(target.size - contributed, Ordering::Relaxed);
-    }
-    Ok(())
+    Ok(file)
 }
 
 /// Writes leaves to `file` until the channel closes, coalescing them through a
@@ -522,19 +781,29 @@ async fn stream_one(
 async fn write_leaves(
     file: tokio::fs::File,
     mut rx: mpsc::Receiver<(u64, Bytes)>,
+    split: Arc<FetchSplit>,
 ) -> std::io::Result<()> {
     let mut file = tokio::io::BufWriter::with_capacity(WRITE_BUFFER_BYTES, file);
     // `open` leaves the cursor at 0 whatever the resume offset is, so start
     // unknown and let the first leaf seek.
     let mut cursor: Option<u64> = None;
     while let Some((offset, data)) = rx.recv().await {
+        // Timed from the leaf in hand, so the wait for the next one is not
+        // charged to the disk: this task is idle most of a fast transfer, and
+        // counting that idleness as write time would make disk look like the
+        // bottleneck on every link.
+        let mark = Instant::now();
         if cursor != Some(offset) {
             file.seek(SeekFrom::Start(offset)).await?;
         }
         file.write_all(&data).await?;
         cursor = Some(offset.saturating_add(data.len() as u64));
+        FetchSplit::charge(&split.write_nanos, mark);
     }
-    file.flush().await
+    let mark = Instant::now();
+    let flushed = file.flush().await;
+    FetchSplit::charge(&split.write_nanos, mark);
+    flushed
 }
 
 /// How much of a partial file can be kept: its length rounded down to a whole
@@ -681,6 +950,292 @@ mod tests {
             progress[progress.len() - 2],
             total,
             "the counter must reach the total on its own, got {progress:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root_dir);
+    }
+
+    /// A slice carries full blobs and resumed ones in the same request.
+    ///
+    /// Resume used to be a ranged request of its own, one per file; now every
+    /// file's ranges ride in the slice's single `GetRequest`, so a wrong offset
+    /// no longer fails loudly on its own connection — it writes the wrong bytes
+    /// into a file that then passes as finished. The unaligned prefixes are the
+    /// point: `resumable_prefix_len` rounds down to a whole chunk group, so the
+    /// bytes past that boundary must be refetched *and* the stale tail
+    /// truncated away.
+    #[tokio::test]
+    async fn a_slice_resumes_partial_files_alongside_whole_ones() {
+        use crate::blobs::source::LanTarget;
+        use iroh::SecretKey;
+        use iroh_blobs::format::collection::Collection;
+        use iroh_blobs::store::mem::MemStore;
+        use std::net::{Ipv4Addr, SocketAddr};
+
+        // More than `MAX_FETCH_SLICES` so resumed and whole files land in the
+        // same slice as well as in different ones.
+        const FILES: usize = 16;
+
+        let store = MemStore::new();
+        let sender = SecretKey::generate();
+        let receiver = SecretKey::generate();
+
+        let mut collection = Collection::default();
+        let mut expected: Vec<(String, Vec<u8>)> = Vec::with_capacity(FILES);
+        for index in 0..FILES {
+            // Straddling the chunk group, so some files have a resumable prefix
+            // and some are too small to have one at all.
+            let len = 1 + index * (CHUNK_GROUP_BYTES as usize) / 2;
+            let body: Vec<u8> = (0..len).map(|byte| (byte % 251) as u8).collect();
+            let tag = store
+                .add_bytes(bytes::Bytes::from(body.clone()))
+                .temp_tag()
+                .await
+                .expect("adding a blob");
+            let name = format!("dir{}/file{index:02}.bin", index % 3);
+            collection.extend([(name.clone(), tag.hash())]);
+            expected.push((name, body));
+        }
+        let root = collection
+            .store(store.as_ref())
+            .await
+            .expect("storing the collection");
+
+        let provider = super::super::lan_provider::LanBlobProvider::start(
+            store.as_ref().clone(),
+            sender.clone(),
+            receiver.public(),
+        )
+        .await
+        .expect("the provider should bind");
+        let source = BlobSource::LanTcp(Box::new(LanTarget {
+            target: SocketAddr::from((Ipv4Addr::LOCALHOST, provider.port())),
+            secret: receiver.clone(),
+            peer: sender.public(),
+        }));
+
+        // Written in place, as an Android receive is: the destination exists
+        // before the transfer and keeps whatever a previous attempt left.
+        let root_dir = unique_dir("wisp-stream-resume");
+        let mut partials = 0usize;
+        let targets = expected
+            .iter()
+            .enumerate()
+            .map(|(index, (name, body))| {
+                let destination = root_dir.join(name);
+                std::fs::create_dir_all(destination.parent().expect("a parent"))
+                    .expect("destination dir");
+                // Every third file starts with a prefix a previous attempt
+                // wrote, deliberately not on a chunk group boundary.
+                let prefix = if index % 3 == 0 {
+                    let unaligned = (CHUNK_GROUP_BYTES as usize + 1_000).min(body.len());
+                    if unaligned > CHUNK_GROUP_BYTES as usize {
+                        partials += 1;
+                        unaligned
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+                // Only the whole chunk group is the *true* prefix; the bytes
+                // past it are garbage. `resumable_prefix_len` trusts the group
+                // and nothing after, so a correct resume refetches from the
+                // boundary and overwrites this — and a resume that trusted the
+                // whole file, or never happened, leaves it visible.
+                let mut seeded = body[..prefix].to_vec();
+                for byte in seeded.iter_mut().skip(CHUNK_GROUP_BYTES as usize) {
+                    *byte = !*byte;
+                }
+                std::fs::write(&destination, &seeded).expect("seed destination");
+                StreamTarget {
+                    transfer_path: name.clone(),
+                    destination,
+                    partial: root_dir.join("parts").join(name),
+                    platform_descriptor: true,
+                    size: body.len() as u64,
+                }
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            partials > 0,
+            "the fixture must actually produce partial files"
+        );
+        let total: u64 = targets.iter().map(|target| target.size).sum();
+
+        let (update_tx, mut update_rx) = mpsc::unbounded_channel();
+        stream_collection(source, root.hash(), targets, update_tx, None)
+            .await
+            .expect("the collection should stream");
+
+        for (name, body) in &expected {
+            let landed = std::fs::read(root_dir.join(name))
+                .unwrap_or_else(|error| panic!("{name} should exist: {error}"));
+            assert_eq!(
+                landed.len(),
+                body.len(),
+                "{name} should be exactly its own length, not a resumed prefix plus a tail"
+            );
+            assert_eq!(landed, *body, "{name} should match what was sent");
+        }
+
+        // The accounting has to hold across a resume too: a file that only
+        // needed its tail still contributes its whole manifest size.
+        let mut progress = Vec::new();
+        while let Ok(update) = update_rx.try_recv() {
+            match update {
+                BlobDownloadUpdate::Progress { bytes_received } => {
+                    assert!(
+                        bytes_received <= total,
+                        "progress {bytes_received} ran past the total {total}"
+                    );
+                    progress.push(bytes_received);
+                }
+                BlobDownloadUpdate::Done => {}
+                BlobDownloadUpdate::Failed { error } => panic!("unexpected failure: {error}"),
+            }
+        }
+        assert_eq!(
+            progress.last().copied(),
+            Some(total),
+            "the transfer should finish accounted for, got {progress:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root_dir);
+    }
+
+    /// Runs a real collection fetch over loopback and prints its [`FetchSplit`].
+    ///
+    /// The point is the `sink` phase. On the phones it measured 7.0 ms a file,
+    /// and every isolated explanation was refuted by
+    /// `baselines::baseline_sink_open_blocking_ops`: the four `tokio::fs` calls
+    /// cost 168 us on ext4, 337 us on FUSE, 322 us when the path is a
+    /// `/proc/self/fd/<n>` naming a distinct file. What that baseline does not
+    /// reproduce is the *shape* — it spawns each open as its own task, while
+    /// `stream_collection` polls all eight futures from one, so a future waiting
+    /// for its turn is charged to whatever phase it is in.
+    ///
+    /// Loopback and tiny files leave almost nothing else in the measurement: no
+    /// Wi-Fi round trips, barely any data. A `sink` still near 7 ms here means
+    /// the shape; a `sink` near the baseline means it takes the real transfer's
+    /// concurrent network and verification load to appear.
+    ///
+    /// ```text
+    /// cargo test --release -p wisp-core --lib -- --ignored --nocapture \
+    ///     blobs::stream::tests::measure_a_collection_fetch_split
+    /// ```
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "measurement; run explicitly under --release"]
+    async fn measure_a_collection_fetch_split() {
+        use crate::blobs::source::LanTarget;
+        use iroh::SecretKey;
+        use iroh_blobs::format::collection::Collection;
+        use iroh_blobs::store::mem::MemStore;
+        use std::net::{Ipv4Addr, SocketAddr};
+
+        // The count the phones ran, so `sink`'s per-file mean is comparable.
+        const FILES: usize = 1911;
+
+        // Sizes with the real folder's *shape*, scaled to a tenth so this stays
+        // a second of work rather than 408 MB of it. That folder's median file
+        // is 33 KB and its largest 64.8 MB, with 46% of every byte in five
+        // files, and an even split of the file *list* is therefore nowhere near
+        // an even split of the work — which is exactly what a uniform fixture
+        // cannot show. The five are adjacent on purpose: consecutive offsets
+        // are the worst case for anything that carves the list into runs.
+        const HUGE: [usize; 5] = [2_018_186, 2_251_491, 2_409_257, 5_552_903, 6_481_895];
+        const TAIL: usize = 600_000;
+        const SMALL: usize = 3_300;
+        fn body_len(index: usize) -> usize {
+            match index {
+                900..905 => HUGE[index - 900],
+                // The p99 tier, spread through the list.
+                _ if index % 73 == 0 => TAIL,
+                _ => SMALL,
+            }
+        }
+
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(
+                "warn,wisp_core::blobs::stream=debug",
+            ))
+            .with_test_writer()
+            .with_ansi(false)
+            .try_init();
+
+        let store = MemStore::new();
+        let sender = SecretKey::generate();
+        let receiver = SecretKey::generate();
+
+        let mut collection = Collection::default();
+        let mut names: Vec<(String, u64)> = Vec::with_capacity(FILES);
+        for index in 0..FILES {
+            let len = body_len(index);
+            let body = vec![b'a' + (index % 26) as u8; len];
+            let tag = store
+                .add_bytes(bytes::Bytes::from(body))
+                .temp_tag()
+                .await
+                .expect("adding a blob");
+            // Spread over directories the way a real folder is, so the
+            // destination opens are not all in one hot directory.
+            let name = format!("dir{}/file{index:04}.bin", index % 32);
+            collection.extend([(name.clone(), tag.hash())]);
+            names.push((name, len as u64));
+        }
+        let root = collection
+            .store(store.as_ref())
+            .await
+            .expect("storing the collection");
+
+        let provider = super::super::lan_provider::LanBlobProvider::start(
+            store.as_ref().clone(),
+            sender.clone(),
+            receiver.public(),
+        )
+        .await
+        .expect("the provider should bind");
+        let source = BlobSource::LanTcp(Box::new(LanTarget {
+            target: SocketAddr::from((Ipv4Addr::LOCALHOST, provider.port())),
+            secret: receiver.clone(),
+            peer: sender.public(),
+        }));
+
+        // `platform_descriptor`, because that is what an Android receive is:
+        // the destination already exists and is written in place, with no
+        // rename at the end. Pre-created here the way `createReceiveDestinations`
+        // does it on the device.
+        let root_dir = unique_dir("wisp-stream-measure");
+        let targets = names
+            .iter()
+            .map(|(name, len)| {
+                let destination = root_dir.join(name);
+                if let Some(parent) = destination.parent() {
+                    std::fs::create_dir_all(parent).expect("destination dir");
+                }
+                std::fs::write(&destination, b"").expect("seed destination");
+                StreamTarget {
+                    transfer_path: name.clone(),
+                    destination,
+                    partial: root_dir.join("parts").join(name),
+                    platform_descriptor: true,
+                    size: *len,
+                }
+            })
+            .collect::<Vec<_>>();
+        let total: u64 = targets.iter().map(|target| target.size).sum();
+
+        let (update_tx, _update_rx) = mpsc::unbounded_channel();
+        let started = Instant::now();
+        stream_collection(source, root.hash(), targets, update_tx, None)
+            .await
+            .expect("the collection should stream");
+        let wall = started.elapsed();
+
+        println!(
+            "loopback collection: {FILES} files, {total} bytes, wall {} ms \
+             (see the fetch.split line above for the phases)",
+            wall.as_millis()
         );
 
         let _ = std::fs::remove_dir_all(&root_dir);

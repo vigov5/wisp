@@ -159,3 +159,294 @@ fn baseline_record_checkpoint_write() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// --- where a per-file fetch spends its time ---------------------------------
+//
+// `blobs::stream::FetchSplit` measured a 1911-file folder on the phones and
+// found 8.3 s of 15.6 s going to per-request overhead: 16.7 ms dialling, 9.0 ms
+// waiting for the first response byte, 7.0 ms opening the destination. None of
+// those numbers say *why*. Idle RTT between the two test phones is min 3.9 ms
+// but averages 12-47 ms with an 80 ms mdev — Wi-Fi power save — so the network
+// could account for all of it, or none. These three separate the two: they run
+// the same work over loopback, where the only cost left is this device's CPU
+// and its syscalls.
+
+/// Cost of building the per-dial rustls config.
+///
+/// `lan_transport::dial_with_cap` calls `lan_tls::client_config` on every dial,
+/// which rebuilds the whole `ClientConfig` — provider, cipher suites, verifier,
+/// and a `CertifiedKey` that clones the secret and re-derives its SPKI. A
+/// transfer dials once per file, so if this is milliseconds it is a per-file
+/// tax that caching the config would simply delete.
+#[test]
+#[ignore = "baseline measurement; run explicitly under --release"]
+fn baseline_lan_tls_config_construction() {
+    use wisp_core::lan_tls;
+
+    const ITERATIONS: u32 = 2_000;
+    let secret = iroh::SecretKey::generate();
+    let peer = iroh::SecretKey::generate().public();
+
+    // Once outside the loop: the first call pays for lazily initialised crypto
+    // provider state, which no later dial pays again.
+    let _ = lan_tls::client_config(&secret, peer).expect("client config");
+
+    let start = Instant::now();
+    for _ in 0..ITERATIONS {
+        let _ = lan_tls::client_config(&secret, peer).expect("client config");
+    }
+    let client_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(ITERATIONS);
+
+    let start = Instant::now();
+    for _ in 0..ITERATIONS {
+        let _ = lan_tls::server_config(&secret).expect("server config");
+    }
+    let server_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(ITERATIONS);
+
+    println!("lan tls config: client {client_us:.0} us, server {server_us:.0} us");
+    println!(
+        "  at one dial per file, 1911 files pay {:.0} ms of client config alone",
+        client_us * 1911.0 / 1000.0
+    );
+}
+
+/// TCP connect plus the TLS 1.3 handshake, over loopback.
+///
+/// Loopback removes the link, so what is left is this device's cost for a dial:
+/// two syscalls, the handshake's ed25519 sign and verify on both sides, and the
+/// config construction above. Subtract this from the 16.7 ms measured on Wi-Fi
+/// and the remainder is the network's.
+///
+/// Measured both serially and eight at a time, because eight is what
+/// `blobs::stream` actually does and a handshake is CPU work that contends.
+#[test]
+#[ignore = "baseline measurement; run explicitly under --release"]
+fn baseline_lan_tcp_dial_loopback() {
+    use tokio::net::TcpListener;
+    use wisp_core::lan_transport;
+
+    const SERIAL: u32 = 200;
+    const CONCURRENT_ROUNDS: u32 = 25;
+    const WINDOW: u32 = 8;
+
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    runtime.block_on(async {
+        let server_secret = iroh::SecretKey::generate();
+        let server_peer = server_secret.public();
+        let client_secret = iroh::SecretKey::generate();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let target = listener.local_addr().expect("local addr");
+        let accept_secret = server_secret.clone();
+        // Mirrors `blobs::lan_provider`: accept, then handshake off the accept
+        // loop, so a slow handshake never holds up the next connection.
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                let secret = accept_secret.clone();
+                tokio::spawn(async move {
+                    let _ = lan_transport::accept(tcp, &secret).await;
+                });
+            }
+        });
+
+        // Warm: the first dial initialises crypto state the rest reuse.
+        let _ = lan_transport::dial(target, &client_secret, server_peer).await;
+
+        let start = Instant::now();
+        for _ in 0..SERIAL {
+            lan_transport::dial(target, &client_secret, server_peer)
+                .await
+                .expect("loopback dial");
+        }
+        let serial_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(SERIAL);
+
+        let start = Instant::now();
+        for _ in 0..CONCURRENT_ROUNDS {
+            let mut dials = Vec::with_capacity(WINDOW as usize);
+            for _ in 0..WINDOW {
+                let secret = client_secret.clone();
+                dials.push(tokio::spawn(async move {
+                    lan_transport::dial(target, &secret, server_peer)
+                        .await
+                        .expect("loopback dial");
+                }));
+            }
+            for dial in dials {
+                dial.await.expect("dial task");
+            }
+        }
+        let concurrent_us =
+            start.elapsed().as_secs_f64() * 1e6 / f64::from(CONCURRENT_ROUNDS * WINDOW);
+
+        println!(
+            "lan tcp dial (loopback): serial {serial_us:.0} us/dial, \
+             {WINDOW} at a time {concurrent_us:.0} us/dial"
+        );
+        println!(
+            "  on Wi-Fi the same dial measured 16687 us, so the link accounts \
+             for {:.0} us of it",
+            16687.0 - serial_us
+        );
+    });
+}
+
+/// The four filesystem calls `blobs::stream` makes before its first request.
+///
+/// Each is a `tokio::fs` call, so each is a hop onto the blocking pool and back.
+/// The phone measured 7.0 ms for the set, which for four stats and an open is
+/// implausible as disk work — the question is whether it is pool scheduling
+/// latency instead, and the answer is the gap between these two numbers.
+#[test]
+#[ignore = "baseline measurement; run explicitly under --release"]
+fn baseline_sink_open_blocking_ops() {
+    const SERIAL: u32 = 400;
+    const CONCURRENT_ROUNDS: u32 = 50;
+    const WINDOW: u32 = 8;
+
+    let dir = std::env::temp_dir().join(format!(
+        "wisp-sink-baseline-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("create baseline dir");
+
+    // Two populations, because the difference between them turned out to be
+    // the whole answer. `hot` is one file reopened, which is what this test
+    // measured first and why it read 40x faster than the phone: every lookup
+    // after the first is cached. `cold` is a distinct file per open, which is
+    // what a transfer actually does — 1911 files, each opened once, each a
+    // fresh path resolution.
+    let hot = dir.join("sink");
+    std::fs::write(&hot, b"").expect("seed sink");
+    let cold: Vec<std::path::PathBuf> = (0..SERIAL)
+        .map(|i| {
+            let path = dir.join(format!("cold-{i}"));
+            std::fs::write(&path, b"").expect("seed cold sink");
+            path
+        })
+        .collect();
+
+    // The third population is the one the receiver actually opens. Android
+    // hands each destination over as `/proc/self/fd/<n>`, and opening that
+    // *path* is a fresh walk into MediaProvider's FUSE daemon which re-checks
+    // permission against our uid — the cost `blobs::descriptor` exists to
+    // avoid on the send side by duplicating the descriptor instead. The files
+    // are held open for the length of the test so the numbers stay valid.
+    #[cfg(unix)]
+    let (held, descriptor_paths): (Vec<std::fs::File>, Vec<std::path::PathBuf>) = {
+        use std::os::fd::AsRawFd;
+        // Writable, because `open_once` reopens the path for writing exactly as
+        // `stream_one` does, and reopening a read-only descriptor's path for
+        // write would fail for a reason that has nothing to do with the cost
+        // being measured.
+        let held: Vec<std::fs::File> = cold
+            .iter()
+            .map(|path| {
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(path)
+                    .expect("open cold sink")
+            })
+            .collect();
+        let paths = held
+            .iter()
+            .map(|file| std::path::PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd())))
+            .collect();
+        (held, paths)
+    };
+
+    async fn open_once(dir: &std::path::Path, path: &std::path::Path) {
+        // Exactly what `stream_one` does for a platform descriptor.
+        tokio::fs::create_dir_all(dir)
+            .await
+            .expect("create_dir_all");
+        let resume_at = tokio::fs::metadata(path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(path)
+            .await
+            .expect("open");
+        file.set_len(resume_at).await.expect("set_len");
+    }
+
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    runtime.block_on(async {
+        open_once(&dir, &hot).await;
+
+        let start = Instant::now();
+        for _ in 0..SERIAL {
+            open_once(&dir, &hot).await;
+        }
+        let hot_serial_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(SERIAL);
+
+        let start = Instant::now();
+        for _ in 0..CONCURRENT_ROUNDS {
+            let mut opens = Vec::with_capacity(WINDOW as usize);
+            for _ in 0..WINDOW {
+                let dir = dir.clone();
+                let path = hot.clone();
+                opens.push(tokio::spawn(async move { open_once(&dir, &path).await }));
+            }
+            for open in opens {
+                open.await.expect("open task");
+            }
+        }
+        let hot_concurrent_us =
+            start.elapsed().as_secs_f64() * 1e6 / f64::from(CONCURRENT_ROUNDS * WINDOW);
+
+        // Each path opened exactly once, in windows of `WINDOW`, which is how
+        // `blobs::stream` meets its destinations.
+        let start = Instant::now();
+        for window in cold.chunks(WINDOW as usize) {
+            let mut opens = Vec::with_capacity(window.len());
+            for path in window {
+                let dir = dir.clone();
+                let path = path.clone();
+                opens.push(tokio::spawn(async move { open_once(&dir, &path).await }));
+            }
+            for open in opens {
+                open.await.expect("open task");
+            }
+        }
+        let cold_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(SERIAL);
+
+        println!(
+            "sink open (4 tokio::fs calls): hot serial {hot_serial_us:.0} us, \
+             hot {WINDOW}-at-a-time {hot_concurrent_us:.0} us, \
+             cold {WINDOW}-at-a-time {cold_us:.0} us"
+        );
+
+        #[cfg(unix)]
+        {
+            let start = Instant::now();
+            for window in descriptor_paths.chunks(WINDOW as usize) {
+                let mut opens = Vec::with_capacity(window.len());
+                for path in window {
+                    let dir = dir.clone();
+                    let path = path.clone();
+                    opens.push(tokio::spawn(async move { open_once(&dir, &path).await }));
+                }
+                for open in opens {
+                    open.await.expect("open task");
+                }
+            }
+            let fd_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(SERIAL);
+            println!("  via /proc/self/fd/<n>, {WINDOW} at a time: {fd_us:.0} us");
+        }
+
+        println!("  the phone measured 7016 us per file for this set");
+    });
+    // Held until here so every `/proc/self/fd/<n>` above named a live entry.
+    #[cfg(unix)]
+    drop(held);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
