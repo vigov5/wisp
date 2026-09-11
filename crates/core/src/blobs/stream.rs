@@ -66,6 +66,19 @@ const MAX_FETCH_SLICES: usize = 4;
 const FETCH_BATCH_FILES: usize = 64;
 const FETCH_BATCH_BYTES: u64 = 8 * 1024 * 1024;
 
+/// Destinations opened at once at the start of a batch.
+///
+/// Eight because that is what was measured in isolation — 2.6x a serial open
+/// per file on a Pixel 7, 5.0x on a Pixel 4 — and because each open is four
+/// hops onto tokio's blocking pool, so a wider window buys queueing rather than
+/// parallelism.
+///
+/// On the device it did better than the isolated figure predicted: `sink` fell
+/// from 2.72 s of wall to 0.69, and the 1911-file folder from 10.31 s to
+/// **8.11 s**. `body` did not move, which is the check that it was the opening
+/// and not the data.
+const OPEN_CONCURRENCY: usize = 8;
+
 /// How many pieces a collection's files are fetched in.
 ///
 /// A slice is one `GetRequest` naming many children, so it costs one dial and
@@ -140,23 +153,19 @@ const FETCH_BATCH_BYTES: u64 = 8 * 1024 * 1024;
 /// so the folder costs three round trips per batch — of the order of 200 for
 /// 1911 files, against 5733 for one request each.
 ///
-/// Two things are left, both sized:
+/// `sink` used to be the second cost — 2.72 s of that 10.31, opening one
+/// destination between one child and the next. [`OPEN_CONCURRENCY`] took it to
+/// 0.69 s and the transfer to **8.11 s**, which is where the 10.31 above comes
+/// from historically: the folder now moves at 50.3 MB/s against 26.1 before any
+/// of this.
 ///
-/// - **`sink`, 2.72 s of the 10.31**, spent opening one destination between one
-///   child and the next. Opening a cold distinct path eight at a time rather
-///   than serially is 2.6x faster per file on the Pixel 7 and 5.0x on the
-///   Pixel 4, so opening a batch's destinations up front — while its request is
-///   in flight — is the next thing worth trying. It costs up to
-///   [`FETCH_BATCH_FILES`] open handles per worker on top of the descriptors the
-///   platform already holds, which wants checking against the receiver's own
-///   budget first.
-/// - **`body` runs at 58.6 MiB/s, 74% of the 79.0 the transport gives**, so
-///   about 1.3 s of its 6.64 is the app's own per-leaf path. Not verification
-///   and not the disk: blake3 on these phones is 1245 and 939 MiB/s, and a
-///   sequential write with fsync is 239 and 96 — 21x and 4x what `body` needs.
-///   What is left in it is the 16 KiB leaf hop through a channel to the writer
-///   task, the progress bookkeeping, and the one task all the workers are
-///   polled on.
+/// What is left is `body`: 6.60 s of the 8.11, at 59.0 MiB/s against the 79.0
+/// the transport itself gives, so about 1.7 s of it is the app's own per-leaf
+/// path. Neither verification nor the disk — blake3 on these phones is 1245 and
+/// 939 MiB/s and a sequential write with fsync 239 and 96, which is 21x and 4x
+/// what `body` needs. What is in it is the 16 KiB leaf hop through a channel to
+/// the writer task, the progress bookkeeping on every leaf, and the single task
+/// all four workers are polled on.
 fn fetch_slices() -> usize {
     MAX_FETCH_SLICES
 }
@@ -575,6 +584,39 @@ async fn stream_slice(
         return Ok(());
     }
     let request = builder.build(root_hash);
+
+    // Every destination opened now, several at a time, rather than one between
+    // each child and the next.
+    //
+    // Opening one is four `tokio::fs` calls and so four hops onto the blocking
+    // pool, and serially between children it was 2.72 s of a 10.31 s transfer.
+    // Measured on the phones, opening cold distinct paths eight at a time
+    // instead of one after another is 2.6x faster per file on a Pixel 7 and
+    // 5.0x on a Pixel 4 — the pool is waiting on the platform, not working.
+    //
+    // The handles held are bounded by construction: at most
+    // [`FETCH_BATCH_FILES`] per worker and [`MAX_FETCH_SLICES`] workers, so 256
+    // whatever the folder's size. Against the 32768 descriptors these devices
+    // allow a process, and the 4096 the receiver caps its own platform
+    // destinations at, that is 13% of the limit in the worst case.
+    let mut sinks: HashMap<u64, tokio::fs::File> = HashMap::with_capacity(wanted.len());
+    let planned_opens: Vec<(u64, usize, u64)> = wanted
+        .iter()
+        .map(|(offset, (index, _, resume_at))| (*offset, *index, *resume_at))
+        .collect();
+    let mut opening = stream::iter(planned_opens)
+        .map(|(offset, index, resume_at)| async move {
+            let target = &targets[index];
+            open_sink(target, sink_path(target), resume_at)
+                .await
+                .map(|file| (offset, file))
+        })
+        .buffered_ordered(OPEN_CONCURRENCY);
+    while let Some(opened) = opening.next().await {
+        let (offset, file) = opened?;
+        sinks.insert(offset, file);
+    }
+    drop(opening);
     mark = FetchSplit::charge(&split.sink_nanos, mark);
 
     // One connection for the whole slice. On QUIC this is a bi-stream on the
@@ -617,8 +659,12 @@ async fn stream_slice(
         let file_context = || format!("{} ({hash})", target.transfer_path);
 
         let sink = sink_path(target);
-        let file = open_sink(target, sink, resume_at).await?;
-        mark = FetchSplit::charge(&split.sink_nanos, mark);
+        let Some(file) = sinks.remove(&offset) else {
+            return Err(BlobError::fetch(
+                file_context(),
+                BlobTextError::new("the provider repeated an offset already served"),
+            ));
+        };
 
         let (mut curr, _size) = child
             .next(hash)
@@ -1178,7 +1224,7 @@ mod tests {
             match index {
                 900..905 => HUGE[index - 900],
                 // The p99 tier, spread through the list.
-                _ if index % 73 == 0 => TAIL,
+                _ if index.is_multiple_of(73) => TAIL,
                 _ => SMALL,
             }
         }
