@@ -5133,7 +5133,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-app"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -5156,7 +5156,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-core"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "bao-tree",
  "base64",
@@ -5190,7 +5190,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-wire"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "base64",
  "bincode",

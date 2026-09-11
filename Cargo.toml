@@ -73,7 +73,7 @@ debug = "full"
 
 [workspace.package]
 edition = "2024"
-version = "2.4.0"
+version = "2.5.0"
 license = "MIT"
 
 [workspace.dependencies]
