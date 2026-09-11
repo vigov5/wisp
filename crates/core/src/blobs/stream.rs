@@ -109,26 +109,54 @@ const FETCH_BATCH_BYTES: u64 = 8 * 1024 * 1024;
 /// against a `/proc/self/fd/<n>` naming a distinct file, so the descriptor-dup
 /// trick that fixed the send side does not apply here).
 ///
-/// Several workers rather than one request for everything, because a single
-/// stream would have to fill the link on its own and that rate is not known:
-/// raw single-stream TCP on this rig is 67.7 MiB/s, but this path measured
-/// 18.7 MiB/s before the writer task existed and has not been measured since.
+/// Four workers, and the transport agrees on the number. Raw throughput
+/// between the test phones, fast direction
+/// (`baselines::baseline_lan_stream_throughput`):
 ///
-/// Four, measured: 10.31 s over three runs (10,198 / 10,504 / 10,229 ms), with
-/// `body` about three quarters of the wall.
+/// | streams | 1 | 2 | 4 | 8 |
+/// |---|---|---|---|---|
+/// | MiB/s | 63.6 | 77.3 | **79.0** | 77.1 |
 ///
-/// **Eight was tried and is worse** — 10,973 ms, and the data phase fell from
-/// 80% of the link's raw rate to 72%. The whole of `body` nearly doubled when
-/// the streams did (26.6 s to 58.1 s summed), which is what it looks like when
-/// four already saturate the link: the extra streams divide the same bandwidth
-/// and add contention on the local work as well (`sink` 2.7 s to 2.95 s of
-/// wall). Do not raise it on the theory that more parallelism hides latency —
-/// the per-file round trips this used to pay are gone, so there is no longer
-/// latency there to hide.
+/// So the link's aggregate ceiling is reached at two to four and falls off
+/// after, which is exactly what the app measures: four workers fetch the
+/// 1911-file folder in 10.31 s over three runs (10,198 / 10,504 / 10,229 ms)
+/// and **eight in 10,973 ms**. Do not raise it on the theory that more
+/// parallelism hides latency — the per-file round trips are gone, so there is
+/// no latency left there to hide, and the extra streams only divide the same
+/// bandwidth while adding contention on the per-file work (`sink` 2.7 s to
+/// 2.95 s of wall).
+///
+/// The 18.7 MiB/s figure this comment used to cite for a single stream is
+/// obsolete by 3.4x: it predates the writer task.
+///
+/// What the workers buy is cover for the per-file work rather than bandwidth —
+/// one stream alone (63.6) already beats the 37.8 MiB/s the whole fetch
+/// averages. In the *slow* direction concurrency buys nothing at all: 8.5 MiB/s
+/// on one stream against 7.8 on four, a link-bound path where four workers are
+/// 8% worse. Not enough to change the default, since that direction is bound by
+/// the link whatever we do, but it is why this is a ceiling and not a target.
 ///
 /// Each worker pulls [`FETCH_BATCH_FILES`]-sized batches from a shared cursor,
 /// so the folder costs three round trips per batch — of the order of 200 for
 /// 1911 files, against 5733 for one request each.
+///
+/// Two things are left, both sized:
+///
+/// - **`sink`, 2.72 s of the 10.31**, spent opening one destination between one
+///   child and the next. Opening a cold distinct path eight at a time rather
+///   than serially is 2.6x faster per file on the Pixel 7 and 5.0x on the
+///   Pixel 4, so opening a batch's destinations up front — while its request is
+///   in flight — is the next thing worth trying. It costs up to
+///   [`FETCH_BATCH_FILES`] open handles per worker on top of the descriptors the
+///   platform already holds, which wants checking against the receiver's own
+///   budget first.
+/// - **`body` runs at 58.6 MiB/s, 74% of the 79.0 the transport gives**, so
+///   about 1.3 s of its 6.64 is the app's own per-leaf path. Not verification
+///   and not the disk: blake3 on these phones is 1245 and 939 MiB/s, and a
+///   sequential write with fsync is 239 and 96 — 21x and 4x what `body` needs.
+///   What is left in it is the 16 KiB leaf hop through a channel to the writer
+///   task, the progress bookkeeping, and the one task all the workers are
+///   polled on.
 fn fetch_slices() -> usize {
     MAX_FETCH_SLICES
 }

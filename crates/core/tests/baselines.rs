@@ -402,6 +402,17 @@ fn baseline_sink_open_blocking_ops() {
         let hot_concurrent_us =
             start.elapsed().as_secs_f64() * 1e6 / f64::from(CONCURRENT_ROUNDS * WINDOW);
 
+        // Serially, one distinct path after another — which is what
+        // `stream_slice` does today: a child arrives, its destination is
+        // opened, its bytes are written, then the next child. This is the
+        // number to beat, and the gap to the concurrent figure below is the
+        // headroom for opening a batch's destinations up front instead.
+        let start = Instant::now();
+        for path in &cold {
+            open_once(&dir, path).await;
+        }
+        let cold_serial_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(SERIAL);
+
         // Each path opened exactly once, in windows of `WINDOW`, which is how
         // `blobs::stream` meets its destinations.
         let start = Instant::now();
@@ -420,8 +431,13 @@ fn baseline_sink_open_blocking_ops() {
 
         println!(
             "sink open (4 tokio::fs calls): hot serial {hot_serial_us:.0} us, \
-             hot {WINDOW}-at-a-time {hot_concurrent_us:.0} us, \
-             cold {WINDOW}-at-a-time {cold_us:.0} us"
+             hot {WINDOW}-at-a-time {hot_concurrent_us:.0} us"
+        );
+        println!(
+            "  cold, one path each: serial {cold_serial_us:.0} us, \
+             {WINDOW}-at-a-time {cold_us:.0} us  \
+             -> {:.1}x headroom for opening a batch up front",
+            cold_serial_us / cold_us.max(1.0)
         );
 
         #[cfg(unix)]
@@ -449,4 +465,150 @@ fn baseline_sink_open_blocking_ops() {
     drop(held);
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// --- one stream over the real link ------------------------------------------
+//
+// `blobs::stream` fetches a collection over four connections at once, and that
+// measured 80% of this rig's raw ceiling while eight measured 72%. What it
+// never established is what *one* stream can do through this transport: the
+// only figure on record, 18.7 MiB/s, predates the writer task that fixed the
+// seek-per-leaf problem. Until that is known, "four" is a number that works
+// rather than a number that is needed.
+//
+// Two roles, one binary, driven by the environment, because the interesting
+// answer is between two phones and not over loopback:
+//
+// `WISP_WIRE_STREAMS` (both sides, default 1) says how many at once, which is
+// what says whether four workers are near the link's aggregate ceiling or
+// nowhere near it.
+//
+// ```text
+// # on the server phone
+// WISP_WIRE_BENCH=serve WISP_WIRE_STREAMS=4 ./wispbase --ignored --nocapture baseline_lan_stream_throughput
+// # on the client phone, with the port the server printed
+// WISP_WIRE_BENCH=fetch WISP_WIRE_STREAMS=4 WISP_WIRE_TARGET=192.168.1.126:41234 \
+//     ./wispbase --ignored --nocapture baseline_lan_stream_throughput
+// ```
+//
+// Both sides derive their keys from fixed seeds, so the pinned-peer handshake
+// completes with nothing exchanged out of band.
+const WIRE_BENCH_BYTES: u64 = 512 * 1024 * 1024;
+const WIRE_BENCH_CHUNK: usize = 256 * 1024;
+const WIRE_SERVER_SEED: [u8; 32] = [0x51; 32];
+const WIRE_CLIENT_SEED: [u8; 32] = [0x52; 32];
+
+#[test]
+#[ignore = "two-device measurement; see the comment for how to drive it"]
+fn baseline_lan_stream_throughput() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use wisp_core::lan_transport;
+
+    let Ok(role) = std::env::var("WISP_WIRE_BENCH") else {
+        println!("set WISP_WIRE_BENCH=serve|fetch; skipping");
+        return;
+    };
+    // Both sides must agree, since the server has to accept exactly as many as
+    // the client dials.
+    let streams: usize = std::env::var("WISP_WIRE_STREAMS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1)
+        .max(1);
+    let per_stream = WIRE_BENCH_BYTES / streams as u64;
+    let server_secret = iroh::SecretKey::from_bytes(&WIRE_SERVER_SEED);
+    let client_secret = iroh::SecretKey::from_bytes(&WIRE_CLIENT_SEED);
+
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    runtime.block_on(async move {
+        match role.as_str() {
+            "serve" => {
+                let listener = TcpListener::bind("0.0.0.0:0").await.expect("bind");
+                let port = listener.local_addr().expect("addr").port();
+                println!("WIRE_BENCH_PORT={port} streams={streams}");
+                // Flushed so the orchestrating side can read the port before
+                // the accept blocks.
+                use std::io::Write as _;
+                std::io::stdout().flush().ok();
+
+                let mut writers = Vec::with_capacity(streams);
+                for _ in 0..streams {
+                    let (tcp, _peer) = listener.accept().await.expect("accept");
+                    tcp.set_nodelay(true).ok();
+                    let secret = server_secret.clone();
+                    let expected = client_secret.public();
+                    writers.push(tokio::spawn(async move {
+                        let (mut stream, identity) = lan_transport::accept(tcp, &secret)
+                            .await
+                            .expect("handshake");
+                        assert_eq!(
+                            identity, expected,
+                            "only the bench client should reach this port"
+                        );
+                        // One buffer, reused: the point is the link, not the
+                        // allocator.
+                        let chunk = vec![0x5au8; WIRE_BENCH_CHUNK];
+                        let mut sent = 0u64;
+                        while sent < per_stream {
+                            let take = (per_stream - sent).min(WIRE_BENCH_CHUNK as u64) as usize;
+                            stream.write_all(&chunk[..take]).await.expect("write");
+                            sent += take as u64;
+                        }
+                        stream.flush().await.expect("flush");
+                        stream.shutdown().await.ok();
+                        sent
+                    }));
+                }
+                let mut sent = 0u64;
+                for writer in writers {
+                    sent += writer.await.expect("writer task");
+                }
+                println!("sent {sent} bytes over {streams} stream(s)");
+            }
+            "fetch" => {
+                let target: std::net::SocketAddr = std::env::var("WISP_WIRE_TARGET")
+                    .expect("WISP_WIRE_TARGET=ip:port")
+                    .parse()
+                    .expect("ip:port");
+                // Dialled before the clock starts: the dial and handshake are
+                // measured on their own elsewhere and would otherwise be
+                // charged to throughput.
+                let mut dialled = Vec::with_capacity(streams);
+                for _ in 0..streams {
+                    dialled.push(
+                        lan_transport::dial(target, &client_secret, server_secret.public())
+                            .await
+                            .expect("client dial"),
+                    );
+                }
+                let started = Instant::now();
+                let mut readers = Vec::with_capacity(streams);
+                for mut stream in dialled {
+                    readers.push(tokio::spawn(async move {
+                        let mut buf = vec![0u8; WIRE_BENCH_CHUNK];
+                        let mut read_total = 0u64;
+                        loop {
+                            let n = stream.read(&mut buf).await.expect("read");
+                            if n == 0 {
+                                break;
+                            }
+                            read_total += n as u64;
+                        }
+                        read_total
+                    }));
+                }
+                let mut read_total = 0u64;
+                for reader in readers {
+                    read_total += reader.await.expect("reader task");
+                }
+                let secs = started.elapsed().as_secs_f64();
+                println!(
+                    "{streams} stream(s): {read_total} bytes in {secs:.2} s = {:.1} MiB/s",
+                    mib_per_sec(read_total as usize, secs)
+                );
+            }
+            other => panic!("WISP_WIRE_BENCH must be serve or fetch, got {other:?}"),
+        }
+    });
 }
