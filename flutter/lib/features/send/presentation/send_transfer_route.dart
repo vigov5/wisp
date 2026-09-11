@@ -311,6 +311,17 @@ class _TransferStateCard extends StatelessWidget {
     final Widget subtitle;
     if (sendFinishingUp) {
       subtitle = buildFinalizingLine('Waiting for the other device to save');
+    } else if (state case SendStateTransferring(:final transfer)
+        when transfer.phase == SendTransferPhase.waitingForDecision &&
+            manifestItems.length >= preparingHintFileCount) {
+      // Ahead of the speed line on purpose: there is no speed yet, and that
+      // branch only needs a non-zero total, so it was rendering an empty one.
+      //
+      // The mirror of the receiver's "Preparing to receive…", and the reason
+      // this end says anything at all: the recipient creates one destination
+      // per file *before* answering, so a 1911-file folder leaves the sender
+      // sitting on "Waiting" for 7-15 s with nothing to explain it.
+      subtitle = buildRecipientPreparingLine();
     } else if (progress != null && state is SendStateTransferring) {
       subtitle = buildSpeedLine(
         speedLabel: progress.speedLabel ?? '',

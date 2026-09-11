@@ -135,7 +135,19 @@ bool isFinishingUp({
 }) => totalBytes > BigInt.zero && bytesTransferred >= totalBytes;
 
 /// The line shown while that finishing work runs.
-Widget buildFinalizingLine(String detail) {
+Widget buildFinalizingLine(String detail) =>
+    buildBackgroundWorkLine(detail: detail, emphasis: 'keep Wisp open');
+
+/// A subtitle for work the transfer is doing that has no speed to report:
+/// [detail] in muted text, then [emphasis] in the ink colour so the part the
+/// user has to act on carries the weight.
+///
+/// Shared by the two ends of a transfer that used to say nothing at all — the
+/// stretch before the first byte, and the stretch after the last.
+Widget buildBackgroundWorkLine({
+  required String detail,
+  required String emphasis,
+}) {
   return Builder(
     builder: (context) => Text.rich(
       TextSpan(
@@ -150,7 +162,7 @@ Widget buildFinalizingLine(String detail) {
             ),
           ),
           TextSpan(
-            text: '  ·  keep Wisp open',
+            text: '  ·  $emphasis',
             style: wispSans(
               fontSize: 14,
               fontWeight: FontWeight.w700,
@@ -164,6 +176,37 @@ Widget buildFinalizingLine(String detail) {
     ),
   );
 }
+
+/// The line shown while the receiver is creating its destinations — the seconds
+/// between Accept and the first byte, during which the receiver has answered
+/// nothing yet and the sender is still waiting on it.
+///
+/// Counts files rather than bytes because that is what the work is: one
+/// MediaStore insert and one open per file, the same cost whatever its size.
+Widget buildPreparingToReceiveLine({
+  required int created,
+  required int total,
+}) => buildBackgroundWorkLine(
+  detail: 'Preparing to receive… ($created/$total)',
+  emphasis: 'keep Wisp open',
+);
+
+/// Files above which the sender warns that a wait on the recipient is normal.
+///
+/// The sender cannot tell the two halves of that wait apart — the recipient may
+/// not have tapped yet, or may have tapped and be creating one destination per
+/// file, because the answer only goes out once that is done. So the line has to
+/// be true either way, and it is only worth saying when the second half is
+/// long: preparation costs a few milliseconds a file, so a couple of hundred
+/// files is a second or two and the wait is simply the person deciding.
+const int preparingHintFileCount = 200;
+
+/// The sender's counterpart, shown while it waits on a large folder's
+/// recipient. Claims nothing about whether they have accepted yet.
+Widget buildRecipientPreparingLine() => buildBackgroundWorkLine(
+  detail: 'A folder this large takes the other device a moment to prepare',
+  emphasis: 'keep Wisp open',
+);
 
 Widget buildSpeedLine({required String speedLabel, required String? etaLabel}) {
   return Builder(

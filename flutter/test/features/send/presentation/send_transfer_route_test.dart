@@ -128,6 +128,64 @@ rust_transfer.TransferPlanData _buildPlan() {
   );
 }
 
+/// A plan with [files] entries, for the folder-size thresholds.
+rust_transfer.TransferPlanData _buildLargePlan(int files) {
+  return rust_transfer.TransferPlanData(
+    sessionId: 'session-1',
+    totalFiles: files,
+    totalBytes: BigInt.from(files * 1024),
+    files: List.generate(
+      files,
+      (index) => rust_transfer.TransferPlanFileData(
+        id: index,
+        path: '/tmp/photos/dir${index % 8}/file$index.bin',
+        size: BigInt.from(1024),
+      ),
+    ),
+  );
+}
+
+Future<void> _pumpWaitingOnRecipient(
+  WidgetTester tester,
+  rust_transfer.TransferPlanData plan,
+) async {
+  final fakeSource = FakeSendTransferSource();
+  final container = _buildContainer(fakeSource);
+  addTearDown(container.dispose);
+  addTearDown(fakeSource.close);
+
+  final controller = container.read(sendControllerProvider.notifier);
+  controller.beginDraft([SendPickedFile.directory('/tmp/photos')]);
+  controller.updateDestinationCode('ABC123');
+  await tester.pump(const Duration(seconds: 1));
+  await tester.pump();
+
+  final request = controller.buildSendRequest()!;
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp.router(routerConfig: _buildRouter(request)),
+    ),
+  );
+  await tester.pump(const Duration(milliseconds: 600));
+  await tester.pump();
+
+  fakeSource.emit(
+    SendTransferUpdate(
+      phase: SendTransferUpdatePhase.waitingForDecision,
+      destinationLabel: 'Laptop',
+      statusMessage: 'Waiting for confirmation.',
+      itemCount: BigInt.from(plan.totalFiles),
+      totalSize: plan.totalBytes,
+      bytesSent: BigInt.zero,
+      totalBytes: plan.totalBytes,
+      plan: plan,
+    ),
+  );
+  await tester.pump(const Duration(milliseconds: 600));
+  await tester.pump();
+}
+
 rust_transfer.TransferSnapshotData _buildSnapshot({
   required rust_transfer.TransferPhaseData phase,
   required BigInt bytesTransferred,
@@ -149,6 +207,37 @@ rust_transfer.TransferSnapshotData _buildSnapshot({
 }
 
 void main() {
+  testWidgets('a large folder explains the wait on the recipient', (
+    tester,
+  ) async {
+    // The recipient creates one destination per file *before* answering, so
+    // this end sits on "Waiting" for 7-15 s on a 1911-file folder with nothing
+    // to explain it. The line claims nothing about whether they have accepted:
+    // this end cannot tell that apart from a person still deciding.
+    await _pumpWaitingOnRecipient(tester, _buildLargePlan(400));
+
+    expect(find.textContaining('takes the other device a moment'), findsOne);
+    expect(find.textContaining('keep Wisp open'), findsOne);
+    // The label stays "Waiting" — the sub-step is not a new state.
+    expect(find.text('WAITING'), findsWidgets);
+  });
+
+  testWidgets('a small transfer does not explain a wait that is just a person', (
+    tester,
+  ) async {
+    // Preparation costs a few milliseconds a file, so two files is instant and
+    // the only thing a wait can mean is that nobody has tapped yet. Saying
+    // "this takes a moment to prepare" there would be false.
+    await _pumpWaitingOnRecipient(tester, _buildPlan());
+
+    expect(
+      find.textContaining('takes the other device a moment'),
+      findsNothing,
+    );
+    expect(find.textContaining('keep Wisp open'), findsNothing);
+    expect(find.text('WAITING'), findsWidgets);
+  });
+
   testWidgets(
     'send transfer route shows a tree preview before sending and a live list after',
     (WidgetTester tester) async {

@@ -8,6 +8,7 @@ import 'package:app/features/transfers/application/identity.dart';
 import 'package:app/features/transfers/application/manifest.dart';
 import 'package:app/features/transfers/application/state.dart';
 import 'package:app/features/transfers/presentation/widgets/receiving_card.dart';
+import 'package:app/platform/android_media_store.dart';
 
 import '../../../support/test_overrides.dart';
 
@@ -55,6 +56,58 @@ void main() {
     );
     await tester.pump();
   }
+
+  testWidgets('before the first byte the card says what it is preparing', (
+    tester,
+  ) async {
+    // The mirror of the finishing notice, at the other end of the transfer.
+    // Accepting a folder creates one destination per file *before* the answer
+    // goes back to the sender — 7-15 s for 1911 files — so this card is
+    // already up, with no bytes to show, while the sender still says
+    // "Waiting". Users read the stillness as a missed tap and tapped Save
+    // again.
+    addTearDown(() => AndroidReceiveDestinations.prepareProgress.value = null);
+    AndroidReceiveDestinations.prepareProgress.value =
+        const AndroidReceivePrepareProgress(created: 320, total: 1911);
+
+    await pumpCard(
+      tester,
+      TransferTransferProgress(
+        bytesTransferred: BigInt.zero,
+        totalBytes: BigInt.from(2048),
+        completedFiles: 0,
+        totalFiles: 1911,
+      ),
+    );
+
+    expect(find.textContaining('Preparing to receive… (320/1911)'), findsOne);
+    expect(find.textContaining('keep Wisp open'), findsOne);
+    // The label above it is deliberately untouched: the phase is still the
+    // receive, and a second status word for a sub-step reads as a new state.
+    expect(find.text('RECEIVING'), findsWidgets);
+  });
+
+  testWidgets('with nothing preparing the card keeps its plain subtitle', (
+    tester,
+  ) async {
+    // Zero bytes is not by itself a preparing state — a desktop receiver, or
+    // the moment after preparation finishes, has no count to show.
+    AndroidReceiveDestinations.prepareProgress.value = null;
+
+    await pumpCard(
+      tester,
+      TransferTransferProgress(
+        bytesTransferred: BigInt.zero,
+        totalBytes: BigInt.from(2048),
+        completedFiles: 0,
+        totalFiles: 1,
+      ),
+    );
+
+    expect(find.textContaining('Preparing to receive'), findsNothing);
+    expect(find.textContaining('keep Wisp open'), findsNothing);
+    expect(find.text('Receiving files...'), findsOne);
+  });
 
   testWidgets('mid-transfer shows the speed, not a finishing notice', (
     tester,

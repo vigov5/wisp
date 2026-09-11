@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/state.dart';
+import '../../../../platform/android_media_store.dart';
 import '../../../saved_devices/application/device_display_name.dart';
 import 'package:app/features/send/presentation/widgets/recipient_avatar.dart';
 import 'relay_tip_note.dart';
@@ -46,6 +47,27 @@ class ReceivingCard extends ConsumerWidget {
     final Widget subtitle;
     if (finishingUp) {
       subtitle = buildFinalizingLine('Saving files to this device');
+    } else if (progress.bytesTransferred == BigInt.zero) {
+      // Before the first byte the receiver may still be creating one
+      // destination per file, which it does *before* answering the sender —
+      // so this card is already up while the sender still says "waiting".
+      // Rebuilt from the notifier rather than the transfer state: the count
+      // comes straight off the platform channel and ticks ~120 times, which
+      // has no business going through the session state.
+      subtitle = ValueListenableBuilder<AndroidReceivePrepareProgress?>(
+        valueListenable: AndroidReceiveDestinations.prepareProgress,
+        builder: (context, preparing, child) => preparing == null
+            ? child!
+            : buildPreparingToReceiveLine(
+                created: preparing.created,
+                total: preparing.total,
+              ),
+        child: buildSubtitleText(
+          offer.statusMessage.trim().isEmpty
+              ? 'Receiving files...'
+              : offer.statusMessage.trim(),
+        ),
+      );
     } else if (progress.speedLabel != null) {
       subtitle = buildSpeedLine(
         speedLabel: progress.speedLabel!,

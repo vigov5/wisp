@@ -260,8 +260,54 @@ class AndroidReceiveDestination {
 /// copies of the transfer on disk at once. A MediaStore entry marked pending is
 /// invisible to other apps until it is published, which is exactly the
 /// guarantee a partially written file needs.
+/// How far the receiver has got through creating its destinations.
+///
+/// Files, not bytes: nothing is copied in this phase, each entry is a
+/// MediaStore insert plus an open, and it costs the same whatever the file's
+/// size.
+@immutable
+class AndroidReceivePrepareProgress {
+  const AndroidReceivePrepareProgress({
+    required this.created,
+    required this.total,
+  });
+
+  final int created;
+  final int total;
+
+  /// Progress in [0, 1], or null before the total is known.
+  double? get fraction => total > 0 ? (created / total).clamp(0.0, 1.0) : null;
+}
+
 extension AndroidReceiveDestinations on AndroidMediaStore {
   static const _channel = MethodChannel('dev.vigov5.wisp/file_picker');
+
+  /// Its own channel, because `setMethodCallHandler` replaces the handler on a
+  /// channel and [AndroidFilePicker] already owns the one above — wiring this
+  /// there would silently stop the picker's own progress events.
+  static const _progressChannel = MethodChannel(
+    'dev.vigov5.wisp/receive_progress',
+  );
+
+  /// Live progress of [create], or null when it is not running. Watch this to
+  /// say what the seconds between Accept and the first byte are being spent on.
+  static final ValueNotifier<AndroidReceivePrepareProgress?> prepareProgress =
+      ValueNotifier<AndroidReceivePrepareProgress?>(null);
+
+  static bool _progressWired = false;
+
+  static void _wireProgress() {
+    if (_progressWired || !Platform.isAndroid) return;
+    _progressWired = true;
+    _progressChannel.setMethodCallHandler((call) async {
+      if (call.method != 'onPrepareProgress') return;
+      final args = (call.arguments as Map).cast<dynamic, dynamic>();
+      prepareProgress.value = AndroidReceivePrepareProgress(
+        created: (args['created'] as num?)?.toInt() ?? 0,
+        total: (args['total'] as num?)?.toInt() ?? 0,
+      );
+    });
+  }
 
   /// Creates one pending destination per [transferPaths] entry.
   ///
@@ -272,6 +318,13 @@ extension AndroidReceiveDestinations on AndroidMediaStore {
     List<String> transferPaths,
   ) async {
     if (!Platform.isAndroid || transferPaths.isEmpty) return const [];
+    _wireProgress();
+    // Set before the call so the first frame after Accept already says what is
+    // happening, rather than waiting for the native side's first tick.
+    prepareProgress.value = AndroidReceivePrepareProgress(
+      created: 0,
+      total: transferPaths.length,
+    );
     try {
       final raw = await _channel.invokeMethod<List<dynamic>>(
         'createReceiveDestinations',
@@ -293,6 +346,10 @@ extension AndroidReceiveDestinations on AndroidMediaStore {
     } catch (error) {
       debugPrint('[receiver] could not create destinations: $error');
       return const [];
+    } finally {
+      // Cleared here rather than on a terminal native event, so a failure or a
+      // platform that answers with nothing leaves no stale line on screen.
+      prepareProgress.value = null;
     }
   }
 

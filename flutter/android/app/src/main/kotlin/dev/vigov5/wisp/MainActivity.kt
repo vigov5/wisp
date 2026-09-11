@@ -36,6 +36,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
@@ -59,6 +60,12 @@ class MainActivity : FlutterFragmentActivity() {
         private const val SHARE_CHANNEL = "dev.vigov5.wisp/share_intent"
         private const val USB_TETHER_CHANNEL = "dev.vigov5.wisp/usb_tether"
         private const val MULTICAST_CHANNEL = "dev.vigov5.wisp/multicast_lock"
+
+        // Its own channel rather than a second handler on [CHANNEL]:
+        // `setMethodCallHandler` replaces whatever was there, so wiring receive
+        // progress onto the picker's channel would silently kill the picker's
+        // own progress events.
+        private const val RECEIVE_PROGRESS_CHANNEL = "dev.vigov5.wisp/receive_progress"
         private const val MULTICAST_TAG = "WispMdns"
         private const val REQUEST_CODE_PICK_FILES = 2001
         private const val REQUEST_CODE_PICK_FOLDER = 2002
@@ -135,6 +142,9 @@ class MainActivity : FlutterFragmentActivity() {
     // The file_picker channel, kept so the copy coroutine can push
     // "onPickProgress" events back to Flutter while a pick is streaming.
     private var fileChannel: MethodChannel? = null
+
+    // Outbound only: Dart listens, nothing calls in.
+    private var receiveProgressChannel: MethodChannel? = null
 
     private var pendingResult: MethodChannel.Result? = null
     private var pendingFolderResult: MethodChannel.Result? = null
@@ -430,6 +440,11 @@ class MainActivity : FlutterFragmentActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             KEEPALIVE_CHANNEL,
         ).setMethodCallHandler { call, result -> handleKeepaliveCall(call, result) }
+
+        receiveProgressChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            RECEIVE_PROGRESS_CHANNEL,
+        )
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -1355,6 +1370,14 @@ class MainActivity : FlutterFragmentActivity() {
         val created = arrayOfNulls<Map<String, Any?>>(paths.size)
         val slots = Semaphore(DESTINATION_CONCURRENCY)
         val giveUp = AtomicBoolean(false)
+        // Reported because this is the one stretch of a transfer where both
+        // screens lie: the receiver has answered nothing yet, so the sender
+        // still says it is waiting, while the receiver has already flipped to
+        // its progress card with no bytes to show.  Seven to fifteen seconds of
+        // it for 1911 files, and the user taps Accept again thinking the first
+        // tap missed.
+        val done = AtomicInteger(0)
+        emitReceivePrepareProgress(0, paths.size)
         try {
             coroutineScope {
                 paths.forEachIndexed { index, path ->
@@ -1367,6 +1390,10 @@ class MainActivity : FlutterFragmentActivity() {
                             if (giveUp.get()) return@withPermit
                             val entry = createOneDestination(path)
                             if (entry == null) giveUp.set(true) else created[index] = entry
+                            val finished = done.incrementAndGet()
+                            if (finished % PROGRESS_EMIT_FILES == 0) {
+                                emitReceivePrepareProgress(finished, paths.size)
+                            }
                         }
                     }
                 }
@@ -1385,6 +1412,9 @@ class MainActivity : FlutterFragmentActivity() {
             "created ${paths.size} pending destination(s) in " +
                 "${SystemClock.elapsedRealtime() - started} ms",
         )
+        // The last partial batch never reaches the modulo above, so the UI
+        // would otherwise sit at 1904 of 1911 until the transfer started.
+        emitReceivePrepareProgress(paths.size, paths.size)
         return created.map { it!! }
     }
 
@@ -1560,6 +1590,19 @@ class MainActivity : FlutterFragmentActivity() {
                     "index" to index,
                     "count" to count,
                 ),
+            )
+        }
+    }
+
+    // Posts destination-creation progress to Flutter on the main thread.
+    //
+    // Files, not bytes: nothing is being copied here, each one is a MediaStore
+    // insert plus an open, and the cost is per file whatever its size.
+    private fun emitReceivePrepareProgress(created: Int, total: Int) {
+        runOnUiThread {
+            receiveProgressChannel?.invokeMethod(
+                "onPrepareProgress",
+                mapOf("created" to created, "total" to total),
             )
         }
     }
