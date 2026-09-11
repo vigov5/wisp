@@ -38,6 +38,52 @@ void main() {
     expect(updated.offer?.manifest.totalSizeBytes, BigInt.from(3072));
   });
 
+  test('a re-emitted offer event does not reopen a decided offer', () async {
+    final source = FakeReceiverServiceSource();
+    final container = ProviderContainer(
+      overrides: [transfersServiceSourceProvider.overrideWithValue(source)],
+    );
+    addTearDown(container.dispose);
+
+    // Read first so the service subscribes before any event is emitted.
+    expect(container.read(transfersServiceProvider).offer, isNull);
+
+    source.emitIncomingOffer(senderName: 'Maya');
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      container.read(transfersServiceProvider).phase,
+      TransferSessionPhase.offerPending,
+    );
+
+    await container.read(transfersServiceProvider.notifier).acceptOffer();
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      container.read(transfersServiceProvider).phase,
+      TransferSessionPhase.receiving,
+    );
+
+    // What the UI actually receives seconds later: the bridge answers a
+    // connection-path change by cloning the cached offer event, which until the
+    // transfer starts is still the OfferReady one. Accepting a large folder
+    // spends seconds creating destinations before Rust hears the answer, and
+    // the path watcher polls throughout, so this arrived while the user was
+    // looking at the progress card — and put the Save button back in front of
+    // them.
+    source.emitIncomingOffer(senderName: 'Maya');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      container.read(transfersServiceProvider).phase,
+      TransferSessionPhase.receiving,
+      reason: 'a late offer event must not reopen a decision already made',
+    );
+    expect(
+      source.respondToOfferCalls,
+      1,
+      reason: 'and the user must not be able to answer the same offer twice',
+    );
+  });
+
   test('transfers service shows a connecting state before the offer', () async {
     final source = FakeReceiverServiceSource();
     final container = ProviderContainer(

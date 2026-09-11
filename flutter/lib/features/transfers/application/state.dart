@@ -19,6 +19,22 @@ enum TransferSessionPhase {
   failed,
 }
 
+extension TransferSessionPhaseDecision on TransferSessionPhase {
+  /// Whether the user has already accepted or declined this offer.
+  ///
+  /// A late offer event must not put the offer card back on screen once it has
+  /// been acted on — see the `offerReady` case in `TransfersService`.
+  bool get isPastDecision => switch (this) {
+    TransferSessionPhase.receiving ||
+    TransferSessionPhase.completed ||
+    TransferSessionPhase.cancelled ||
+    TransferSessionPhase.failed => true,
+    TransferSessionPhase.idle ||
+    TransferSessionPhase.connecting ||
+    TransferSessionPhase.offerPending => false,
+  };
+}
+
 /// How the receiver handled an inline-text offer. The text already arrived in
 /// the offer, so there's nothing to transfer: [copy] lands it on the clipboard
 /// and dismisses straight back to idle (the toast is the confirmation), while

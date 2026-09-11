@@ -52,6 +52,24 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
     _subscription = source.watchIncomingTransfers().listen((event) {
       switch (event.phase) {
         case rust_receiver.ReceiverTransferPhase.offerReady:
+          // The bridge re-emits the *cached* offer event every time the
+          // connection path changes — `api/receiver.rs` handles
+          // `ConnectionPathChanged` by cloning `last_event` with the new path —
+          // and until the transfer starts that cached event is still the
+          // OfferReady one. Applied unconditionally it put the Save card back
+          // on screen seconds after the user had tapped it: accepting a
+          // 1911-file folder spends ~8 s creating destinations before Rust even
+          // hears the answer, and the path watcher polls throughout. The user
+          // tapped Save again, and only `_acceptInFlight` stopped that second
+          // accept from tearing down the transfer the first had started.
+          //
+          // Same reasoning as the `connecting` guard below: a late offer event
+          // must never regress a decision the user has already made. The path
+          // itself is not lost — the `receiving` case refreshes it from every
+          // progress event.
+          if (_acceptInFlight || state.phase.isPastDecision) {
+            return;
+          }
           _incomingOffer = _mapIncomingOffer(event);
           state = TransferSessionState.offerPending(offer: _incomingOffer!);
           return;
