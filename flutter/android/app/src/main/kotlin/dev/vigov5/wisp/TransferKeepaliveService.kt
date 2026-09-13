@@ -35,6 +35,34 @@ class TransferKeepaliveService : Service() {
         @Volatile
         private var foreground: Boolean = false
 
+        /// True from the moment `startForegroundService()` is called until the
+        /// service is destroyed — which is a *wider* window than [foreground].
+        ///
+        /// The gap between the two is where the process gets killed. The
+        /// framework arms its "must call startForeground() within ~5s" deadline
+        /// at `startForegroundService()`, but `onStartCommand` (where we satisfy
+        /// it) has not necessarily run yet. A `stopService()` landing inside
+        /// that gap destroys the service without ever satisfying the deadline,
+        /// and the framework still kills the process for missing it.
+        ///
+        /// Rare in ordinary use, because `onStartCommand` normally runs within
+        /// milliseconds. Reliable to hit when a transfer starts and ends almost
+        /// at once — accepting an offer whose sender has already cancelled does
+        /// exactly that.
+        @Volatile
+        private var startRequested: Boolean = false
+
+        /// Records that a start has been asked for. Call immediately before
+        /// `startForegroundService()`.
+        fun noteStartRequested() {
+            startRequested = true
+        }
+
+        /// True while a stop must be routed through [ACTION_STOP] rather than
+        /// `stopService()`, so `onStartCommand` gets to call `startForeground()`
+        /// before the service goes away.
+        fun needsForegroundHandshakeBeforeStop(): Boolean = startRequested
+
         /// Re-posts the ongoing notification with new text for an
         /// already-running service, WITHOUT going through
         /// `startForegroundService()`.
@@ -168,6 +196,7 @@ class TransferKeepaliveService : Service() {
 
     override fun onDestroy() {
         foreground = false
+        startRequested = false
         releaseLocks()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {

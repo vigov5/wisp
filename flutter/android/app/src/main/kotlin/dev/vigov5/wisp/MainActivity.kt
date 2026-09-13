@@ -633,13 +633,34 @@ class MainActivity : FlutterFragmentActivity() {
                     val intent = Intent(this, TransferKeepaliveService::class.java)
                         .putExtra(TransferKeepaliveService.EXTRA_TITLE, title)
                         .putExtra(TransferKeepaliveService.EXTRA_BODY, body)
+                    TransferKeepaliveService.noteStartRequested()
                     ContextCompat.startForegroundService(this, intent)
                 }
                 result.success(null)
             }
             "stop" -> {
                 applyKeepScreenOn(false)
-                stopService(Intent(this, TransferKeepaliveService::class.java))
+                // `stopService()` cannot be used on a service that was launched
+                // with `startForegroundService()`: the framework's "must call
+                // startForeground() within ~5s" deadline is armed at launch, and
+                // destroying the service before `onStartCommand` has satisfied it
+                // is still a miss — a hard process kill with
+                // ForegroundServiceDidNotStartInTimeException.
+                //
+                // Normally invisible, because `onStartCommand` runs in
+                // milliseconds. It bites when a transfer starts and stops almost
+                // at once: accepting an offer whose sender already cancelled
+                // crashed the receiver on the tap.
+                //
+                // ACTION_STOP goes through `onStartCommand`, which calls
+                // `startForeground()` and only then `stopSelf()`.
+                if (TransferKeepaliveService.needsForegroundHandshakeBeforeStop()) {
+                    val intent = Intent(this, TransferKeepaliveService::class.java)
+                        .setAction(TransferKeepaliveService.ACTION_STOP)
+                    ContextCompat.startForegroundService(this, intent)
+                } else {
+                    stopService(Intent(this, TransferKeepaliveService::class.java))
+                }
                 result.success(null)
             }
             "requestIgnoreBatteryOptimizations" -> {
