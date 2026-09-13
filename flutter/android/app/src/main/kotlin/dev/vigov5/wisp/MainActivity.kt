@@ -517,7 +517,7 @@ class MainActivity : FlutterFragmentActivity() {
     // resolves each one through the same descriptor-first path the file picker
     // uses.  Returns null when the intent isn't a share intent at all so the
     // caller can distinguish "no share" from "empty share".
-    private fun extractSharedFilesFromIntent(intent: Intent?): Map<String, Any?>? {
+    private suspend fun extractSharedFilesFromIntent(intent: Intent?): Map<String, Any?>? {
         if (intent == null) return null
         if (intent.action != Intent.ACTION_SEND &&
             intent.action != Intent.ACTION_SEND_MULTIPLE
@@ -946,7 +946,7 @@ class MainActivity : FlutterFragmentActivity() {
     // receiver sees — a descriptor path ends in the fd number, so the real
     // name has to travel separately), `size` and `copied`.
     /// `null` when the user cancelled part-way; see [pickCancelled].
-    private fun resolveSendSources(
+    private suspend fun resolveSendSources(
         uris: List<Uri>,
         onCopyProgress: (copiedTotal: Long, copyTotal: Long, index: Int) -> Unit = { _, _, _ -> },
     ): SendSources? {
@@ -955,19 +955,35 @@ class MainActivity : FlutterFragmentActivity() {
         val resolved = arrayOfNulls<Map<String, Any?>>(uris.size)
         val rejected = mutableListOf<Map<String, Any?>>()
 
-        for (index in uris.indices.sortedByDescending { sizes[it] }) {
-            if (pickCancelled.get()) return null
-            val fdPath = openForSend(uris[index]) ?: continue
-            resolved[index] = mapOf(
-                "path" to fdPath,
-                "name" to names[index],
-                // Not every provider fills in OpenableColumns.SIZE.  Fall back
-                // to the descriptor rather than to `File(fdPath).length()`:
-                // statting the path is the same walk that opening it fails.
-                "size" to (sizes[index].takeIf { it > 0L } ?: descriptorLength(fdPath)),
-                "copied" to false,
-            )
+        // Concurrent for the same reason the folder pick is: each openForSend is
+        // a ~14 ms binder round trip, and a large multi-select (a 91-photo
+        // share) waited through all of them one at a time. Distinct indices, so
+        // no lock beyond openForSend's own; the copy fallback below stays serial
+        // because it competes for the disk-space budget.
+        val slots = Semaphore(DESTINATION_CONCURRENCY)
+        coroutineScope {
+            for (index in uris.indices.sortedByDescending { sizes[it] }) {
+                launch(Dispatchers.IO) {
+                    slots.withPermit {
+                        if (pickCancelled.get()) return@withPermit
+                        val fdPath = openForSend(uris[index]) ?: return@withPermit
+                        resolved[index] = mapOf(
+                            "path" to fdPath,
+                            "name" to names[index],
+                            // Not every provider fills in OpenableColumns.SIZE.
+                            // Fall back to the descriptor rather than to
+                            // `File(fdPath).length()`: statting the path is the
+                            // same walk that opening it fails.
+                            "size" to
+                                (sizes[index].takeIf { it > 0L }
+                                    ?: descriptorLength(fdPath)),
+                            "copied" to false,
+                        )
+                    }
+                }
+            }
         }
+        if (pickCancelled.get()) return null
 
         val copyTotal = uris.indices.filter { resolved[it] == null }.sumOf { sizes[it] }
         var copiedBefore = 0L
@@ -1061,7 +1077,7 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     /// `null` when the user cancelled part-way; see [pickCancelled].
-    private fun resolveTreeSources(
+    private suspend fun resolveTreeSources(
         root: FastDocumentFile,
         onCopyProgress: (copiedTotal: Long) -> Unit = {},
         onFileProgress: (resolved: Int, total: Int) -> Unit = { _, _ -> },
@@ -1070,32 +1086,57 @@ class MainActivity : FlutterFragmentActivity() {
         val files = mutableListOf<TreeFile>()
         collectTreeFiles(root, rootName, 1, files)
 
-        val sources = mutableListOf<Map<String, Any?>>()
         val claimed = BooleanArray(files.size)
-        var opened = 0
-        for (index in files.indices.sortedByDescending { files[it].doc.size }) {
-            val file = files[index]
-            // Reported per file, because this loop is the one the user waits
-            // through now. Opening a descriptor is a binder round trip, ~14 ms
-            // each, so a 1911-file folder sat here for 27-37 s. The only
-            // progress signal was the fallback copy's byte count — and the
-            // descriptor budget fix removed the copy, so the folder that most
-            // needed a progress bar was the one that stopped emitting any.
-            if (pickCancelled.get()) return null
-            onFileProgress(opened, files.size)
-            val fdPath = openForSend(file.doc.uri) ?: continue
-            claimed[index] = true
-            opened += 1
-            sources.add(
-                mapOf(
-                    "path" to fdPath,
-                    "name" to file.transferPath,
-                    "size" to (file.doc.size.takeIf { it > 0L } ?: descriptorLength(fdPath)),
-                    "copied" to false,
-                ),
-            )
+        val resolvedByIndex = arrayOfNulls<Map<String, Any?>>(files.size)
+        val opened = AtomicInteger(0)
+        // Largest-first, both to hand the descriptor budget to the files that
+        // hurt most and to keep the returned ordering identical to the serial
+        // loop this replaced.
+        val order = files.indices.sortedByDescending { files[it].doc.size }
+        // Opening a descriptor is a binder round trip, ~14 ms each, so a
+        // 1911-file folder sat here for 27-37 s when this ran one file at a
+        // time — the loop the user actually waits through. MediaProvider serves
+        // concurrent transactions on its own threads, so run them through it
+        // the same way the receiver's destination create loop does. openForSend
+        // already guards its shared state and tolerates the small budget
+        // overshoot a handful of in-flight opens can cause.
+        val slots = Semaphore(DESTINATION_CONCURRENCY)
+        coroutineScope {
+            for (index in order) {
+                launch(Dispatchers.IO) {
+                    slots.withPermit {
+                        // Cancel lands within the in-flight handful rather than
+                        // interrupting a binder call already in flight, which is
+                        // close enough to instant; the descriptors opened before
+                        // it are released with the rest when the draft clears.
+                        if (pickCancelled.get()) return@withPermit
+                        val file = files[index]
+                        val fdPath = openForSend(file.doc.uri) ?: return@withPermit
+                        claimed[index] = true
+                        resolvedByIndex[index] = mapOf(
+                            "path" to fdPath,
+                            "name" to file.transferPath,
+                            "size" to
+                                (file.doc.size.takeIf { it > 0L }
+                                    ?: descriptorLength(fdPath)),
+                            "copied" to false,
+                        )
+                        val finished = opened.incrementAndGet()
+                        if (finished % PROGRESS_EMIT_FILES == 0) {
+                            onFileProgress(finished, files.size)
+                        }
+                    }
+                }
+            }
         }
-        onFileProgress(opened, files.size)
+        if (pickCancelled.get()) return null
+        onFileProgress(opened.get(), files.size)
+        // Rebuilt in the largest-first order the serial loop produced, so the
+        // collection the receiver sees is unchanged by the parallelism.
+        val sources = mutableListOf<Map<String, Any?>>()
+        for (index in order) {
+            resolvedByIndex[index]?.let { sources.add(it) }
+        }
         val leftovers = files.filterIndexed { index, _ -> !claimed[index] }
         val rejected = mutableListOf<Map<String, Any?>>()
 
