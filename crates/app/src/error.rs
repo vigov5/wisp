@@ -484,16 +484,30 @@ impl From<ProtocolError> for UserFacingError {
                 "Wisp internal error",
                 format!("Wisp could not encode a protocol message ({context}): {source}"),
             ),
-            ProtocolError::UnexpectedRole { .. }
+            // These are "the conversation went somewhere we did not expect" —
+            // a message of the wrong kind, a session id that does not match, an
+            // illegal state transition. They stay `ProtocolIncompatible`,
+            // because a peer that disagrees about the conversation usually is a
+            // different build. What they must not do is throw away what
+            // happened: `from_kind` renders the canned "The devices could not
+            // agree on how to complete the transfer", so declining a transfer
+            // showed "Protocol mismatch" with no hint of *which* of these eight
+            // fired or what was actually on the wire. Each carries that detail
+            // in its Display; keep it.
+            error @ (ProtocolError::UnexpectedRole { .. }
             | ProtocolError::UnexpectedMessageKind { .. }
             | ProtocolError::SessionIdMismatch { .. }
             | ProtocolError::EmptyDeviceName { .. }
             | ProtocolError::InvalidTransition { .. }
             | ProtocolError::MissingPeerIdentity { .. }
             | ProtocolError::MessageTooLarge { .. }
-            | ProtocolError::MessageDeserialize { .. } => {
-                UserFacingError::from_kind(UserFacingErrorKind::ProtocolIncompatible)
-            }
+            | ProtocolError::MessageDeserialize { .. }) => UserFacingError::with_recovery(
+                UserFacingErrorKind::ProtocolIncompatible,
+                "Protocol mismatch",
+                format_error_chain(&error),
+                "Update Wisp to the latest version on both devices, then try again.",
+                false,
+            ),
         }
     }
 }
@@ -567,49 +581,72 @@ fn map_rendezvous_api_status(status: u16) -> UserFacingError {
     }
 }
 
-fn map_network_io_error(error: &(dyn StdError + 'static)) -> UserFacingError {
-    if let Some(io_error) = error.downcast_ref::<io::Error>() {
-        return map_io_kind(io_error.kind());
+/// The first [`io::Error`] anywhere in `error`'s source chain.
+///
+/// Every mapper below wants this, because the errors that reach them are
+/// nested: iroh wraps quinn's `ReadError`/`WriteError`, `BlobError::ImportFiles`
+/// boxes whatever iroh-blobs returned, and the `io::Error` — the one thing that
+/// actually classifies the failure — sits several `#[source]` levels down.
+/// Checking only the top level (which is what every mapper except
+/// [`map_frame_io_error`] used to do) misses it in almost every real case and
+/// silently degrades to the fallback.
+fn io_error_in_chain<'a>(error: &'a (dyn StdError + 'static)) -> Option<&'a io::Error> {
+    let mut current = Some(error);
+    while let Some(err) = current {
+        if let Some(io_error) = err.downcast_ref::<io::Error>() {
+            return Some(io_error);
+        }
+        current = err.source();
     }
+    None
+}
 
-    UserFacingError::from_kind(UserFacingErrorKind::Internal)
+/// The last resort when nothing in the chain classifies the failure.
+///
+/// Emphatically *not* `from_kind(Internal)`: that renders the canned "Wisp hit
+/// an unexpected condition with no specific cause attached — check the logs",
+/// which is a lie whenever the caller is holding a perfectly good cause chain.
+/// A failed SAF import, for instance, arrives as `BlobError::ImportFiles` with
+/// the path and the underlying iroh-blobs error attached, and the user was
+/// shown none of it. Keep the kind (so retryability and downstream matches are
+/// unchanged) and put the real chain in the message.
+fn unclassified_error(error: &(dyn StdError + 'static)) -> UserFacingError {
+    UserFacingError::internal("Wisp internal error", format_error_chain(error))
+}
+
+fn map_network_io_error(error: &(dyn StdError + 'static)) -> UserFacingError {
+    match io_error_in_chain(error) {
+        Some(io_error) => map_io_kind(io_error.kind()),
+        None => unclassified_error(error),
+    }
 }
 
 /// Classifies a wire frame read/write failure.
 ///
-/// Unlike [`map_network_io_error`] this walks the whole source chain, because
-/// the transport errors that reach us here are nested (iroh wraps quinn's
-/// `ReadError`/`WriteError`, which in turn surface as an [`io::Error`]). And
-/// unlike that helper it falls back to `ConnectionLost` rather than `Internal`:
-/// if a frame read/write failed on a stream that was live a moment ago, the
-/// connection broke — that is a transport problem regardless of whether we can
-/// name the exact cause.
+/// Unlike the other mappers this falls back to `ConnectionLost` rather than
+/// surfacing the raw chain: if a frame read/write failed on a stream that was
+/// live a moment ago, the connection broke — that is a transport problem
+/// regardless of whether we can name the exact cause.
 fn map_frame_io_error(error: &(dyn StdError + 'static)) -> UserFacingError {
-    let mut current = Some(error);
-    while let Some(err) = current {
-        if let Some(io_error) = err.downcast_ref::<io::Error>() {
-            return map_io_kind(io_error.kind());
-        }
-        current = err.source();
+    match io_error_in_chain(error) {
+        Some(io_error) => map_io_kind(io_error.kind()),
+        None => UserFacingError::from_kind(UserFacingErrorKind::ConnectionLost),
     }
-
-    UserFacingError::from_kind(UserFacingErrorKind::ConnectionLost)
 }
 
 fn map_local_io_error(error: &(dyn StdError + 'static)) -> UserFacingError {
-    if let Some(io_error) = error.downcast_ref::<io::Error>() {
-        return match io_error.kind() {
+    match io_error_in_chain(error) {
+        Some(io_error) => match io_error.kind() {
             io::ErrorKind::PermissionDenied => {
                 UserFacingError::from_kind(UserFacingErrorKind::PermissionDenied)
             }
             io::ErrorKind::NotFound | io::ErrorKind::InvalidInput => {
                 UserFacingError::from_kind(UserFacingErrorKind::InvalidInput)
             }
-            _ => UserFacingError::from_kind(UserFacingErrorKind::Internal),
-        };
+            _ => unclassified_error(error),
+        },
+        None => unclassified_error(error),
     }
-
-    UserFacingError::from_kind(UserFacingErrorKind::Internal)
 }
 
 fn map_io_kind(kind: io::ErrorKind) -> UserFacingError {
@@ -694,6 +731,112 @@ mod tests {
         assert_eq!(error.message(), "Please try again.");
         assert_eq!(error.recovery(), None);
         assert!(!error.is_retryable());
+    }
+
+    /// A two-level wrapper, standing in for the real shapes these mappers see:
+    /// `BlobError::ImportFiles` boxing an iroh-blobs error that boxes the
+    /// `io::Error` underneath.
+    #[derive(Debug)]
+    struct Wrapper {
+        message: &'static str,
+        source: Option<Box<dyn StdError + Send + Sync + 'static>>,
+    }
+
+    impl std::fmt::Display for Wrapper {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.message)
+        }
+    }
+
+    impl StdError for Wrapper {
+        fn source(&self) -> Option<&(dyn StdError + 'static)> {
+            self.source
+                .as_ref()
+                .map(|e| e.as_ref() as &(dyn StdError + 'static))
+        }
+    }
+
+    fn wrap(
+        message: &'static str,
+        source: impl StdError + Send + Sync + 'static,
+    ) -> Box<dyn StdError + Send + Sync + 'static> {
+        Box::new(Wrapper {
+            message,
+            source: Some(Box::new(source)),
+        })
+    }
+
+    /// The mappers used to `downcast_ref` only the error handed to them, so a
+    /// permission failure two levels down read as "unclassified" and the user
+    /// got the canned internal-error text instead of "Permission denied".
+    #[test]
+    fn a_nested_io_error_still_classifies_the_failure() {
+        let nested = Wrapper {
+            message: "importing files",
+            source: Some(wrap(
+                "blob store rejected the import",
+                io::Error::from(io::ErrorKind::PermissionDenied),
+            )),
+        };
+
+        assert_eq!(
+            map_local_io_error(&nested).kind(),
+            UserFacingErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            map_network_io_error(&nested).kind(),
+            UserFacingErrorKind::PermissionDenied
+        );
+    }
+
+    /// When nothing in the chain is an `io::Error` we still know *something* —
+    /// the chain itself. Reporting "no specific cause attached" while holding
+    /// it is what sent a real user to the logs for an error we could name.
+    #[test]
+    fn an_unclassifiable_failure_reports_its_cause_instead_of_the_canned_text() {
+        let opaque = Wrapper {
+            message: "importing files from /proc/self/fd/42",
+            source: Some(Box::new(Wrapper {
+                message: "descriptor was closed by another send",
+                source: None,
+            })),
+        };
+
+        let error = map_local_io_error(&opaque);
+
+        assert_eq!(error.kind(), UserFacingErrorKind::Internal);
+        assert_eq!(
+            error.message(),
+            "importing files from /proc/self/fd/42: descriptor was closed by another send"
+        );
+        assert!(
+            !error.message().contains("no specific cause"),
+            "the canned text must not survive when a cause chain exists"
+        );
+    }
+
+    /// "Protocol mismatch" with the canned body is indistinguishable between
+    /// eight different protocol errors, which is what made a failed decline
+    /// unreadable on the device.
+    #[test]
+    fn a_protocol_desync_names_what_was_on_the_wire() {
+        let error = UserFacingError::from(ProtocolError::UnexpectedMessageKind {
+            context: "receiver decision",
+            expected: wisp_core::protocol::message::MessageKind::Accept,
+            actual: wisp_core::protocol::message::MessageKind::Cancel,
+        });
+
+        assert_eq!(error.kind(), UserFacingErrorKind::ProtocolIncompatible);
+        assert_eq!(error.title(), "Protocol mismatch");
+        assert!(
+            error.message().contains("Accept") && error.message().contains("Cancel"),
+            "expected the expected/actual kinds, got {:?}",
+            error.message()
+        );
+        assert!(
+            !error.message().contains("could not agree"),
+            "the canned text must not replace a detail we were holding"
+        );
     }
 
     #[test]

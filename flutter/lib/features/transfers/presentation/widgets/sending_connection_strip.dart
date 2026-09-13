@@ -6,7 +6,17 @@ import '../../../../theme/wisp_theme.dart';
 import '../../application/connection_path.dart';
 import 'connection_path_badge.dart';
 
-enum SendingStripMode { looping, waitingOnRecipient, transferring }
+enum SendingStripMode {
+  looping,
+
+  /// Reading and hashing the pick, before any connection exists. Animates like
+  /// [looping] but shows a real progress ring, because unlike connecting this
+  /// wait has a measurable fraction — and unlike [transferring] no byte has
+  /// left the device, so the "trying these paths" rows must stay hidden.
+  hashing,
+  waitingOnRecipient,
+  transferring,
+}
 
 class SendingConnectionStrip extends StatefulWidget {
   const SendingConnectionStrip({

@@ -5,6 +5,11 @@ import '../../../src/rust/api/transfer.dart' as rust_transfer;
 import '../../transfers/application/connection_path.dart';
 
 enum SendTransferPhase {
+  /// Hashing and importing the picked files, before any connection is
+  /// attempted. Distinct from [connecting] because it is the slow part for
+  /// large payloads and saying "Connecting" through it misdescribes a wait the
+  /// network has nothing to do with.
+  preparing,
   connecting,
   waitingForDecision,
   accepted,
@@ -20,6 +25,7 @@ enum SendTransferPhase {
 class SendTransferState {
   const SendTransferState({
     required this.phase,
+    this.bytesHashed,
     required this.destinationLabel,
     required this.statusMessage,
     required this.itemCount,
@@ -37,14 +43,18 @@ class SendTransferState {
     this.error,
   });
 
-  SendTransferState.connecting({
+  /// The local state a send starts in, before the first event comes back from
+  /// the core. It used to claim `connecting` / "Request sent" — neither true
+  /// yet, and for a multi-gigabyte pick neither true for another 20 seconds.
+  /// What actually happens first is reading and hashing the pick, so say that.
+  SendTransferState.preparing({
     required String destinationLabel,
     required BigInt itemCount,
     required BigInt totalSize,
   }) : this(
-         phase: SendTransferPhase.connecting,
+         phase: SendTransferPhase.preparing,
          destinationLabel: destinationLabel,
-         statusMessage: 'Request sent',
+         statusMessage: 'Calculating file hashes — large files take a moment',
          itemCount: itemCount,
          totalSize: totalSize,
          bytesSent: BigInt.zero,
@@ -52,6 +62,11 @@ class SendTransferState {
        );
 
   final SendTransferPhase phase;
+
+  /// Bytes hashed so far during [SendTransferPhase.preparing]; null otherwise.
+  /// Drives the progress ring for the one stretch of a send that has real
+  /// progress but no bytes on the wire yet.
+  final BigInt? bytesHashed;
   final String destinationLabel;
   final String statusMessage;
   final BigInt itemCount;
@@ -86,6 +101,7 @@ class SendTransferState {
 
   SendTransferState copyWith({
     SendTransferPhase? phase,
+    BigInt? bytesHashed,
     String? destinationLabel,
     String? statusMessage,
     BigInt? itemCount,
@@ -104,6 +120,7 @@ class SendTransferState {
   }) {
     return SendTransferState(
       phase: phase ?? this.phase,
+      bytesHashed: bytesHashed ?? this.bytesHashed,
       destinationLabel: destinationLabel ?? this.destinationLabel,
       statusMessage: statusMessage ?? this.statusMessage,
       itemCount: itemCount ?? this.itemCount,

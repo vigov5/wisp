@@ -74,6 +74,15 @@ class _SendTransferRoutePageState extends ConsumerState<SendTransferRoutePage> {
     final currentState = ref.read(sendControllerProvider);
     if (currentState is SendStateResult) {
       ref.read(sendControllerProvider.notifier).clearDraft();
+    } else if (currentState is SendStateTransferring) {
+      // "Cancel transfer" while the send is still in flight (connecting or
+      // waiting on the recipient's decision) must actually stop it. This branch
+      // was missing: the button only navigated home, so the native send kept
+      // running — it went on to accept and transfer once the recipient tapped,
+      // and the cancel the user asked for never reached the core. Relying on
+      // PopScope to catch it does not work either, because `go()` replaces the
+      // route rather than popping it, so `onPopInvokedWithResult` never fires.
+      ref.read(sendControllerProvider.notifier).cancelTransfer();
     }
 
     context.goHome();
@@ -322,9 +331,16 @@ class _TransferStateCard extends StatelessWidget {
       // per file *before* answering, so a 1911-file folder leaves the sender
       // sitting on "Waiting" for 7-15 s with nothing to explain it.
       subtitle = buildRecipientPreparingLine();
-    } else if (progress != null && state is SendStateTransferring) {
+    } else if (progress != null &&
+        state is SendStateTransferring &&
+        progress.speedLabel != null) {
+      // Only when there is a speed to show. This branch used to need nothing
+      // but a non-zero total and rendered `speedLabel ?? ''` — a blank line —
+      // for every phase that has no speed yet. Hashing a large pick sits there
+      // for ~20 s, so the screen was a lone "HASHING" chip over empty space
+      // with the status message it should have been showing suppressed.
       subtitle = buildSpeedLine(
-        speedLabel: progress.speedLabel ?? '',
+        speedLabel: progress.speedLabel!,
         etaLabel: progress.etaLabel,
       );
     } else if (viewData.visual.statusLabel == 'Failed') {
@@ -429,11 +445,12 @@ Widget _buildFooter({
       child: const Text('Cancel transfer'),
     );
 
-    // Still connecting (no bytes sent yet): offer a lighter "Back" alongside
-    // Cancel so the user can return to the draft and pick a different connect
-    // method / files instead of aborting to home. Back takes 1/3, Cancel keeps
-    // the dominant 2/3 as the definitive escape.
-    if (state.transfer.phase == SendTransferPhase.connecting) {
+    // Still preparing or connecting (no bytes sent yet): offer a lighter "Back"
+    // alongside Cancel so the user can return to the draft and pick a different
+    // connect method / files instead of aborting to home. Back takes 1/3,
+    // Cancel keeps the dominant 2/3 as the definitive escape.
+    if (state.transfer.phase == SendTransferPhase.preparing ||
+        state.transfer.phase == SendTransferPhase.connecting) {
       return Row(
         children: [
           Expanded(

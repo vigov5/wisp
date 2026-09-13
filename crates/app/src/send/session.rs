@@ -141,9 +141,9 @@ impl SendSession {
         emit_send_event(
             &event_tx,
             SendEvent {
-                phase: SendPhase::Connecting,
+                phase: SendPhase::Preparing,
                 destination_label: destination_label.clone(),
-                status_message: "Request sent".to_owned(),
+                status_message: "Calculating file hashes — large files take a moment".to_owned(),
                 item_count: preview.file_count,
                 total_size: preview.total_size,
                 bytes_sent: 0,
@@ -153,6 +153,7 @@ impl SendSession {
                 remote_endpoint_id: None,
                 remote_ephemeral: None,
                 remote_ticket: None,
+                bytes_hashed: None,
                 connection_path: None,
                 connection_candidates: Vec::new(),
                 error: None,
@@ -429,7 +430,12 @@ fn maybe_demote_pre_handshake_failure(
     }
     let prior = last_event.lock().unwrap().clone();
     let prior_phase = prior.as_ref().map(|e| e.phase);
-    let pre_handshake = matches!(prior_phase, None | Some(SendPhase::Connecting));
+    // `Preparing` counts as pre-handshake too: a send that fails while still
+    // hashing has certainly not exchanged a Hello.
+    let pre_handshake = matches!(
+        prior_phase,
+        None | Some(SendPhase::Preparing) | Some(SendPhase::Connecting)
+    );
     if !pre_handshake {
         return event;
     }
@@ -594,6 +600,7 @@ pub(crate) fn failed_event_from_error(
         remote_endpoint_id: None,
         remote_ephemeral: None,
         remote_ticket: None,
+        bytes_hashed: None,
         connection_path: None,
         connection_candidates: Vec::new(),
         error: Some(error),
@@ -608,6 +615,27 @@ fn map_sender_event(
     event: CoreSenderEvent,
 ) -> SendEvent {
     match event {
+        // Preparing keeps re-emitting with a bigger `bytes_hashed`; everything
+        // else about the event is the same, which is what lets the screen show a
+        // filling ring without any other state moving.
+        CoreSenderEvent::Hashing { bytes_hashed, .. } => SendEvent {
+            phase: SendPhase::Preparing,
+            destination_label: current_label.clone(),
+            status_message: "Calculating file hashes — large files take a moment".to_owned(),
+            item_count: preview.file_count,
+            total_size: preview.total_size,
+            bytes_sent: 0,
+            plan: None,
+            snapshot: None,
+            remote_device_type: None,
+            remote_endpoint_id: None,
+            remote_ephemeral: None,
+            remote_ticket: None,
+            bytes_hashed: Some(bytes_hashed),
+            connection_path: None,
+            connection_candidates: Vec::new(),
+            error: None,
+        },
         CoreSenderEvent::Connecting { prepared_plan, .. } => SendEvent {
             phase: SendPhase::Connecting,
             destination_label: current_label.clone(),
@@ -621,6 +649,7 @@ fn map_sender_event(
             remote_endpoint_id: None,
             remote_ephemeral: None,
             remote_ticket: None,
+            bytes_hashed: None,
             connection_path: None,
             connection_candidates: Vec::new(),
             error: None,
@@ -652,6 +681,7 @@ fn map_sender_event(
                 remote_endpoint_id: Some(receiver_endpoint_id.to_string()),
                 remote_ephemeral: Some(receiver_ephemeral),
                 remote_ticket: None,
+                bytes_hashed: None,
                 connection_path: None,
                 connection_candidates: Vec::new(),
                 error: None,
@@ -684,6 +714,7 @@ fn map_sender_event(
                 remote_endpoint_id: Some(receiver_endpoint_id.to_string()),
                 remote_ephemeral: Some(receiver_ephemeral),
                 remote_ticket: None,
+                bytes_hashed: None,
                 connection_path: None,
                 connection_candidates: Vec::new(),
                 error: None,
@@ -706,6 +737,7 @@ fn map_sender_event(
             remote_endpoint_id: None,
             remote_ephemeral: None,
             remote_ticket: None,
+            bytes_hashed: None,
             connection_path: None,
             connection_candidates: Vec::new(),
             error: Some(UserFacingError::new(
@@ -719,6 +751,19 @@ fn map_sender_event(
             prepared_plan,
             ..
         } => {
+            // The receiver has logged its failures like this for a while
+            // (`receiver/session.rs`, "receive failed"); the sender logged
+            // nothing at all. Telemetry would say `decision_wait: failed` and
+            // the card would say "Protocol mismatch", with no way to tell which
+            // of the eight protocol errors that map to it had actually fired.
+            // `{:?}` on top of the chain because the useful leaf is usually the
+            // `#[source]` under the one that Displays.
+            tracing::warn!(
+                target: "wisp_app::send::session",
+                error = %crate::error::format_error_chain(&error),
+                detail = ?error,
+                "send failed"
+            );
             // drift#29: surface the most recent snapshot (if any) so
             // bytes_sent reflects how far the transfer actually got
             // before the failure, instead of resetting to 0.
@@ -739,6 +784,7 @@ fn map_sender_event(
                 remote_endpoint_id: None,
                 remote_ephemeral: None,
                 remote_ticket: None,
+                bytes_hashed: None,
                 connection_path: None,
                 connection_candidates: Vec::new(),
                 error: Some(UserFacingError::from(error)),
@@ -759,6 +805,7 @@ fn map_sender_event(
                 remote_endpoint_id: None,
                 remote_ephemeral: None,
                 remote_ticket: None,
+                bytes_hashed: None,
                 connection_path: None,
                 connection_candidates: Vec::new(),
                 error: None,
@@ -794,6 +841,7 @@ fn map_sender_event(
             remote_endpoint_id: None,
             remote_ephemeral: None,
             remote_ticket: None,
+            bytes_hashed: None,
             connection_path: None,
             connection_candidates: Vec::new(),
             error: None,
@@ -817,6 +865,7 @@ fn map_sender_event(
             remote_endpoint_id: None,
             remote_ephemeral: None,
             remote_ticket: None,
+            bytes_hashed: None,
             connection_path: None,
             connection_candidates: Vec::new(),
             error: None,
@@ -852,6 +901,7 @@ mod tests {
             remote_endpoint_id: None,
             remote_ephemeral: None,
             remote_ticket: None,
+            bytes_hashed: None,
             connection_path: None,
             connection_candidates: Vec::new(),
             error: None,

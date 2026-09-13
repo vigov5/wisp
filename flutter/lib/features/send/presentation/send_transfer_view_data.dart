@@ -235,6 +235,23 @@ SendTransferPhaseVisualData _visualForState(SendState state) {
   if (state is SendStateTransferring) {
     final transfer = state.transfer;
     return switch (transfer.phase) {
+      // Named for the local work, not the network: the recipient has not been
+      // contacted yet. "Hashing" rather than a vague "Preparing" because that
+      // is literally where the time goes — 20.7 s of a 20.8 s prepare for a
+      // 6.2 GB file — so a user watching a long wait can see it is the file
+      // being read, not a connection failing to come up.
+      // NOTE: `title` is dead on this screen — `TransferFlowLayout` takes only
+      // a status label and a subtitle, and nothing reads this field for any
+      // phase. The words the user actually sees are the chip below and
+      // `transfer.statusMessage`, so keep the useful wording in the latter.
+      SendTransferPhase.preparing => SendTransferPhaseVisualData(
+        statusLabel: 'Hashing',
+        title: 'Calculating file hashes',
+        subtitle: transfer.statusMessage,
+        accentColor: kAccentCyanStrong,
+        icon: Icons.fingerprint_rounded,
+        showSpinner: true,
+      ),
       SendTransferPhase.connecting => SendTransferPhaseVisualData(
         statusLabel: 'Connecting',
         title: 'Connecting to recipient',
@@ -452,6 +469,16 @@ List<SendTransferFileViewData> _filesForState(SendState state) {
 }
 
 double? _progressFractionFor(SendTransferState transfer) {
+  // Hashing has real progress and no bytes on the wire, so it gets its own
+  // numerator. Gated on the phase rather than on the field being set, so a
+  // reading left over from preparing can never leak into a later phase.
+  if (transfer.phase == SendTransferPhase.preparing) {
+    final hashed = transfer.bytesHashed;
+    if (hashed == null || transfer.totalSize == BigInt.zero) {
+      return null;
+    }
+    return (hashed.toDouble() / transfer.totalSize.toDouble()).clamp(0.0, 1.0);
+  }
   if (transfer.totalBytes == BigInt.zero) {
     return null;
   }
@@ -504,6 +531,7 @@ String? _etaLabelFor(SendTransferState transfer) {
 
 SendingStripMode? _stripModeFor(SendTransferState transfer) {
   return switch (transfer.phase) {
+    SendTransferPhase.preparing => SendingStripMode.hashing,
     SendTransferPhase.connecting => SendingStripMode.looping,
     SendTransferPhase.waitingForDecision ||
     SendTransferPhase.accepted => SendingStripMode.waitingOnRecipient,

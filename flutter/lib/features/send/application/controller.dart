@@ -428,7 +428,12 @@ class SendController extends _$SendController {
     final subscription = _transferSubscription;
     _transferSubscription = null;
     if (subscription != null) {
-      await subscription.cancel();
+      // Tear the local event stream down without blocking on it, then tell the
+      // core to stop. The native cancel is the time-critical half — it is what
+      // withdraws the offer before the recipient can accept — and gating it
+      // behind the stream teardown delayed it for no reason (and hung outright
+      // under a synchronous test stream, hiding whether it ran at all).
+      unawaited(subscription.cancel());
       try {
         await ref.read(sendTransferSourceProvider).cancelTransfer();
       } catch (_) {
@@ -487,6 +492,7 @@ class SendController extends _$SendController {
 
     final nextTransfer = currentState.transfer.copyWith(
       phase: switch (update.phase) {
+        SendTransferUpdatePhase.preparing => SendTransferPhase.preparing,
         SendTransferUpdatePhase.connecting => SendTransferPhase.connecting,
         SendTransferUpdatePhase.waitingForDecision =>
           SendTransferPhase.waitingForDecision,
@@ -497,6 +503,7 @@ class SendController extends _$SendController {
         SendTransferUpdatePhase.declined => SendTransferPhase.declined,
         SendTransferUpdatePhase.failed => SendTransferPhase.failed,
       },
+      bytesHashed: update.bytesHashed,
       destinationLabel: update.destinationLabel,
       statusMessage: update.statusMessage,
       itemCount: update.itemCount,
@@ -594,6 +601,7 @@ class SendController extends _$SendController {
           transfer: nextTransfer,
           errorMessage: update.error?.message ?? update.statusMessage,
         );
+      case SendTransferUpdatePhase.preparing:
       case SendTransferUpdatePhase.connecting:
       case SendTransferUpdatePhase.waitingForDecision:
       case SendTransferUpdatePhase.accepted:
@@ -781,7 +789,7 @@ class SendController extends _$SendController {
             BigInt.from(items.length),
             totalDraftItemSize(items, resolvedDirectorySizes),
           );
-    return SendTransferState.connecting(
+    return SendTransferState.preparing(
       destinationLabel:
           request.lanDestinationLabel ?? request.code ?? 'Recipient device',
       itemCount: itemCount,

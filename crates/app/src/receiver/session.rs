@@ -554,7 +554,21 @@ impl ReceiverSession {
             })
             .ok()
         });
-        let final_event = match outcome_rx.await {
+        let outcome_result = outcome_rx.await;
+        // Only failures were logged here, so a receive that ended *well* — a
+        // cancellation especially — left no trace at all. That made an offer
+        // card still on screen unreadable from a log: it could mean the session
+        // never ended, or that it ended and the card was not told. Say which.
+        match &outcome_result {
+            Ok(Ok(outcome)) => tracing::info!(
+                offer_id,
+                outcome = ?outcome,
+                "receive session ended"
+            ),
+            Ok(Err(_)) => {}
+            Err(_) => tracing::warn!(offer_id, "receive outcome channel dropped"),
+        }
+        let final_event = match outcome_result {
             Ok(Ok(outcome)) => match outcome {
                 CoreTransferOutcome::Completed => completed_offer_event(
                     sender_label,

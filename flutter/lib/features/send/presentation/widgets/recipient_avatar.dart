@@ -112,6 +112,7 @@ class _RecipientAvatarState extends State<RecipientAvatar>
     final shouldAnimate =
         widget.animate &&
         (widget.mode == SendingStripMode.waitingOnRecipient ||
+            widget.mode == SendingStripMode.hashing ||
             widget.mode == SendingStripMode.looping);
     if (shouldAnimate && !_rippleController.isAnimating) {
       _rippleController.repeat();
@@ -192,7 +193,11 @@ class _RecipientAvatarState extends State<RecipientAvatar>
               ),
 
               // Progress Ring
-              if (widget.mode == SendingStripMode.transferring)
+              // Hashing draws it too: that phase has a genuine fraction and
+              // was the reason this ring stayed invisible while the numbers
+              // behind it were already correct.
+              if (widget.mode == SendingStripMode.transferring ||
+                  widget.mode == SendingStripMode.hashing)
                 SizedBox(
                   width: 96,
                   height: 96,

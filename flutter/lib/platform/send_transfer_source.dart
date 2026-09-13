@@ -41,6 +41,9 @@ class SendTransferRequestData {
 }
 
 enum SendTransferUpdatePhase {
+  /// Hashing and importing the picked files. Nothing has left the device yet,
+  /// so this must not be shown as "Connecting".
+  preparing,
   connecting,
   waitingForDecision,
   accepted,
@@ -55,6 +58,7 @@ enum SendTransferUpdatePhase {
 class SendTransferUpdate {
   const SendTransferUpdate({
     required this.phase,
+    this.bytesHashed,
     required this.destinationLabel,
     required this.statusMessage,
     required this.itemCount,
@@ -170,6 +174,10 @@ class SendTransferUpdate {
        );
 
   final SendTransferUpdatePhase phase;
+
+  /// Bytes hashed so far while [SendTransferUpdatePhase.preparing]. Null in
+  /// every other phase — nothing is being hashed then.
+  final BigInt? bytesHashed;
   final String destinationLabel;
   final String statusMessage;
   final BigInt itemCount;
@@ -273,6 +281,8 @@ class LocalSendTransferSource implements SendTransferSource {
     final totalSize = event.totalSize;
     return SendTransferUpdate(
       phase: switch (event.phase) {
+        rust_sender.SendTransferPhase.preparing =>
+          SendTransferUpdatePhase.preparing,
         rust_sender.SendTransferPhase.connecting =>
           SendTransferUpdatePhase.connecting,
         rust_sender.SendTransferPhase.waitingForDecision =>
@@ -289,6 +299,7 @@ class LocalSendTransferSource implements SendTransferSource {
           SendTransferUpdatePhase.cancelled,
         rust_sender.SendTransferPhase.failed => SendTransferUpdatePhase.failed,
       },
+      bytesHashed: event.bytesHashed,
       destinationLabel: event.destinationLabel,
       statusMessage: event.statusMessage,
       itemCount: event.itemCount,

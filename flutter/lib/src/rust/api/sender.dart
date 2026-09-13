@@ -8,7 +8,7 @@ import 'error.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'transfer.dart';
 
-// These functions are ignored because they are not marked as `pub`: `cancel_send_session`, `fallback_destination_label`, `format_code_label`, `map_connection_candidate`, `map_connection_path`, `map_event`, `map_phase`, `map_snapshot`, `map_source`, `terminal_event_for_app_error`, `terminal_internal_failure_event`
+// These functions are ignored because they are not marked as `pub`: `fallback_destination_label`, `format_code_label`, `map_connection_candidate`, `map_connection_path`, `map_event`, `map_phase`, `map_snapshot`, `map_source`, `terminal_event_for_app_error`, `terminal_internal_failure_event`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 Stream<SendTransferEvent> startSendTransfer({
@@ -120,6 +120,11 @@ class SendTransferEvent {
   /// the saved-devices repo can persist a `lastTicket` for code-based
   /// sends — otherwise Recent tile shows "no cached connection info".
   final String? remoteTicket;
+
+  /// Bytes hashed so far while `Preparing`. `None` in every other phase.
+  /// Deliberately not folded into `bytes_sent`: nothing is sent during that
+  /// phase, and the ring is driven off this against `total_size`.
+  final BigInt? bytesHashed;
   final SendConnectionPath? connectionPath;
 
   /// Every candidate path iroh is attempting, tagged active/idle. Drives the
@@ -141,6 +146,7 @@ class SendTransferEvent {
     this.remoteEndpointId,
     this.remoteEphemeral,
     this.remoteTicket,
+    this.bytesHashed,
     this.connectionPath,
     required this.connectionCandidates,
     this.error,
@@ -160,6 +166,7 @@ class SendTransferEvent {
       remoteEndpointId.hashCode ^
       remoteEphemeral.hashCode ^
       remoteTicket.hashCode ^
+      bytesHashed.hashCode ^
       connectionPath.hashCode ^
       connectionCandidates.hashCode ^
       error.hashCode;
@@ -181,12 +188,15 @@ class SendTransferEvent {
           remoteEndpointId == other.remoteEndpointId &&
           remoteEphemeral == other.remoteEphemeral &&
           remoteTicket == other.remoteTicket &&
+          bytesHashed == other.bytesHashed &&
           connectionPath == other.connectionPath &&
           connectionCandidates == other.connectionCandidates &&
           error == other.error;
 }
 
 enum SendTransferPhase {
+  /// Hashing and importing the picked files — nothing has been sent yet.
+  preparing,
   connecting,
   waitingForDecision,
   accepted,

@@ -13,6 +13,7 @@ use super::receive::BlobTransportProfile;
 use super::telemetry::{
     BlobProviderTelemetry, TransferEnd, benchmark_run_id, is_enabled as telemetry_enabled,
 };
+pub(crate) use super::util::HashProgress;
 use super::util::{PendingImport, import_concurrency, import_pending, walk_input};
 use crate::blobs::descriptor::DescriptorHandles;
 use crate::fs_plan::SendInput;
@@ -168,6 +169,16 @@ pub(crate) struct PreparedFile {
 
 impl PreparedStore {
     pub(crate) async fn prepare(root_dir: &Path, inputs: Vec<SendInput>) -> Result<Self> {
+        Self::prepare_with_progress(root_dir, inputs, None).await
+    }
+
+    /// [`prepare`](Self::prepare) with a running count of bytes hashed, for the
+    /// caller that shows the user what the wait is.
+    pub(crate) async fn prepare_with_progress(
+        root_dir: &Path,
+        inputs: Vec<SendInput>,
+        progress: Option<HashProgress>,
+    ) -> Result<Self> {
         let store = FsStore::load(root_dir)
             .await
             .map_err(|source| BlobError::store_load(root_dir.to_path_buf(), source))?;
@@ -202,7 +213,7 @@ impl PreparedStore {
         timings.walk_metadata = walk_started.elapsed();
 
         let import_started = Instant::now();
-        let imported = import_pending(&store, pending, import_concurrency()).await?;
+        let imported = import_pending(&store, pending, import_concurrency(), progress).await?;
         timings.import_hash = import_started.elapsed();
 
         for file in imported {

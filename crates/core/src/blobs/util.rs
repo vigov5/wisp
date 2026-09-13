@@ -4,7 +4,7 @@ use iroh_blobs::{
     BlobFormat,
     api::{
         Store, TempTag,
-        blobs::{AddPathOptions, ImportMode},
+        blobs::{AddPathOptions, AddProgressItem, ImportMode},
     },
 };
 use tokio::task::JoinSet;
@@ -16,6 +16,45 @@ use crate::{
     fs_plan::{FsPlanError, SendInput},
     transfer::path::{input_root_name, normalize_transfer_path},
 };
+
+/// A running count of bytes hashed across every file of one prepare.
+///
+/// Hashing is the whole of the wait before a large send starts moving — 20 s of
+/// a 20.7 s prepare for a 6.2 GB file — and until now nothing reported it, so
+/// the screen could only say "working on it". Counting *files* would not have
+/// helped that case at all: one file means 0/1 for twenty seconds. This counts
+/// bytes, which iroh-blobs reports per file as it builds each outboard.
+///
+/// Shared by every import task in the window, so the total is global rather
+/// than per-file; each task reports its own file's offset and the delta lands
+/// on the shared counter.
+#[derive(Clone, Debug)]
+pub(crate) struct HashProgress {
+    hashed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    tx: tokio::sync::mpsc::UnboundedSender<u64>,
+}
+
+impl HashProgress {
+    pub(crate) fn new(tx: tokio::sync::mpsc::UnboundedSender<u64>) -> Self {
+        Self {
+            hashed: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            tx,
+        }
+    }
+
+    /// Records `delta` more bytes and publishes the new running total. A closed
+    /// receiver is not an error: the send simply outlived whoever was watching.
+    fn advance(&self, delta: u64) {
+        if delta == 0 {
+            return;
+        }
+        let total = self
+            .hashed
+            .fetch_add(delta, std::sync::atomic::Ordering::Relaxed)
+            + delta;
+        let _ = self.tx.send(total);
+    }
+}
 
 /// A file the walk found, waiting to be read and hashed.
 #[derive(Debug)]
@@ -198,6 +237,7 @@ pub(super) async fn import_pending(
     store: &Store,
     pending: Vec<PendingImport>,
     concurrency: usize,
+    progress: Option<HashProgress>,
 ) -> BlobResult<Vec<ImportedFile>> {
     let concurrency = concurrency.max(1);
     trace!(
@@ -212,7 +252,12 @@ pub(super) async fn import_pending(
     let mut failed = false;
 
     while next < pending.len() && tasks.len() < concurrency {
-        tasks.spawn(import_one(store.clone(), &pending[next], next));
+        tasks.spawn(import_one(
+            store.clone(),
+            &pending[next],
+            next,
+            progress.clone(),
+        ));
         next += 1;
     }
 
@@ -231,7 +276,12 @@ pub(super) async fn import_pending(
         failed |= result.is_err();
         results[index] = Some(result);
         if !failed && next < pending.len() {
-            tasks.spawn(import_one(store.clone(), &pending[next], next));
+            tasks.spawn(import_one(
+                store.clone(),
+                &pending[next],
+                next,
+                progress.clone(),
+            ));
             next += 1;
         }
     }
@@ -249,24 +299,74 @@ pub(super) async fn import_pending(
     Ok(imported)
 }
 
+/// Imports one file, reporting hashing progress as it goes.
+///
+/// The convenience `AddProgress::temp_tag()` drives the same stream and throws
+/// every intermediate item away, which is why the long hash before a send could
+/// not be reported: the numbers were there and nobody read them. Driving the
+/// stream by hand keeps the terminal semantics identical — `Done` or `Error`,
+/// and an ended stream is a failure — and adds only the two items we need.
+///
+/// `OutboardProgress` is the hash offset and is documented as *ephemeral*, so a
+/// file may finish without ever emitting one; `Size` is guaranteed. Settling up
+/// to the file's size on `Done` keeps the running total honest either way.
+async fn import_path_reporting_progress(
+    store: &Store,
+    path: &std::path::Path,
+    progress: Option<HashProgress>,
+) -> std::result::Result<TempTag, Box<dyn std::error::Error + Send + Sync>> {
+    use futures_lite::StreamExt;
+
+    let mut stream = store
+        .add_path_with_opts(AddPathOptions {
+            path: path.to_path_buf(),
+            format: BlobFormat::Raw,
+            mode: ImportMode::TryReference,
+        })
+        .stream()
+        .await;
+
+    let mut size = 0u64;
+    let mut reported = 0u64;
+    while let Some(item) = stream.next().await {
+        match item {
+            AddProgressItem::Size(bytes) => size = bytes,
+            AddProgressItem::OutboardProgress(offset) => {
+                if let Some(progress) = progress.as_ref() {
+                    // Offsets are absolute within the file and can repeat or
+                    // arrive out of order; only ever count forwards.
+                    if offset > reported {
+                        progress.advance(offset - reported);
+                        reported = offset;
+                    }
+                }
+            }
+            AddProgressItem::Done(tag) => {
+                if let Some(progress) = progress.as_ref() {
+                    progress.advance(size.saturating_sub(reported));
+                }
+                return Ok(tag);
+            }
+            AddProgressItem::Error(error) => return Err(Box::new(error)),
+            _ => {}
+        }
+    }
+    Err(Box::new(std::io::Error::other("unexpected end of stream")))
+}
+
 /// One file's read + hash, owning everything so it can be spawned.
 fn import_one(
     store: Store,
     pending: &PendingImport,
     index: usize,
+    progress: Option<HashProgress>,
 ) -> impl std::future::Future<Output = (usize, BlobResult<ImportedFile>)> + Send + 'static {
     let input_display = pending.input_display.clone();
     let transfer_path = pending.transfer_path.clone();
     let local_path = pending.local_path.clone();
     async move {
         let result = async {
-            let tag = store
-                .add_path_with_opts(AddPathOptions {
-                    path: local_path.clone(),
-                    format: BlobFormat::Raw,
-                    mode: ImportMode::TryReference,
-                })
-                .temp_tag()
+            let tag = import_path_reporting_progress(&store, &local_path, progress)
                 .await
                 .map_err(|source| {
                     BlobError::import_files(
@@ -337,7 +437,7 @@ pub(super) async fn import_files(
     handles: &mut DescriptorHandles,
 ) -> BlobResult<Vec<ImportedFile>> {
     let pending = walk_input(input, handles)?;
-    import_pending(store, pending, import_concurrency()).await
+    import_pending(store, pending, import_concurrency(), None).await
 }
 
 #[cfg(test)]
@@ -429,7 +529,7 @@ mod tests {
                 let pending =
                     super::walk_input(SendInput::from(input), &mut handles).expect("walk");
                 let started = Instant::now();
-                let imported = import_pending(store.as_ref(), pending, concurrency)
+                let imported = import_pending(store.as_ref(), pending, concurrency, None)
                     .await
                     .expect("import");
                 let elapsed = started.elapsed();
@@ -491,13 +591,13 @@ mod tests {
             let store: Store = MemStore::new().into();
             let mut handles = DescriptorHandles::new();
             let pending = super::walk_input(SendInput::from(input.clone()), &mut handles)?;
-            import_pending(&store, pending, 1).await?
+            import_pending(&store, pending, 1, None).await?
         };
         let concurrent = {
             let store: Store = MemStore::new().into();
             let mut handles = DescriptorHandles::new();
             let pending = super::walk_input(SendInput::from(input.clone()), &mut handles)?;
-            import_pending(&store, pending, MAX_IMPORT_CONCURRENCY).await?
+            import_pending(&store, pending, MAX_IMPORT_CONCURRENCY, None).await?
         };
 
         assert_eq!(serial.len(), 40);
@@ -551,7 +651,7 @@ mod tests {
         ];
 
         let store: Store = MemStore::new().into();
-        let error = import_pending(&store, pending, MAX_IMPORT_CONCURRENCY)
+        let error = import_pending(&store, pending, MAX_IMPORT_CONCURRENCY, None)
             .await
             .expect_err("a missing file must fail the import");
         let message = error_chain(&error);

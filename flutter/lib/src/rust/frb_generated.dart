@@ -1604,8 +1604,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SendTransferEvent dco_decode_send_transfer_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 15)
-      throw Exception('unexpected arr length: expect 15 but see ${arr.length}');
+    if (arr.length != 16)
+      throw Exception('unexpected arr length: expect 16 but see ${arr.length}');
     return SendTransferEvent(
       phase: dco_decode_send_transfer_phase(arr[0]),
       destinationLabel: dco_decode_String(arr[1]),
@@ -1619,9 +1619,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       remoteEndpointId: dco_decode_opt_String(arr[9]),
       remoteEphemeral: dco_decode_opt_box_autoadd_bool(arr[10]),
       remoteTicket: dco_decode_opt_String(arr[11]),
-      connectionPath: dco_decode_opt_box_autoadd_send_connection_path(arr[12]),
-      connectionCandidates: dco_decode_list_send_connection_candidate(arr[13]),
-      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[14]),
+      bytesHashed: dco_decode_opt_box_autoadd_u_64(arr[12]),
+      connectionPath: dco_decode_opt_box_autoadd_send_connection_path(arr[13]),
+      connectionCandidates: dco_decode_list_send_connection_candidate(arr[14]),
+      error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[15]),
     );
   }
 
@@ -2511,6 +2512,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_remoteEndpointId = sse_decode_opt_String(deserializer);
     var var_remoteEphemeral = sse_decode_opt_box_autoadd_bool(deserializer);
     var var_remoteTicket = sse_decode_opt_String(deserializer);
+    var var_bytesHashed = sse_decode_opt_box_autoadd_u_64(deserializer);
     var var_connectionPath = sse_decode_opt_box_autoadd_send_connection_path(
       deserializer,
     );
@@ -2533,6 +2535,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       remoteEndpointId: var_remoteEndpointId,
       remoteEphemeral: var_remoteEphemeral,
       remoteTicket: var_remoteTicket,
+      bytesHashed: var_bytesHashed,
       connectionPath: var_connectionPath,
       connectionCandidates: var_connectionCandidates,
       error: var_error,
@@ -3414,6 +3417,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.remoteEndpointId, serializer);
     sse_encode_opt_box_autoadd_bool(self.remoteEphemeral, serializer);
     sse_encode_opt_String(self.remoteTicket, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.bytesHashed, serializer);
     sse_encode_opt_box_autoadd_send_connection_path(
       self.connectionPath,
       serializer,

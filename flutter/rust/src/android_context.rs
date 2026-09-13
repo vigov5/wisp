@@ -30,8 +30,8 @@
 
 use std::sync::OnceLock;
 
-use jni::JNIEnv;
 use jni::objects::{GlobalRef, JObject};
+use jni::JNIEnv;
 
 /// Holds the `Context` for the life of the process. `ndk-context` keeps only
 /// the bare pointer, so a local JNI reference would dangle as soon as this

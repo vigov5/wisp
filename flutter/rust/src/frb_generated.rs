@@ -1703,6 +1703,7 @@ impl SseDecode for crate::api::sender::SendTransferEvent {
         let mut var_remoteEndpointId = <Option<String>>::sse_decode(deserializer);
         let mut var_remoteEphemeral = <Option<bool>>::sse_decode(deserializer);
         let mut var_remoteTicket = <Option<String>>::sse_decode(deserializer);
+        let mut var_bytesHashed = <Option<u64>>::sse_decode(deserializer);
         let mut var_connectionPath =
             <Option<crate::api::sender::SendConnectionPath>>::sse_decode(deserializer);
         let mut var_connectionCandidates =
@@ -1722,6 +1723,7 @@ impl SseDecode for crate::api::sender::SendTransferEvent {
             remote_endpoint_id: var_remoteEndpointId,
             remote_ephemeral: var_remoteEphemeral,
             remote_ticket: var_remoteTicket,
+            bytes_hashed: var_bytesHashed,
             connection_path: var_connectionPath,
             connection_candidates: var_connectionCandidates,
             error: var_error,
@@ -1734,14 +1736,15 @@ impl SseDecode for crate::api::sender::SendTransferPhase {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut inner = <i32>::sse_decode(deserializer);
         return match inner {
-            0 => crate::api::sender::SendTransferPhase::Connecting,
-            1 => crate::api::sender::SendTransferPhase::WaitingForDecision,
-            2 => crate::api::sender::SendTransferPhase::Accepted,
-            3 => crate::api::sender::SendTransferPhase::Declined,
-            4 => crate::api::sender::SendTransferPhase::Sending,
-            5 => crate::api::sender::SendTransferPhase::Completed,
-            6 => crate::api::sender::SendTransferPhase::Cancelled,
-            7 => crate::api::sender::SendTransferPhase::Failed,
+            0 => crate::api::sender::SendTransferPhase::Preparing,
+            1 => crate::api::sender::SendTransferPhase::Connecting,
+            2 => crate::api::sender::SendTransferPhase::WaitingForDecision,
+            3 => crate::api::sender::SendTransferPhase::Accepted,
+            4 => crate::api::sender::SendTransferPhase::Declined,
+            5 => crate::api::sender::SendTransferPhase::Sending,
+            6 => crate::api::sender::SendTransferPhase::Completed,
+            7 => crate::api::sender::SendTransferPhase::Cancelled,
+            8 => crate::api::sender::SendTransferPhase::Failed,
             _ => unreachable!("Invalid variant for SendTransferPhase: {}", inner),
         };
     }
@@ -2536,6 +2539,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::sender::SendTransferEvent {
             self.remote_endpoint_id.into_into_dart().into_dart(),
             self.remote_ephemeral.into_into_dart().into_dart(),
             self.remote_ticket.into_into_dart().into_dart(),
+            self.bytes_hashed.into_into_dart().into_dart(),
             self.connection_path.into_into_dart().into_dart(),
             self.connection_candidates.into_into_dart().into_dart(),
             self.error.into_into_dart().into_dart(),
@@ -2558,14 +2562,15 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::sender::SendTransferEvent>
 impl flutter_rust_bridge::IntoDart for crate::api::sender::SendTransferPhase {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
-            Self::Connecting => 0.into_dart(),
-            Self::WaitingForDecision => 1.into_dart(),
-            Self::Accepted => 2.into_dart(),
-            Self::Declined => 3.into_dart(),
-            Self::Sending => 4.into_dart(),
-            Self::Completed => 5.into_dart(),
-            Self::Cancelled => 6.into_dart(),
-            Self::Failed => 7.into_dart(),
+            Self::Preparing => 0.into_dart(),
+            Self::Connecting => 1.into_dart(),
+            Self::WaitingForDecision => 2.into_dart(),
+            Self::Accepted => 3.into_dart(),
+            Self::Declined => 4.into_dart(),
+            Self::Sending => 5.into_dart(),
+            Self::Completed => 6.into_dart(),
+            Self::Cancelled => 7.into_dart(),
+            Self::Failed => 8.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -3336,6 +3341,7 @@ impl SseEncode for crate::api::sender::SendTransferEvent {
         <Option<String>>::sse_encode(self.remote_endpoint_id, serializer);
         <Option<bool>>::sse_encode(self.remote_ephemeral, serializer);
         <Option<String>>::sse_encode(self.remote_ticket, serializer);
+        <Option<u64>>::sse_encode(self.bytes_hashed, serializer);
         <Option<crate::api::sender::SendConnectionPath>>::sse_encode(
             self.connection_path,
             serializer,
@@ -3353,14 +3359,15 @@ impl SseEncode for crate::api::sender::SendTransferPhase {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(
             match self {
-                crate::api::sender::SendTransferPhase::Connecting => 0,
-                crate::api::sender::SendTransferPhase::WaitingForDecision => 1,
-                crate::api::sender::SendTransferPhase::Accepted => 2,
-                crate::api::sender::SendTransferPhase::Declined => 3,
-                crate::api::sender::SendTransferPhase::Sending => 4,
-                crate::api::sender::SendTransferPhase::Completed => 5,
-                crate::api::sender::SendTransferPhase::Cancelled => 6,
-                crate::api::sender::SendTransferPhase::Failed => 7,
+                crate::api::sender::SendTransferPhase::Preparing => 0,
+                crate::api::sender::SendTransferPhase::Connecting => 1,
+                crate::api::sender::SendTransferPhase::WaitingForDecision => 2,
+                crate::api::sender::SendTransferPhase::Accepted => 3,
+                crate::api::sender::SendTransferPhase::Declined => 4,
+                crate::api::sender::SendTransferPhase::Sending => 5,
+                crate::api::sender::SendTransferPhase::Completed => 6,
+                crate::api::sender::SendTransferPhase::Cancelled => 7,
+                crate::api::sender::SendTransferPhase::Failed => 8,
                 _ => {
                     unimplemented!("");
                 }

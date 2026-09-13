@@ -270,6 +270,42 @@ void main() {
       expect(find.byType(ManifestTreeCard), findsNothing);
       expect(find.byType(ActiveTransferFileList), findsNothing);
 
+      // Half the pick hashed: the ring fills off bytesHashed/totalSize, because
+      // nothing has been sent yet and bytesSent is still zero.
+      fakeSource.emit(
+        SendTransferUpdate(
+          phase: SendTransferUpdatePhase.preparing,
+          bytesHashed: BigInt.from(512),
+          destinationLabel: 'Laptop',
+          statusMessage: 'Calculating file hashes — large files take a moment',
+          itemCount: BigInt.one,
+          totalSize: BigInt.from(1024),
+          bytesSent: BigInt.zero,
+          totalBytes: BigInt.from(1024),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump();
+      expect(
+        buildSendTransferPageData(
+          state: container.read(sendControllerProvider),
+          request: request,
+        ).progressFraction,
+        closeTo(0.5, 0.001),
+      );
+      expect(find.text('HASHING'), findsOneWidget);
+      // The fraction being right is not enough: the ring used to be drawn only
+      // for `transferring`, so hashing showed the text and an empty circle
+      // while the number behind it was already correct.
+      final ring = tester
+          .widgetList<CircularProgressIndicator>(
+            find.byType(CircularProgressIndicator),
+          )
+          .where((indicator) => indicator.value != null)
+          .toList();
+      expect(ring, hasLength(1), reason: 'the hashing ring must be painted');
+      expect(ring.single.value, closeTo(0.5, 0.001));
+
       fakeSource.emit(
         SendTransferUpdate(
           phase: SendTransferUpdatePhase.connecting,
@@ -373,8 +409,42 @@ void main() {
         isA<SendStateTransferring>(),
       );
       expect(find.byType(RecipientAvatar).last, findsOneWidget);
-      expect(find.text('CONNECTING'), findsOneWidget);
+      // A send begins by hashing what was picked — nothing has been sent and no
+      // connection attempted — so the first label must not claim otherwise.
+      // For a multi-gigabyte pick this screen sits here for ~20 s, and calling
+      // it "CONNECTING" reads as a connection that will not come up.
+      expect(find.text('HASHING'), findsOneWidget);
+      // No reading yet: the ring must not pretend to know how far along it is.
+      expect(
+        buildSendTransferPageData(
+          state: container.read(sendControllerProvider),
+          request: request,
+        ).progressFraction,
+        isNull,
+      );
+      // The subtitle, not the visual's `title` — that field is never rendered
+      // by TransferFlowLayout, so wording put there reaches nobody.
+      expect(
+        find.text('Calculating file hashes — large files take a moment'),
+        findsOneWidget,
+      );
+      expect(find.text('CONNECTING'), findsNothing);
       expect(find.text('Cancel transfer'), findsOneWidget);
+
+      fakeSource.emit(
+        SendTransferUpdate(
+          phase: SendTransferUpdatePhase.connecting,
+          destinationLabel: 'Laptop',
+          statusMessage: 'Request sent',
+          itemCount: BigInt.one,
+          totalSize: BigInt.from(1024),
+          bytesSent: BigInt.zero,
+          totalBytes: BigInt.from(1024),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump();
+      expect(find.text('CONNECTING'), findsOneWidget);
 
       fakeSource.emit(
         SendTransferUpdate(
@@ -835,6 +905,74 @@ void main() {
     expect((restored as SendStateDrafting).items, hasLength(1));
     expect(find.text('draft stub'), findsOneWidget);
   });
+
+  testWidgets(
+    'cancel transfer while waiting on the recipient actually cancels the send',
+    (WidgetTester tester) async {
+      // The "Cancel transfer" button, tapped while the send is waiting on the
+      // recipient's decision, must reach the native cancel — not just navigate
+      // home and leave the send running. It used to only clear a *result*
+      // state, so during an active transfer it fell through to goHome() with no
+      // cancel; the send went on to accept and transfer once the recipient
+      // tapped, and the cancel the user asked for was silently lost.
+      final fakeSource = FakeSendTransferSource();
+      final container = _buildContainer(fakeSource);
+      addTearDown(container.dispose);
+      addTearDown(fakeSource.close);
+
+      final controller = container.read(sendControllerProvider.notifier);
+      controller.beginDraft([
+        SendPickedFile(
+          path: '/tmp/report.pdf',
+          name: 'report.pdf',
+          sizeBytes: BigInt.from(1024),
+        ),
+      ]);
+      controller.updateDestinationCode('ABC123');
+      final request = controller.buildSendRequest()!;
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: _buildRouter(request)),
+        ),
+      );
+      await _pumpRoute(tester);
+
+      fakeSource.emit(
+        SendTransferUpdate(
+          phase: SendTransferUpdatePhase.waitingForDecision,
+          destinationLabel: 'Laptop',
+          statusMessage: 'Waiting for confirmation.',
+          itemCount: BigInt.one,
+          totalSize: BigInt.from(1024),
+          bytesSent: BigInt.zero,
+          totalBytes: BigInt.from(1024),
+          plan: _buildPlan(),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump();
+
+      // Waiting for the decision shows the single "Cancel transfer" button,
+      // no "Back" (that is the connecting/preparing affordance).
+      expect(find.text('Cancel transfer'), findsOneWidget);
+
+      await tester.tap(find.text('Cancel transfer'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+
+      // cancelTransfer() ran: it rolls an in-flight send back to a draft. Before
+      // the fix this branch was skipped, so the state stayed Transferring and
+      // the send kept running. This is the deterministic proof the button now
+      // cancels rather than only navigating.
+      expect(container.read(sendControllerProvider), isA<SendStateDrafting>());
+      // And it reached the native cancel (the part that stops the core).
+      expect(fakeSource.cancelCalled, isTrue);
+      expect(find.text('home stub'), findsOneWidget);
+    },
+  );
 
   testWidgets('done button on failed result clears draft and navigates home', (
     WidgetTester tester,

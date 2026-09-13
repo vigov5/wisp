@@ -431,7 +431,8 @@ async fn run_session(
         let decision = tokio::select! {
             res = decision_rx => res.map_err(|_| TransferError::channel_closed("waiting for receiver decision"))?,
             _ = wait_for_cancel(&mut cancel_rx) => return abort_session(&mut control_send, &session_id, protocol_message::CancelPhase::WaitingForDecision).await,
-            _ = connection.closed() => return Err(TransferError::connection_closed("before receiver decision")),
+            msg = protocol_wire::read_sender_message(&mut control_recv) => return sender_message_before_decision(msg, &session_id),
+            reason = connection.closed() => return sender_vanished_before_decision(reason),
             _ = tokio::time::sleep(Duration::from_secs(120)) => return Err(TransferError::timeout("waiting for receiver decision")),
         };
         emit_phase(
@@ -511,7 +512,8 @@ async fn run_session(
     let decision = tokio::select! {
         res = decision_rx => res.map_err(|_| TransferError::channel_closed("waiting for receiver decision"))?,
         _ = wait_for_cancel(&mut cancel_rx) => return abort_session(&mut control_send, &session_id, protocol_message::CancelPhase::WaitingForDecision).await,
-        _ = connection.closed() => return Err(TransferError::connection_closed("before receiver decision")),
+        msg = protocol_wire::read_sender_message(&mut control_recv) => return sender_message_before_decision(msg, &session_id),
+            reason = connection.closed() => return sender_vanished_before_decision(reason),
         _ = tokio::time::sleep(Duration::from_secs(120)) => return Err(TransferError::timeout("waiting for receiver decision")),
     };
     emit_phase(
@@ -1240,15 +1242,22 @@ where
                 Some(BlobDownloadUpdate::Failed { error }) => {
                     download.abort();
                     save_pending_progress_best_effort(&checkpoint, record, record_dir).await;
+                    // Ask the control stream what happened before calling this a
+                    // failure — see [`cancel_behind_a_failed_download`].
+                    if let Some(outcome) =
+                        cancel_behind_a_failed_download(control_recv, session_id).await
+                    {
+                        return Ok((outcome, tracker));
+                    }
                     return Err(error.into());
                 }
             },
-            msg = protocol_wire::read_sender_message(control_recv) => match msg? {
-                protocol_message::SenderMessage::Cancel(c) => {
+            msg = protocol_wire::read_sender_message(control_recv) => match msg {
+                Ok(protocol_message::SenderMessage::Cancel(c)) => {
                     download.abort();
                     return Ok(TransferOutcome::from_remote_cancel(c, session_id).map(|outcome| (outcome, tracker))?);
                 }
-                other => {
+                Ok(other) => {
                     return Err(ProtocolError::unexpected_message_kind(
                         "sender transfer",
                         MessageKind::Cancel,
@@ -1256,6 +1265,23 @@ where
                     )
                     .into())
                 }
+                // The sender cancelling mid-transfer closes the connection, and
+                // its `Cancel` frame loses the race with the close often enough
+                // that this read is how we usually learn. A deliberate close is
+                // a cancelled transfer; reporting it as `receive failed` told
+                // the user something broke when nothing did.
+                Err(error) if crate::transfer::error::is_graceful_peer_close(&error) => {
+                    download.abort();
+                    save_pending_progress_best_effort(&checkpoint, record, record_dir).await;
+                    return Ok((
+                        TransferOutcome::local_cancel(
+                            protocol_message::TransferRole::Sender,
+                            protocol_message::CancelPhase::Transferring,
+                        ),
+                        tracker,
+                    ));
+                }
+                Err(error) => return Err(error.into()),
             },
             _ = wait_for_cancel(cancel_rx) => {
                 download.abort();
@@ -1269,6 +1295,114 @@ where
             },
         }
     }
+}
+
+/// How long a failed download waits for the control stream to explain itself.
+///
+/// The sender writes its `Cancel` immediately before tearing the connection
+/// down, so this only has to cover the gap between those two acts, not a
+/// network round trip. On a genuine network failure it is 400 ms of delay
+/// before a failure the user was going to see anyway.
+const DOWNLOAD_FAILURE_CANCEL_GRACE: Duration = Duration::from_millis(400);
+
+/// Distinguishes "the sender cancelled" from "the transfer broke", when the
+/// blob download has already failed and cannot tell us which.
+///
+/// The blob layer flattens its cause chain into a string — the error reads
+/// `fetching blob content for collection … over quic` and nothing under it
+/// survives — so unlike every other transport failure in this file there is no
+/// `ConnectionError` left to inspect. The answer is on the control stream
+/// instead, where the sender writes a `Cancel` on its way out.
+///
+/// This used to be a `select!` race between the two, which is why the same
+/// cancellation showed up as a clean "cancelled" on one build and
+/// `Transfer failed … over quic` on the next: `tokio::select!` polls its
+/// branches in random order, so whichever became ready first won, and both
+/// become ready at once. Asking directly removes the coin flip.
+async fn cancel_behind_a_failed_download<R>(
+    control_recv: &mut R,
+    session_id: &str,
+) -> Option<TransferOutcome>
+where
+    R: AsyncRead + Unpin,
+{
+    match tokio::time::timeout(
+        DOWNLOAD_FAILURE_CANCEL_GRACE,
+        protocol_wire::read_sender_message(control_recv),
+    )
+    .await
+    {
+        Ok(Ok(protocol_message::SenderMessage::Cancel(cancel))) => {
+            TransferOutcome::from_remote_cancel(cancel, session_id).ok()
+        }
+        // The sender closed before its `Cancel` landed. The close says the same
+        // thing; see [`is_graceful_peer_close`].
+        Ok(Err(error)) if crate::transfer::error::is_graceful_peer_close(&error) => {
+            Some(TransferOutcome::local_cancel(
+                protocol_message::TransferRole::Sender,
+                protocol_message::CancelPhase::Transferring,
+            ))
+        }
+        // Timed out, or something else entirely: the download failure stands.
+        _ => None,
+    }
+}
+
+/// A control message arriving while the offer card is still on screen.
+///
+/// The receiver used to not read this stream at all until the user had tapped,
+/// so the sender's `Cancel` sat unread in the buffer: the card stayed up, and
+/// the withdrawal only surfaced later, as a failure, when something else
+/// touched the connection. Reading it here is what lets the card retire by
+/// itself the moment the sender backs out.
+fn sender_message_before_decision(
+    message: std::result::Result<protocol_message::SenderMessage, ProtocolError>,
+    session_id: &str,
+) -> Result<TransferOutcome> {
+    match message {
+        Ok(protocol_message::SenderMessage::Cancel(cancel)) => {
+            Ok(TransferOutcome::from_remote_cancel(cancel, session_id)?)
+        }
+        Ok(other) => Err(ProtocolError::unexpected_message_kind(
+            "sender while awaiting decision",
+            MessageKind::Cancel,
+            other.kind(),
+        )
+        .into()),
+        // The sender closing without getting its `Cancel` out means the same
+        // thing; see [`sender_vanished_before_decision`].
+        Err(error) if crate::transfer::error::is_graceful_peer_close(&error) => {
+            Ok(TransferOutcome::local_cancel(
+                protocol_message::TransferRole::Sender,
+                protocol_message::CancelPhase::WaitingForDecision,
+            ))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// What it means when the connection dies while the offer card is still on
+/// screen waiting for the user.
+///
+/// The sender does write a `Cancel` before it goes, but this side is parked on
+/// the decision channel and never reads the control stream, so the close is all
+/// that reaches us. A deliberate close means the sender withdrew the offer —
+/// report that, so the card can retire saying "sender cancelled" instead of
+/// the old `connection closed while before receiver decision`, which was both a
+/// failure the user hadn't caused and a garbled sentence. A transport death
+/// stays a transport failure, and stays retryable.
+fn sender_vanished_before_decision(
+    reason: iroh::endpoint::ConnectionError,
+) -> Result<TransferOutcome> {
+    if crate::transfer::error::is_graceful_peer_close(&reason) {
+        return Ok(TransferOutcome::local_cancel(
+            protocol_message::TransferRole::Sender,
+            protocol_message::CancelPhase::WaitingForDecision,
+        ));
+    }
+    Err(TransferError::connection_closed(
+        "waiting for the receiver's decision",
+    ))
 }
 
 async fn abort_session(
@@ -1726,6 +1860,231 @@ mod tests {
         assert!(
             download.was_aborted(),
             "the download task must be aborted before returning",
+        );
+    }
+
+    /// Cancelling a send mid-transfer kills the blob download *and* puts a
+    /// `Cancel` on the control stream, and both land at once. This used to be a
+    /// `select!` race, so the same action showed up as a clean "cancelled" on
+    /// one build and `Transfer failed … over quic` on the next — the blob
+    /// layer's error is a flattened string, so nothing in it says which.
+    #[tokio::test]
+    async fn a_cancel_beats_the_download_failure_it_caused() {
+        let plan = transfer_plan();
+        let (mut download, events_tx) = FakeDownload::new();
+        events_tx
+            .send(BlobDownloadUpdate::Failed {
+                error: crate::blobs::error::BlobError::fetch(
+                    "collection deadbeef from cafe",
+                    std::io::Error::other(
+                        "fetching blob content for collection blob deadbeef over quic",
+                    ),
+                ),
+            })
+            .expect("stream is open");
+
+        let (mut progress_send, _progress_peer) = duplex(8192);
+        let (mut control_recv, mut control_peer) = duplex(8192);
+        // Deliberately *not* written up front: a buffered cancel is already
+        // readable when the select runs, so the control-stream arm wins and the
+        // failure arm — the one under test — never executes. Writing it a beat
+        // later forces the download failure to be observed first, which is the
+        // ordering that produced `Transfer failed … over quic` on a device.
+        let cancel_writer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            write_sender_message(
+                &mut control_peer,
+                &protocol_message::SenderMessage::Cancel(protocol_message::Cancel {
+                    session_id: "session-1".to_owned(),
+                    by: protocol_message::TransferRole::Sender,
+                    phase: protocol_message::CancelPhase::Transferring,
+                    reason: "sender cancelled transfer".to_owned(),
+                }),
+            )
+            .await
+            .expect("control stream accepts the cancel");
+            control_peer
+        });
+
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+        let mut record = record_with_exported(&[]);
+
+        let (outcome, _tracker) = do_transfer(
+            "session-1",
+            &plan,
+            &mut download,
+            &mut progress_send,
+            &mut control_recv,
+            &mut cancel_rx,
+            &None,
+            &mut record,
+            &std::env::temp_dir(),
+            0,
+        )
+        .await
+        .expect("a cancelled transfer is not a failed one");
+
+        let _control_peer = cancel_writer.await.expect("cancel writer finished");
+        match outcome {
+            TransferOutcome::Cancelled(cancellation) => {
+                assert_eq!(cancellation.by, protocol_message::TransferRole::Sender);
+                assert_eq!(cancellation.reason, "sender cancelled transfer");
+            }
+            other => panic!("expected a cancellation, got {other:?}"),
+        }
+    }
+
+    /// Control for the test above: with nothing on the control stream to
+    /// explain it, a failed download is still a failure. Guards against the
+    /// grace period swallowing real errors.
+    #[tokio::test]
+    async fn a_download_failure_with_no_cancel_behind_it_still_fails() {
+        let plan = transfer_plan();
+        let (mut download, events_tx) = FakeDownload::new();
+        events_tx
+            .send(BlobDownloadUpdate::Failed {
+                error: crate::blobs::error::BlobError::fetch(
+                    "collection deadbeef from cafe",
+                    std::io::Error::other("the network went away"),
+                ),
+            })
+            .expect("stream is open");
+
+        let (mut progress_send, _progress_peer) = duplex(8192);
+        // Held open and silent: no cancel is coming.
+        let (mut control_recv, _control_peer) = duplex(8192);
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+        let mut record = record_with_exported(&[]);
+
+        let error = do_transfer(
+            "session-1",
+            &plan,
+            &mut download,
+            &mut progress_send,
+            &mut control_recv,
+            &mut cancel_rx,
+            &None,
+            &mut record,
+            &std::env::temp_dir(),
+            0,
+        )
+        .await
+        .expect_err("an unexplained download failure is still a failure");
+
+        assert!(
+            matches!(error, TransferError::Blob(_)),
+            "expected the blob failure to survive, got {error:?}",
+        );
+    }
+
+    /// The sender withdrawing before the user has tapped anything. Its `Cancel`
+    /// used to sit unread — this side only watched the decision channel — so
+    /// the offer card stayed on screen until something else disturbed the
+    /// connection.
+    #[test]
+    fn a_sender_cancel_while_deciding_retires_the_offer() {
+        let outcome = sender_message_before_decision(
+            Ok(protocol_message::SenderMessage::Cancel(
+                protocol_message::Cancel {
+                    session_id: "session-1".to_owned(),
+                    by: protocol_message::TransferRole::Sender,
+                    phase: protocol_message::CancelPhase::WaitingForDecision,
+                    reason: "cancelled by sender".to_owned(),
+                },
+            )),
+            "session-1",
+        )
+        .expect("a sender cancel is an answer, not a failure");
+
+        match outcome {
+            TransferOutcome::Cancelled(cancellation) => {
+                assert_eq!(cancellation.by, protocol_message::TransferRole::Sender);
+                assert_eq!(cancellation.reason, "cancelled by sender");
+            }
+            other => panic!("expected a cancellation, got {other:?}"),
+        }
+    }
+
+    /// A control stream that dies the way the sender's own cancel arrives:
+    /// the connection is closed with a QUIC application close, and the pending
+    /// read fails with it.
+    struct PeerClosedControlStream {
+        error: Option<std::io::Error>,
+    }
+
+    impl PeerClosedControlStream {
+        fn session_complete() -> Self {
+            use iroh::endpoint::{ApplicationClose, ConnectionError, ReadError, VarInt};
+            Self {
+                error: Some(std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    ReadError::ConnectionLost(ConnectionError::ApplicationClosed(
+                        ApplicationClose {
+                            error_code: VarInt::from_u32(0),
+                            reason: bytes::Bytes::from_static(b"session complete"),
+                        },
+                    )),
+                )),
+            }
+        }
+    }
+
+    impl tokio::io::AsyncRead for PeerClosedControlStream {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Err(self
+                .error
+                .take()
+                .unwrap_or_else(|| std::io::Error::from(std::io::ErrorKind::NotConnected))))
+        }
+    }
+
+    /// Cancelling a send mid-transfer closes the connection, and the `Cancel`
+    /// frame usually loses the race with the close — so this read failing is
+    /// how the receiver actually finds out. It used to propagate as
+    /// `receive failed = reading message length: connection lost: closed by
+    /// peer: session complete (code 0)`: an error card for something the other
+    /// user did on purpose. It has to read as a cancelled transfer.
+    #[tokio::test]
+    async fn a_sender_closing_mid_transfer_cancels_rather_than_fails() {
+        let plan = transfer_plan();
+        let (mut download, _events_tx) = FakeDownload::new();
+        let (mut progress_send, _progress_peer) = duplex(8192);
+        let mut control_recv = PeerClosedControlStream::session_complete();
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+        let mut record = record_with_exported(&[]);
+
+        let (outcome, _tracker) = do_transfer(
+            "session-1",
+            &plan,
+            &mut download,
+            &mut progress_send,
+            &mut control_recv,
+            &mut cancel_rx,
+            &None,
+            &mut record,
+            &std::env::temp_dir(),
+            0,
+        )
+        .await
+        .expect("a deliberate peer close is a cancellation, not a failure");
+
+        match outcome {
+            TransferOutcome::Cancelled(cancellation) => {
+                assert_eq!(cancellation.by, protocol_message::TransferRole::Sender);
+                assert_eq!(
+                    cancellation.phase,
+                    protocol_message::CancelPhase::Transferring
+                );
+            }
+            other => panic!("expected a cancellation, got {other:?}"),
+        }
+        assert!(
+            download.was_aborted(),
+            "the download must be stopped when the sender goes away",
         );
     }
 

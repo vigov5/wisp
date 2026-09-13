@@ -4,8 +4,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::error::{ProtocolError, Result};
 use super::message::{
-    Decline, Hello, Identity, MessageKind, Offer, PROTOCOL_VERSION, ReceiverMessage, SenderMessage,
-    TransferRole,
+    Cancel, Decline, Hello, Identity, MessageKind, Offer, PROTOCOL_VERSION, ReceiverMessage,
+    SenderMessage, TransferRole,
 };
 use super::wire::{read_receiver_message, write_sender_message};
 
@@ -18,6 +18,7 @@ pub(crate) enum SenderState {
     WaitingForDecision,
     Accepted,
     Declined,
+    Cancelled,
     Failed,
 }
 
@@ -44,6 +45,7 @@ impl SenderMachine {
                 | (OfferSent, WaitingForDecision)
                 | (WaitingForDecision, Accepted)
                 | (WaitingForDecision, Declined)
+                | (WaitingForDecision, Cancelled)
                 | (_, Failed)
         );
 
@@ -76,6 +78,11 @@ pub(crate) struct SenderPeer {
 pub(crate) enum SenderControlOutcome {
     Accepted(SenderPeer),
     Declined(Decline),
+    /// The receiver withdrew while we were waiting on it — a `Cancel` is a
+    /// legitimate answer to an offer, not just Accept/Decline. Treating it as
+    /// an unexpected message kind is what put "Protocol mismatch — update Wisp
+    /// on both devices" on screen for an ordinary cancellation.
+    Cancelled(Cancel),
 }
 
 #[derive(Debug)]
@@ -243,6 +250,15 @@ impl Sender {
                 self.machine.transition(SenderState::Declined)?;
                 SenderControlOutcome::Declined(message)
             }
+            // A receiver that withdraws while we wait is answering the offer,
+            // not breaking the protocol. This used to fall through to the
+            // `other` arm below and surface as "unexpected receiver decision
+            // message kind Cancel (expected Accept)".
+            ReceiverMessage::Cancel(message) => {
+                ensure_session_id(&message.session_id, &self.session_id)?;
+                self.machine.transition(SenderState::Cancelled)?;
+                SenderControlOutcome::Cancelled(message)
+            }
             other => {
                 self.machine.transition(SenderState::Failed)?;
                 return Err(ProtocolError::unexpected_message_kind(
@@ -302,8 +318,8 @@ fn ensure_session_id(actual: &str, expected: &str) -> Result<()> {
 mod tests {
     use super::{Sender, SenderControlOutcome, SenderMachine, SenderState};
     use crate::protocol::message::{
-        Accept, Decline, DeviceType, Identity, OfferAck, PROTOCOL_VERSION, ReceiverMessage,
-        SenderMessage, TransferManifest, TransferRole,
+        Accept, Cancel, CancelPhase, Decline, DeviceType, Hello, Identity, OfferAck,
+        PROTOCOL_VERSION, ReceiverMessage, SenderMessage, TransferManifest, TransferRole,
     };
     use crate::protocol::wire::{read_sender_message, write_receiver_message};
     use iroh::SecretKey;
@@ -394,6 +410,98 @@ mod tests {
 
         receiver_task.await.unwrap();
         assert!(outcome.is_ok());
+        Ok(())
+    }
+
+    /// A receiver that backs out while the sender is waiting sends `Cancel`,
+    /// not `Decline`. The sender used to reject that as an unexpected message
+    /// kind, and the app turned it into "Protocol mismatch — update Wisp on
+    /// both devices" for what was an ordinary cancellation.
+    #[tokio::test]
+    async fn sender_handler_accepts_a_cancel_as_an_answer_to_the_offer()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (local, remote) = duplex(1024);
+        let (mut local_read, mut local_write) = tokio::io::split(local);
+        let (mut remote_read, mut remote_write) = tokio::io::split(remote);
+
+        let mut handler = Sender::new(
+            "session-1".to_owned(),
+            Identity {
+                role: TransferRole::Sender,
+                endpoint_id: SecretKey::from_bytes(&[1; 32]).public(),
+                device_name: "sender".to_owned(),
+                device_type: DeviceType::Laptop,
+                web: false,
+                ephemeral: false,
+            },
+        );
+
+        let receiver_task = tokio::spawn(async move {
+            let hello = read_sender_message(&mut remote_read).await.unwrap();
+            assert!(matches!(hello, SenderMessage::Hello(_)));
+
+            write_receiver_message(
+                &mut remote_write,
+                &ReceiverMessage::Hello(Hello {
+                    version: PROTOCOL_VERSION,
+                    session_id: "session-1".to_owned(),
+                    identity: Identity {
+                        role: TransferRole::Receiver,
+                        endpoint_id: SecretKey::from_bytes(&[2; 32]).public(),
+                        device_name: "receiver".to_owned(),
+                        device_type: DeviceType::Phone,
+                        web: false,
+                        ephemeral: false,
+                    },
+                }),
+            )
+            .await
+            .unwrap();
+
+            let offer = read_sender_message(&mut remote_read).await.unwrap();
+            assert!(matches!(offer, SenderMessage::Offer(_)));
+
+            write_receiver_message(
+                &mut remote_write,
+                &ReceiverMessage::OfferAck(OfferAck {
+                    session_id: "session-1".to_owned(),
+                }),
+            )
+            .await
+            .unwrap();
+
+            write_receiver_message(
+                &mut remote_write,
+                &ReceiverMessage::Cancel(Cancel {
+                    session_id: "session-1".to_owned(),
+                    by: TransferRole::Receiver,
+                    phase: CancelPhase::WaitingForDecision,
+                    reason: "cancelled by receiver".to_owned(),
+                }),
+            )
+            .await
+            .unwrap();
+        });
+
+        let outcome = handler
+            .run_control(
+                &mut local_write,
+                &mut local_read,
+                TransferManifest { items: vec![] },
+                [0u8; 32].into(),
+                None,
+            )
+            .await?;
+
+        receiver_task.await.unwrap();
+        match outcome {
+            SenderControlOutcome::Cancelled(cancel) => {
+                assert_eq!(cancel.by, TransferRole::Receiver);
+                assert_eq!(cancel.reason, "cancelled by receiver");
+            }
+            other => panic!("expected a cancellation, got {other:?}"),
+        }
+        assert_eq!(handler.state(), SenderState::Cancelled);
         Ok(())
     }
 

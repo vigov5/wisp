@@ -9,6 +9,13 @@ pub use wisp_core::util::{CandidatePath, ConnectionPath, ConnectionPathKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendPhase {
+    /// Reading, hashing and importing the picked files, before anything is
+    /// sent anywhere. Its own phase because it is *slow* — a 6.2 GB file spends
+    /// 20 s here — and it used to be reported as `Connecting`, so the UI said
+    /// "Connecting to recipient · Request sent" for twenty seconds during which
+    /// no request had been sent and no connection attempted. Users read that as
+    /// a connection that could not be established.
+    Preparing,
     Connecting,
     WaitingForDecision,
     Accepted,
@@ -47,6 +54,13 @@ pub struct SendEvent {
     /// saved-devices repo persists it as `lastTicket` for fast-reconnect.
     /// `None` until the destination resolves, or when re-encoding fails.
     pub remote_ticket: Option<String>,
+    /// Bytes hashed so far, while [`SendPhase::Preparing`] is in progress.
+    ///
+    /// Its own field rather than a reuse of `bytes_sent`: nothing has been sent
+    /// during this phase, and a field whose name means one thing while it
+    /// carries another is how several of this screen's bugs happened. `None`
+    /// outside preparing. Pair it with `total_size` for a fraction.
+    pub bytes_hashed: Option<u64>,
     pub connection_path: Option<ConnectionPath>,
     /// Every candidate transport address iroh is attempting for the peer,
     /// tagged active/idle. Populated by the path watcher during Connecting so

@@ -10,7 +10,7 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::{
     blobs::receive::BlobTransportProfile,
-    blobs::send::{BlobService, BlobServingStrategy, PreparedStore},
+    blobs::send::{BlobService, BlobServingStrategy, HashProgress, PreparedStore},
     blobs::telemetry::{
         PhaseOutcome, TelemetryRole, TransferPhase as TelemetryPhase, benchmark_run_id, emit_phase,
     },
@@ -53,6 +53,12 @@ const DECISION_WAIT: Duration = Duration::from_secs(130);
 /// manually retry. Each attempt is capped so a genuinely dead address fails
 /// fast (and frees the next attempt) rather than hanging on iroh's own timeout;
 /// the whole loop honours cancellation between and during attempts.
+/// How often hashing progress goes out while preparing a send.
+///
+/// The blob layer reports an offset every few hundred KB; at 6.2 GB that is
+/// thousands of readings for a ring with a few hundred pixels of travel.
+const HASHING_REPORT_INTERVAL: Duration = Duration::from_millis(150);
+
 const CONNECT_ATTEMPTS: usize = 4;
 const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(6);
 const CONNECT_RETRY_DELAY: Duration = Duration::from_millis(400);
@@ -71,6 +77,15 @@ pub struct SendRequest {
 
 #[derive(Debug)]
 pub enum SenderEvent {
+    /// Bytes hashed so far, while the send is still preparing.
+    ///
+    /// Emitted before any plan exists — the plan is a *product* of this step —
+    /// so it carries no `prepared_plan` and the UI pairs it with the selection
+    /// size it already knows.
+    Hashing {
+        session_id: String,
+        bytes_hashed: u64,
+    },
     Connecting {
         session_id: String,
         peer_endpoint_id: EndpointId,
@@ -325,8 +340,15 @@ impl SenderSession {
                     )
                 }
                 None => {
-                    let prepared =
-                        PreparedStore::prepare(&scratch.path, self.request.files.clone()).await?;
+                    let (progress, hashing_reporter) = self.spawn_hashing_reporter();
+                    let prepared = PreparedStore::prepare_with_progress(
+                        &scratch.path,
+                        self.request.files.clone(),
+                        progress,
+                    )
+                    .await;
+                    hashing_reporter.abort();
+                    let prepared = prepared?;
                     let prepared_plan = build_prepared_plan(&self.session_id, &prepared)?;
                     let manifest = prepared.manifest();
                     let collection_hash = prepared.collection_hash();
@@ -477,28 +499,10 @@ impl SenderSession {
             }
         };
 
-        match outcome {
-            protocol_sender::SenderControlOutcome::Accepted(peer) => {
-                self.events.emit(SenderEvent::Accepted {
-                    session_id: self.session_id.clone(),
-                    receiver_device_name: peer.identity.device_name.clone(),
-                    receiver_device_type: peer.identity.device_type,
-                    receiver_endpoint_id: peer.identity.endpoint_id,
-                    receiver_web: peer.identity.web,
-                    receiver_ephemeral: peer.identity.ephemeral,
-                    prepared_plan: prepared_plan.clone(),
-                });
-            }
-            protocol_sender::SenderControlOutcome::Declined(declined) => {
-                self.events.emit(SenderEvent::Declined {
-                    session_id: self.session_id.clone(),
-                    reason: declined.reason,
-                    prepared_plan: prepared_plan.clone(),
-                });
-                return Ok(TransferOutcome::Declined {
-                    reason: "receiver declined".to_owned(),
-                });
-            }
+        if let Some(terminal) =
+            Self::settle_decision(&self.events, &self.session_id, &prepared_plan, outcome)?
+        {
+            return Ok(terminal);
         }
 
         // --- Inline text: no blobs.  The text already reached the receiver in
@@ -696,6 +700,102 @@ impl SenderSession {
             "connect.exhausted",
         );
         Err(last_err.unwrap_or_else(|| TransferError::timeout("connecting to peer")))
+    }
+
+    /// Turns the receiver's answer into an event and, when the send is over, an
+    /// outcome. `None` means "accepted, carry on".
+    ///
+    /// Extracted from `Session::run` so the pairing below can be tested without a
+    /// live connection, because getting it wrong is invisible from the outcome
+    /// alone. The app layer classifies a receiver cancel taken during the decision
+    /// wait as a *decline* (`is_receiver_decline_cancel`), and the Flutter bridge
+    /// deliberately emits nothing for a declined outcome — on the grounds that this
+    /// event already said so. A branch that returns the outcome without emitting
+    /// therefore leaves the sender's screen on "Waiting" with no way out.
+    fn settle_decision(
+        events: &SenderEventSink,
+        session_id: &str,
+        prepared_plan: &TransferPlan,
+        outcome: protocol_sender::SenderControlOutcome,
+    ) -> Result<Option<TransferOutcome>> {
+        match outcome {
+            protocol_sender::SenderControlOutcome::Accepted(peer) => {
+                events.emit(SenderEvent::Accepted {
+                    session_id: session_id.to_owned(),
+                    receiver_device_name: peer.identity.device_name.clone(),
+                    receiver_device_type: peer.identity.device_type,
+                    receiver_endpoint_id: peer.identity.endpoint_id,
+                    receiver_web: peer.identity.web,
+                    receiver_ephemeral: peer.identity.ephemeral,
+                    prepared_plan: prepared_plan.clone(),
+                });
+                Ok(None)
+            }
+            protocol_sender::SenderControlOutcome::Declined(declined) => {
+                events.emit(SenderEvent::Declined {
+                    session_id: session_id.to_owned(),
+                    reason: declined.reason,
+                    prepared_plan: prepared_plan.clone(),
+                });
+                Ok(Some(TransferOutcome::Declined {
+                    reason: "receiver declined".to_owned(),
+                }))
+            }
+            // The receiver withdrew while we were waiting on it: a `Cancel` is a
+            // legitimate answer to an offer, and used to be rejected as an
+            // unexpected message kind ("Protocol mismatch — update Wisp on both
+            // devices") for what is an ordinary cancellation.
+            protocol_sender::SenderControlOutcome::Cancelled(cancel) => {
+                events.emit(SenderEvent::Declined {
+                    session_id: session_id.to_owned(),
+                    reason: cancel.reason.clone(),
+                    prepared_plan: prepared_plan.clone(),
+                });
+                Ok(Some(TransferOutcome::from_remote_cancel(
+                    cancel, session_id,
+                )?))
+            }
+        }
+    }
+
+    /// Wires up hashing progress, if anyone is listening for it.
+    ///
+    /// Returns the sink to hand to the blob layer and the task pumping its
+    /// numbers out as [`SenderEvent::Hashing`]. The task is aborted the moment
+    /// preparing ends, whether it succeeded or not — a send that fails while
+    /// hashing must not leave a reporter behind.
+    ///
+    /// Throttled because the source is not: hashing 6.2 GB emits an offset
+    /// every few hundred KB, which is thousands of events across the bridge for
+    /// a progress ring that cannot show more than a screen's worth of steps.
+    fn spawn_hashing_reporter(&self) -> (Option<HashProgress>, tokio::task::JoinHandle<()>) {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<u64>();
+        let events = self.events.clone();
+        let session_id = self.session_id.clone();
+        let handle = tokio::spawn(async move {
+            let mut last_sent = Instant::now() - HASHING_REPORT_INTERVAL;
+            let mut pending: Option<u64> = None;
+            while let Some(total) = rx.recv().await {
+                pending = Some(total);
+                if last_sent.elapsed() >= HASHING_REPORT_INTERVAL {
+                    events.emit(SenderEvent::Hashing {
+                        session_id: session_id.clone(),
+                        bytes_hashed: total,
+                    });
+                    last_sent = Instant::now();
+                    pending = None;
+                }
+            }
+            // The last reading matters most — it is the one that leaves the ring
+            // full instead of frozen a little short of the end.
+            if let Some(total) = pending {
+                events.emit(SenderEvent::Hashing {
+                    session_id,
+                    bytes_hashed: total,
+                });
+            }
+        });
+        (Some(HashProgress::new(tx)), handle)
     }
 
     /// Finish a text-only (inline) send.  By this point the receiver has the
@@ -1287,10 +1387,10 @@ fn from_wire_snapshot(
 mod tests {
     use super::*;
     use crate::protocol::message::{
-        Accept, DeviceType, Hello, Identity, ManifestItem, OfferAck, PROTOCOL_VERSION,
-        ReceiverMessage, SenderMessage, TransferCompleted, TransferManifest, TransferProgress,
-        TransferProgressPayload, TransferResult as TransferResultMessage, TransferRole,
-        TransferStatus,
+        Accept, Cancel, CancelPhase, Decline, DeviceType, Hello, Identity, ManifestItem, OfferAck,
+        PROTOCOL_VERSION, ReceiverMessage, SenderMessage, TransferCompleted, TransferManifest,
+        TransferProgress, TransferProgressPayload, TransferResult as TransferResultMessage,
+        TransferRole, TransferStatus,
     };
     use crate::protocol::wire::{read_sender_message, write_receiver_message};
     use crate::transfer::TransferPhase;
@@ -1632,6 +1732,95 @@ mod tests {
             web: false,
             ephemeral: false,
         }
+    }
+
+    /// Drains whatever `settle_decision` emitted.
+    fn settle(
+        outcome: protocol_sender::SenderControlOutcome,
+    ) -> (Option<TransferOutcome>, Vec<SenderEvent>) {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let events = SenderEventSink::new("session-1".to_owned(), Some(tx));
+        let plan = TransferPlan::from_manifest("session-1", &manifest()).expect("plan");
+        let settled = SenderSession::settle_decision(&events, "session-1", &plan, outcome)
+            .expect("settling a decision does not fail");
+        let mut emitted = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            emitted.push(event);
+        }
+        (settled, emitted)
+    }
+
+    /// The receiver cancelling while it is being asked ends the send, and the
+    /// *event* is what the UI runs on: the app layer reads this cancellation as
+    /// a decline, and the Flutter bridge stays silent for a declined outcome
+    /// because this event is supposed to have already carried the news.
+    /// Returning the outcome without emitting left the sender on "Waiting"
+    /// forever — a terminal state with no terminal event.
+    #[test]
+    fn a_receiver_cancel_ends_the_send_and_says_so() {
+        let (settled, emitted) = settle(protocol_sender::SenderControlOutcome::Cancelled(Cancel {
+            session_id: "session-1".to_owned(),
+            by: TransferRole::Receiver,
+            phase: CancelPhase::WaitingForDecision,
+            reason: "cancelled by receiver".to_owned(),
+        }));
+
+        match settled {
+            Some(TransferOutcome::Cancelled(cancellation)) => {
+                assert_eq!(cancellation.by, TransferRole::Receiver);
+                assert_eq!(cancellation.reason, "cancelled by receiver");
+            }
+            other => panic!("expected a cancellation, got {other:?}"),
+        }
+        assert!(
+            emitted
+                .iter()
+                .any(|event| matches!(event, SenderEvent::Declined { .. })),
+            "a terminal outcome must be accompanied by a terminal event, got {emitted:?}",
+        );
+    }
+
+    #[test]
+    fn a_decline_ends_the_send_and_says_so() {
+        let (settled, emitted) = settle(protocol_sender::SenderControlOutcome::Declined(Decline {
+            session_id: "session-1".to_owned(),
+            reason: "declined by user".to_owned(),
+        }));
+
+        assert!(matches!(settled, Some(TransferOutcome::Declined { .. })));
+        assert!(
+            emitted
+                .iter()
+                .any(|event| matches!(event, SenderEvent::Declined { .. })),
+            "got {emitted:?}",
+        );
+    }
+
+    /// Acceptance is the one answer that is *not* terminal: the send carries on,
+    /// so `settle_decision` must hand back `None` rather than an outcome.
+    #[test]
+    fn an_acceptance_lets_the_send_continue() {
+        let (settled, emitted) = settle(protocol_sender::SenderControlOutcome::Accepted(
+            protocol_sender::SenderPeer {
+                session_id: "session-1".to_owned(),
+                identity: Identity {
+                    role: TransferRole::Receiver,
+                    endpoint_id: SecretKey::from_bytes(&[2; 32]).public(),
+                    device_name: "receiver".to_owned(),
+                    device_type: DeviceType::Phone,
+                    web: false,
+                    ephemeral: false,
+                },
+            },
+        ));
+
+        assert!(settled.is_none(), "an accepted send is not over");
+        assert!(
+            emitted
+                .iter()
+                .any(|event| matches!(event, SenderEvent::Accepted { .. })),
+            "got {emitted:?}",
+        );
     }
 
     fn manifest() -> TransferManifest {

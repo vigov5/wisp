@@ -5,11 +5,11 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use wisp_app::{
     identity as app_identity, AcceptedDestinations, ConflictPolicy,
-    ConnectionPath as AppConnectionPath, OfferDecision,
-    PairingCodeState, QrPairingInfo as AppQrPairingInfo, ReceiverConfig,
-    ReceiverEvent as AppReceiverEvent, ReceiverOfferEvent as AppReceiverOfferEvent,
-    ReceiverOfferFile as AppReceiverOfferFile, ReceiverOfferPhase as AppReceiverOfferPhase,
-    ReceiverRegistration as AppReceiverRegistration, ReceiverService,
+    ConnectionPath as AppConnectionPath, OfferDecision, PairingCodeState,
+    QrPairingInfo as AppQrPairingInfo, ReceiverConfig, ReceiverEvent as AppReceiverEvent,
+    ReceiverOfferEvent as AppReceiverOfferEvent, ReceiverOfferFile as AppReceiverOfferFile,
+    ReceiverOfferPhase as AppReceiverOfferPhase, ReceiverRegistration as AppReceiverRegistration,
+    ReceiverService,
 };
 use wisp_core::transfer::{TransferPhase, TransferSnapshot};
 

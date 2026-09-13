@@ -1,5 +1,8 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
+
+use tokio::sync::Semaphore;
 
 use futures_lite::StreamExt;
 use wisp_app::{
@@ -17,11 +20,46 @@ use crate::api::error::map_optional_user_facing_error;
 use crate::frb_generated::StreamSink;
 
 const DEFAULT_RENDEZVOUS_URL: &str = "https://rendezvous.wisp.mooo.com";
-static ACTIVE_SEND_CANCEL: LazyLock<Mutex<Option<SendCancelHandle>>> =
-    LazyLock::new(|| Mutex::new(None));
+/// The send this process is running, or is about to.
+struct ActiveSend {
+    generation: u64,
+    /// `None` between [`start_send_transfer`] returning and the spawned task
+    /// actually starting the session — it has to wait for [`SEND_SLOT`] first.
+    handle: Option<SendCancelHandle>,
+    /// A cancel that arrived while `handle` was still `None`.
+    ///
+    /// Without this the cancel was simply lost: the slot was empty, so
+    /// `cancel_active_send_transfer` reported "nothing to cancel" and the
+    /// session it was meant to stop went on to accept the transfer. Observed on
+    /// a device as a send that kept going after Cancel, reaching the receiver
+    /// as a mid-transfer cancellation seconds later instead of withdrawing the
+    /// offer. Recording the request lets the session cancel itself the moment
+    /// it has something to cancel.
+    cancel_requested: bool,
+}
+
+static ACTIVE_SEND: LazyLock<Mutex<Option<ActiveSend>>> = LazyLock::new(|| Mutex::new(None));
+
+/// Serializes send sessions: exactly one permit, held for a whole send.
+///
+/// A send used to be started *before* the previous one was told to stop, and
+/// the stop was fire-and-forget on top of that. Picking a file, leaving the
+/// screen and picking again therefore left two sessions hashing the same
+/// descriptors at once — observed in the field as three overlapping sessions,
+/// the abandoned one finishing its hash 3 s after its replacement had started
+/// and then releasing the picker's file descriptor out from under it. The
+/// replacement died importing a descriptor that no longer existed.
+static SEND_SLOT: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(1));
+
+/// Bumped by every [`start_send_transfer`]. A send that wins the permit only
+/// to find the counter has moved on was superseded while it queued, so it
+/// steps aside instead of running a transfer the user has already replaced.
+static SEND_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendTransferPhase {
+    /// Hashing and importing the picked files — nothing has been sent yet.
+    Preparing,
     Connecting,
     WaitingForDecision,
     Accepted,
@@ -111,6 +149,10 @@ pub struct SendTransferEvent {
     /// the saved-devices repo can persist a `lastTicket` for code-based
     /// sends — otherwise Recent tile shows "no cached connection info".
     pub remote_ticket: Option<String>,
+    /// Bytes hashed so far while `Preparing`. `None` in every other phase.
+    /// Deliberately not folded into `bytes_sent`: nothing is sent during that
+    /// phase, and the ring is driven off this against `total_size`.
+    pub bytes_hashed: Option<u64>,
     pub connection_path: Option<SendConnectionPath>,
     /// Every candidate path iroh is attempting, tagged active/idle. Drives the
     /// per-candidate rows on the connecting screen. Empty outside Connecting /
@@ -131,7 +173,10 @@ pub fn start_send_transfer(
     };
     let draft = match request.inline_text {
         Some(text) => SendDraft::new_text(config, text),
-        None => SendDraft::new(config, request.sources.into_iter().map(map_source).collect()),
+        None => SendDraft::new(
+            config,
+            request.sources.into_iter().map(map_source).collect(),
+        ),
     };
 
     let destination = match request
@@ -172,19 +217,63 @@ pub fn start_send_transfer(
         Some(endpoint) => SendSession::with_endpoint(draft, destination, endpoint),
         None => SendSession::new(draft, destination),
     };
-    let run = {
-        let _guard = RUNTIME.enter();
-        session.start()
-    };
-    let cancel_handle = run.cancel_handle();
-
-    if let Ok(mut guard) = ACTIVE_SEND_CANCEL.lock() {
-        if let Some(existing) = guard.replace(cancel_handle) {
-            cancel_send_session(existing);
-        }
-    }
+    // Claim this send's place in line before spawning: the counter has to move
+    // synchronously with the call, or two rapid starts could both believe they
+    // are the newest.
+    let generation = SEND_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    // Claim the slot *now*, so a cancel arriving before the session starts has
+    // somewhere to land.
+    let previous = ACTIVE_SEND.lock().ok().and_then(|mut guard| {
+        guard.replace(ActiveSend {
+            generation,
+            handle: None,
+            cancel_requested: false,
+        })
+    });
+    let previous_handle = previous.and_then(|previous| previous.handle);
 
     RUNTIME.spawn(async move {
+        // Tell the outgoing send to stop, then wait for the permit — which it
+        // only releases once it has actually wound down. Cancelling without
+        // waiting is what allowed two sessions to hold the same descriptors.
+        if let Some(previous) = previous_handle {
+            let _ = previous.cancel_transfer().await;
+        }
+        let Ok(_slot) = SEND_SLOT.acquire().await else {
+            return;
+        };
+
+        // Someone tapped Send again while we were queued. Their session is the
+        // one the user is looking at; run theirs, not ours.
+        if SEND_GENERATION.load(Ordering::SeqCst) != generation {
+            let _ = updates.add(terminal_event_for_app_error(
+                fallback_destination,
+                AppError::Cancelled {
+                    reason: "replaced by a newer send".to_owned(),
+                },
+            ));
+            return;
+        }
+
+        let run = session.start();
+        let handle = run.cancel_handle();
+        // Publish the handle and pick up any cancel that beat us to it.
+        let cancel_immediately = match ACTIVE_SEND.lock() {
+            Ok(mut guard) => match guard.as_mut() {
+                Some(active) if active.generation == generation => {
+                    active.handle = Some(handle.clone());
+                    active.cancel_requested
+                }
+                // Superseded while we were starting: stop rather than run a
+                // transfer the user has already replaced.
+                _ => true,
+            },
+            Err(_) => false,
+        };
+        if cancel_immediately {
+            let _ = handle.cancel_transfer().await;
+        }
+
         let (mut events, outcome_rx) = run.into_parts();
 
         let event_updates = updates.clone();
@@ -196,8 +285,14 @@ pub fn start_send_transfer(
 
         let outcome = outcome_rx.await;
 
-        if let Ok(mut guard) = ACTIVE_SEND_CANCEL.lock() {
-            guard.take();
+        // Only clear our own entry — a newer send may already own the slot.
+        if let Ok(mut guard) = ACTIVE_SEND.lock() {
+            if guard
+                .as_ref()
+                .is_some_and(|active| active.generation == generation)
+            {
+                guard.take();
+            }
         }
 
         match outcome {
@@ -222,18 +317,26 @@ pub fn start_send_transfer(
 }
 
 pub fn cancel_active_send_transfer() -> Result<(), crate::api::error::UserFacingErrorData> {
-    let guard = ACTIVE_SEND_CANCEL.lock().map_err(|_| {
+    let mut guard = ACTIVE_SEND.lock().map_err(|_| {
         internal_user_facing_error(
             "Couldn't cancel send — internal state corrupted",
             "The send-cancel handle mutex was poisoned by a panic in another task. \
              Restart Wisp to recover.",
         )
     })?;
-    let Some(cancel_handle) = guard.as_ref().cloned() else {
+    let Some(active) = guard.as_mut() else {
         return Err(internal_user_facing_error(
             "Nothing to cancel — no active send",
             "The send finished or was already cancelled before the cancel reached the runtime.",
         ));
+    };
+    let Some(cancel_handle) = active.handle.clone() else {
+        // The session is claimed but has not started yet — it is queued behind
+        // the outgoing one. Record the request so it cancels itself the moment
+        // it has a handle. Reporting "nothing to cancel" here is what silently
+        // dropped the cancel and let the send carry on to accept the transfer.
+        active.cancel_requested = true;
+        return Ok(());
     };
     drop(guard);
 
@@ -249,12 +352,6 @@ pub fn cancel_active_send_transfer() -> Result<(), crate::api::error::UserFacing
                 format!("The send transfer rejected the cancel: {error}"),
             ),
         })
-}
-
-fn cancel_send_session(cancel_handle: SendCancelHandle) {
-    RUNTIME.spawn(async move {
-        let _ = cancel_handle.cancel_transfer().await;
-    });
 }
 
 fn terminal_event_for_app_error(destination_label: String, error: AppError) -> SendTransferEvent {
@@ -318,6 +415,7 @@ fn terminal_event_for_app_error(destination_label: String, error: AppError) -> S
         remote_endpoint_id: None,
         remote_ephemeral: None,
         remote_ticket: None,
+        bytes_hashed: None,
         connection_path: None,
         connection_candidates: Vec::new(),
         error: Some(internal_user_facing_error(title, error.to_string())),
@@ -338,6 +436,7 @@ fn terminal_internal_failure_event(destination_label: String, detail: String) ->
         remote_endpoint_id: None,
         remote_ephemeral: None,
         remote_ticket: None,
+        bytes_hashed: None,
         connection_path: None,
         connection_candidates: Vec::new(),
         error: Some(internal_user_facing_error("Send runtime crashed", detail)),
@@ -369,6 +468,7 @@ fn format_code_label(code: &str) -> Option<String> {
 fn map_event(event: AppSendEvent) -> SendTransferEvent {
     SendTransferEvent {
         phase: match event.phase {
+            AppSendPhase::Preparing => SendTransferPhase::Preparing,
             AppSendPhase::Connecting => SendTransferPhase::Connecting,
             AppSendPhase::WaitingForDecision => SendTransferPhase::WaitingForDecision,
             AppSendPhase::Accepted => SendTransferPhase::Accepted,
@@ -389,6 +489,7 @@ fn map_event(event: AppSendEvent) -> SendTransferEvent {
         remote_endpoint_id: event.remote_endpoint_id,
         remote_ephemeral: event.remote_ephemeral,
         remote_ticket: event.remote_ticket,
+        bytes_hashed: event.bytes_hashed,
         connection_path: event.connection_path.map(map_connection_path),
         connection_candidates: event
             .connection_candidates

@@ -424,7 +424,7 @@ void main() {
         (container.read(sendControllerProvider) as SendStateTransferring)
             .transfer
             .phase,
-        SendTransferPhase.connecting,
+        SendTransferPhase.preparing,
       );
 
       fakeSource.emit(
@@ -510,7 +510,7 @@ void main() {
       (container.read(sendControllerProvider) as SendStateTransferring)
           .transfer
           .phase,
-      SendTransferPhase.connecting,
+      SendTransferPhase.preparing,
     );
 
     fakeSource.emit(
