@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../shell/widgets/page_header.dart';
+import '../../../src/rust/api/error.dart';
 import '../../../src/rust/api/receiver.dart' as rust_receiver;
 import '../../../theme/wisp_theme.dart';
 
@@ -37,7 +38,13 @@ class _QrPairingPageState extends State<QrPairingPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.toString());
+      // FRB hands over a structured `UserFacingErrorData`, which has no
+      // toString() override — using it raw printed "Instance of
+      // 'UserFacingErrorData'". Surface its actual message instead.
+      final message = e is UserFacingErrorData
+          ? (e.message.isNotEmpty ? e.message : e.title)
+          : e.toString();
+      setState(() => _error = message);
     }
   }
 

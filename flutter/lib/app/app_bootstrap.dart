@@ -128,8 +128,12 @@ Future<String> resolvePreferredReceiveDownloadRoot() async {
   }
 
   if (Platform.isIOS) {
+    // The app's Documents container is already exposed in the Files app as
+    // "On My iPhone/Wisp" (UIFileSharingEnabled + LSSupportsOpeningDocuments-
+    // InPlace + the "Wisp" display name), so appending another "Wisp" made
+    // received files land two levels deep at Wisp/Wisp. Use the container root.
     final docsDir = await getApplicationDocumentsDirectory();
-    return '${docsDir.path}${Platform.pathSeparator}Wisp';
+    return docsDir.path;
   }
 
   final downloadsDir = await getDownloadsDirectory();
