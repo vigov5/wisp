@@ -309,6 +309,13 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default `packages: "tools platform-tools"` installs the
+          # obsolete Android SDK Tools package, which Google removed from the
+          # repository — sdkmanager then fails with "Failed to find package
+          # 'tools'". Keep platform-tools and drop the dead one; Flutter/Gradle
+          # install the platform + build-tools they need on their own.
+          packages: platform-tools
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
