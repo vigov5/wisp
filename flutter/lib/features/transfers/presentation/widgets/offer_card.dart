@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +9,7 @@ import '../../application/service.dart';
 import '../../application/state.dart';
 import '../../../../theme/wisp_theme.dart';
 import '../../../saved_devices/application/device_display_name.dart';
+import '../../../saved_devices/application/saved_devices_controller.dart';
 import 'package:app/features/send/presentation/widgets/recipient_avatar.dart';
 import 'relay_tip_note.dart';
 import 'sending_connection_strip.dart';
@@ -46,6 +49,68 @@ class OfferCard extends ConsumerWidget {
         onDecline: onDecline,
       );
     }
+    return _FileOfferCard(
+      offer: offer,
+      animate: animate,
+      onAccept: onAccept,
+      onDecline: onDecline,
+    );
+  }
+}
+
+/// Incoming file offer. Stateful so it can carry the "Always accept from this
+/// device" checkbox: ticking it persists trust (auto-accept) for the sender's
+/// stable key before the offer is accepted, so the next transfer skips this
+/// card entirely.
+class _FileOfferCard extends ConsumerStatefulWidget {
+  const _FileOfferCard({
+    required this.offer,
+    required this.animate,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  final TransferIncomingOffer offer;
+  final bool animate;
+  final VoidCallback onAccept;
+  final VoidCallback onDecline;
+
+  @override
+  ConsumerState<_FileOfferCard> createState() => _FileOfferCardState();
+}
+
+class _FileOfferCardState extends ConsumerState<_FileOfferCard> {
+  bool _trust = false;
+
+  /// Trust can only attach to a stable, re-matchable identity. Browser / one-off
+  /// (ephemeral) senders get a fresh key each session, so hide the option for
+  /// them — a saved trust entry would be dead on arrival.
+  bool get _canTrust {
+    final ep = widget.offer.senderEndpointId;
+    return ep != null &&
+        ep.isNotEmpty &&
+        !widget.offer.sender.web &&
+        !widget.offer.sender.ephemeral;
+  }
+
+  void _handleAccept() {
+    if (_trust && _canTrust) {
+      unawaited(
+        ref
+            .read(savedDevicesProvider.notifier)
+            .trustFromOffer(
+              endpointId: widget.offer.senderEndpointId!,
+              label: widget.offer.sender.displayName,
+              deviceType: widget.offer.sender.deviceType.name,
+            ),
+      );
+    }
+    widget.onAccept();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final offer = widget.offer;
     final name = resolveDeviceName(
       ref,
       endpointId: offer.senderEndpointId ?? '',
@@ -77,7 +142,7 @@ class OfferCard extends ConsumerWidget {
         illustration: RecipientAvatar(
           deviceName: senderName,
           deviceType: avatarDeviceType(offer.sender),
-          animate: animate,
+          animate: widget.animate,
           mode: SendingStripMode.waitingOnRecipient,
           // Mirrors crates/core/src/transfer/receiver.rs decision timer
           // (`tokio::time::sleep(Duration::from_secs(120))`).  Keep these
@@ -90,52 +155,118 @@ class OfferCard extends ConsumerWidget {
         ),
         footerNote: RelayTipNote(path: offer.connectionPath),
         // Secondary action (Decline) on the left, primary action (Save) on
-        // the right — matches the app-wide button convention.
-        footer: Row(
+        // the right — matches the app-wide button convention. The trust
+        // checkbox sits above the buttons so its choice is obviously tied to
+        // the Save that applies it.
+        footer: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(
-              flex: 1,
-              child: TextButton(
-                onPressed: onDecline,
-                // Same soft-destructive treatment as the "Cancel transfer"
-                // button (red text + red tint + red border). Radius/height stay
-                // at 14/52 to line up with the Save button beside it.
-                style: TextButton.styleFrom(
-                  foregroundColor: kDanger,
-                  backgroundColor: kDanger.withValues(alpha: 0.08),
-                  minimumSize: const Size(0, 52),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    side: BorderSide(color: kDanger.withValues(alpha: 0.15)),
+            if (_canTrust) ...[
+              _TrustCheckbox(
+                value: _trust,
+                onChanged: (v) => setState(() => _trust = v),
+              ),
+              const SizedBox(height: 10),
+            ],
+            Row(
+              children: [
+                Expanded(
+                  flex: 1,
+                  child: TextButton(
+                    onPressed: widget.onDecline,
+                    // Same soft-destructive treatment as the "Cancel transfer"
+                    // button (red text + red tint + red border). Radius/height
+                    // stay at 14/52 to line up with the Save button beside it.
+                    style: TextButton.styleFrom(
+                      foregroundColor: kDanger,
+                      backgroundColor: kDanger.withValues(alpha: 0.08),
+                      minimumSize: const Size(0, 52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        side: BorderSide(
+                          color: kDanger.withValues(alpha: 0.15),
+                        ),
+                      ),
+                    ),
+                    child: const Text(
+                      'Decline',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
                   ),
                 ),
-                child: const Text(
-                  'Decline',
-                  style: TextStyle(fontWeight: FontWeight.w600),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _handleAccept,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: kAccentCyanStrong,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(0, 52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: Text(
+                      // Stays generic so the label doesn't claim "Save to
+                      // Downloads" when the user has picked a different SAF
+                      // folder — the Rust side reports the cache root which
+                      // always looks like "Downloads" on Android.
+                      'Save',
+                      style: wispSans(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
                 ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// "Always accept from this device" — a tappable checkbox row shown above the
+/// Save/Decline buttons on a file offer from a stable-identity sender.
+class _TrustCheckbox extends StatelessWidget {
+  const _TrustCheckbox({required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () => onChanged(!value),
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: Checkbox(
+                value: value,
+                onChanged: (v) => onChanged(v ?? false),
+                activeColor: kAccentCyanStrong,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Expanded(
-              flex: 2,
-              child: FilledButton(
-                onPressed: onAccept,
-                style: FilledButton.styleFrom(
-                  backgroundColor: kAccentCyanStrong,
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size(0, 52),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  elevation: 0,
-                ),
-                child: Text(
-                  // Stays generic so the label doesn't claim "Save to
-                  // Downloads" when the user has picked a different SAF
-                  // folder — the Rust side reports the cache root which
-                  // always looks like "Downloads" on Android.
-                  'Save',
-                  style: wispSans(fontWeight: FontWeight.w700, fontSize: 15),
+              child: Text(
+                'Always accept from this device',
+                style: wispSans(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: context.wc.ink.withValues(alpha: 0.8),
+                  height: 1.35,
                 ),
               ),
             ),

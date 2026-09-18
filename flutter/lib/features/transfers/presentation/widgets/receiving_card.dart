@@ -88,7 +88,7 @@ class ReceivingCard extends ConsumerWidget {
         statusLabel: finishingUp ? 'Finalizing' : 'Receiving',
         statusColor: const Color(0xFFD4A824),
         subtitle: subtitle,
-        explainer: null,
+        explainer: offer.autoAccepted ? const _AutoAcceptedBanner() : null,
 
         illustration: RecipientAvatar(
           deviceName: senderName,
@@ -130,6 +130,36 @@ class ReceivingCard extends ConsumerWidget {
                 ],
               ),
       ),
+    );
+  }
+}
+
+/// Shown in place of the explainer while receiving a transfer that was accepted
+/// automatically from a trusted device, so the user always knows why no
+/// Accept/Decline prompt appeared. Cancel is still one tap away below.
+class _AutoAcceptedBanner extends StatelessWidget {
+  const _AutoAcceptedBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(Icons.verified_user_rounded, size: 15, color: kAccentCyanStrong),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            'Auto-accepted from a trusted device',
+            textAlign: TextAlign.center,
+            style: wispSans(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: context.wc.ink.withValues(alpha: 0.7),
+              height: 1.35,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

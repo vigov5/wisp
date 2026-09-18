@@ -136,6 +136,7 @@ class TransferIncomingOffer {
     this.connectionPath,
     this.senderEndpointId,
     this.inlineText,
+    this.autoAccepted = false,
   });
 
   final TransferIdentity sender;
@@ -151,6 +152,12 @@ class TransferIncomingOffer {
   /// actions instead of a file manifest. `null` for ordinary file offers.
   final String? inlineText;
 
+  /// True when this offer is being (or was) accepted automatically because the
+  /// sender is a trusted device and the master switch is on. Drives the "no
+  /// Accept/Decline" desktop toast and the in-app "auto-accepted" banner; the
+  /// user never sees the offer card for it.
+  final bool autoAccepted;
+
   String get displaySenderName => sender.displayName;
   bool get willResume => bytesReceived > BigInt.zero;
   bool get isTextOffer => inlineText != null;
@@ -158,6 +165,7 @@ class TransferIncomingOffer {
   TransferIncomingOffer copyWith({
     ConnectionPathInfo? connectionPath,
     String? senderEndpointId,
+    bool? autoAccepted,
   }) {
     return TransferIncomingOffer(
       sender: sender,
@@ -169,6 +177,7 @@ class TransferIncomingOffer {
       connectionPath: connectionPath ?? this.connectionPath,
       senderEndpointId: senderEndpointId ?? this.senderEndpointId,
       inlineText: inlineText,
+      autoAccepted: autoAccepted ?? this.autoAccepted,
     );
   }
 }

@@ -621,6 +621,18 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                             ),
                           ),
                         ),
+                        const SizedBox(height: 18),
+                        SettingsToggleField(
+                          title: 'Auto-accept from trusted devices',
+                          subtitle:
+                              'Receive files without the Accept prompt from '
+                              'devices you mark as trusted in Saved devices. '
+                              'Turn off to be asked every time.',
+                          value: state.settings.autoAcceptTrustedDevices,
+                          onChanged: (value) => ref
+                              .read(settingsControllerProvider.notifier)
+                              .setAutoAcceptTrustedDevices(value),
+                        ),
                         const _SettingsGroupHeader(title: 'Preferences'),
                         SettingsSectionField(
                           label: 'Appearance',

@@ -125,6 +125,52 @@ class SavedDevicesRepository {
     );
   }
 
+  /// Turn auto-accept (trust) on or off for an existing saved device. No-op if
+  /// the device isn't in the list — a device is only trustable once it has been
+  /// transferred with, so there's always a record to flip.
+  Future<void> setAutoAccept(String endpointId, bool value) async {
+    final all = loadAll();
+    final index = all.indexWhere((d) => d.endpointId == endpointId);
+    if (index < 0) return;
+    if (all[index].autoAccept == value) return;
+    await upsert(all[index].copyWith(autoAccept: value));
+  }
+
+  /// Mark a device trusted from the incoming-offer card, creating a minimal
+  /// record if it isn't saved yet — a first-ever transfer hasn't been recorded
+  /// at offer time, so [setAutoAccept] alone would no-op. A later
+  /// [recordTransfer] fills in real stats and cleans any placeholder label
+  /// while preserving the trust flag.
+  Future<void> trustFromOffer({
+    required String endpointId,
+    required String label,
+    required String deviceType,
+  }) async {
+    if (endpointId.isEmpty) return;
+    final all = loadAll();
+    final index = all.indexWhere((d) => d.endpointId == endpointId);
+    if (index >= 0) {
+      if (all[index].autoAccept) return;
+      await upsert(all[index].copyWith(autoAccept: true));
+      return;
+    }
+    final cleanedLabel = _meaningfulLabel(label);
+    final cleanedType = _meaningfulDeviceType(deviceType);
+    await upsert(
+      SavedDevice(
+        endpointId: endpointId,
+        label: cleanedLabel.isNotEmpty
+            ? cleanedLabel
+            : (label.trim().isEmpty ? 'Saved device' : label.trim()),
+        deviceType: cleanedType.isNotEmpty ? cleanedType : 'laptop',
+        lastSeenAt: DateTime.now().toUtc(),
+        transferCount: 0,
+        totalBytes: BigInt.zero,
+        autoAccept: true,
+      ),
+    );
+  }
+
   Future<void> remove(String endpointId) async {
     final all = loadAll().where((d) => d.endpointId != endpointId).toList();
     await _save(all);

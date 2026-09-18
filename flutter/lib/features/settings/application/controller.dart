@@ -114,6 +114,17 @@ class SettingsController extends Notifier<SettingsState> {
     await ref.read(settingsRepositoryProvider).save(next);
   }
 
+  /// Master switch for auto-accepting offers from trusted devices. Live-applied
+  /// like [setKeepScreenOnDuringTransfer]: nothing is registered with the OS or
+  /// the receiver at set time — the flag is only read when an offer arrives — so
+  /// there is no external state that could drift from the stored value.
+  Future<void> setAutoAcceptTrustedDevices(bool enabled) async {
+    if (state.settings.autoAcceptTrustedDevices == enabled) return;
+    final next = state.settings.copyWith(autoAcceptTrustedDevices: enabled);
+    state = state.copyWith(settings: next);
+    await ref.read(settingsRepositoryProvider).save(next);
+  }
+
   /// Desktop only. Turns minimize-to-tray on/off, persists it, and applies the
   /// window/tray behaviour immediately (live-apply, like [setThemeMode]).
   Future<void> setMinimizeToTray(bool enabled) async {

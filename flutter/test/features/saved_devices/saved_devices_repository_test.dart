@@ -172,6 +172,117 @@ void main() {
     expect(restored, equals(original));
   });
 
+  test('SavedDevice defaults autoAccept to false and round-trips it', () {
+    final trusted = SavedDevice(
+      endpointId: 'ABC',
+      label: 'Maya',
+      deviceType: 'phone',
+      lastSeenAt: DateTime.utc(2026, 5, 8, 12),
+      transferCount: 5,
+      totalBytes: BigInt.from(10),
+      autoAccept: true,
+    );
+    expect(SavedDevice.fromJson(trusted.toJson()), equals(trusted));
+    // A record written before the feature (no key) reads back as not-trusted.
+    final legacy = {
+      'endpointId': 'ABC',
+      'label': 'Maya',
+      'deviceType': 'phone',
+      'lastSeenAt': DateTime.utc(2026, 5, 8, 12).toIso8601String(),
+      'transferCount': 5,
+      'totalBytes': '10',
+    };
+    expect(SavedDevice.fromJson(legacy)!.autoAccept, isFalse);
+  });
+
+  test('setAutoAccept flips the flag on an existing device', () async {
+    final repo = await makeRepo();
+    await repo.recordTransfer(
+      endpointId: 'ABC123',
+      label: 'Maya MacBook',
+      deviceType: 'laptop',
+      bytesTransferred: BigInt.zero,
+    );
+    expect(repo.loadAll().single.autoAccept, isFalse);
+    await repo.setAutoAccept('ABC123', true);
+    expect(repo.loadAll().single.autoAccept, isTrue);
+    await repo.setAutoAccept('ABC123', false);
+    expect(repo.loadAll().single.autoAccept, isFalse);
+  });
+
+  test('setAutoAccept no-ops for an unknown device', () async {
+    final repo = await makeRepo();
+    await repo.setAutoAccept('nope', true);
+    expect(repo.loadAll(), isEmpty);
+  });
+
+  test('recordTransfer preserves an existing autoAccept flag', () async {
+    final repo = await makeRepo();
+    await repo.recordTransfer(
+      endpointId: 'ABC123',
+      label: 'Maya MacBook',
+      deviceType: 'laptop',
+      bytesTransferred: BigInt.zero,
+    );
+    await repo.setAutoAccept('ABC123', true);
+    await repo.recordTransfer(
+      endpointId: 'ABC123',
+      label: 'Maya MacBook',
+      deviceType: 'laptop',
+      bytesTransferred: BigInt.from(2048),
+    );
+    final saved = repo.loadAll().single;
+    expect(saved.autoAccept, isTrue);
+    expect(saved.transferCount, 2);
+  });
+
+  test('trustFromOffer creates a trusted record when none exists', () async {
+    final repo = await makeRepo();
+    await repo.trustFromOffer(
+      endpointId: 'NEW1',
+      label: 'Maya MacBook',
+      deviceType: 'laptop',
+    );
+    final saved = repo.loadAll().single;
+    expect(saved.endpointId, 'NEW1');
+    expect(saved.autoAccept, isTrue);
+    expect(saved.label, 'Maya MacBook');
+    expect(saved.transferCount, 0);
+  });
+
+  test('trustFromOffer trusts an existing record in place', () async {
+    final repo = await makeRepo();
+    await repo.recordTransfer(
+      endpointId: 'ABC123',
+      label: 'Maya MacBook',
+      deviceType: 'laptop',
+      bytesTransferred: BigInt.from(99),
+    );
+    await repo.trustFromOffer(
+      endpointId: 'ABC123',
+      label: 'Sender',
+      deviceType: '',
+    );
+    final saved = repo.loadAll().single;
+    expect(saved.autoAccept, isTrue);
+    // Existing real name/stats are kept, not clobbered by the placeholder.
+    expect(saved.label, 'Maya MacBook');
+    expect(saved.totalBytes, BigInt.from(99));
+  });
+
+  test('trustFromOffer falls back to a neutral label when none is given', () async {
+    final repo = await makeRepo();
+    await repo.trustFromOffer(
+      endpointId: 'NEW1',
+      label: '',
+      deviceType: 'laptop',
+    );
+    // With nothing to show, the tile still needs a label. (A raw placeholder
+    // like "Sender" is kept as-is on first save, mirroring recordTransfer, and
+    // replaced by a real name on the next transfer.)
+    expect(repo.loadAll().single.label, 'Saved device');
+  });
+
   test('eviction caps the list at 30', () async {
     final repo = await makeRepo();
     for (var i = 0; i < 35; i++) {

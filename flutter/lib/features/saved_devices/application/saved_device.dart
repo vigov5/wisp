@@ -13,6 +13,7 @@ class SavedDevice {
     required this.totalBytes,
     this.lastTicket,
     this.nickname,
+    this.autoAccept = false,
   });
 
   /// Iroh `EndpointId` (= base32 public key, ~52 chars).  Stable across the
@@ -40,6 +41,12 @@ class SavedDevice {
   /// by [endpointId] if a connect attempt with this ticket fails.
   final String? lastTicket;
 
+  /// When true, incoming offers from this [endpointId] are accepted
+  /// automatically — no Accept/Decline prompt — provided the app-wide
+  /// `autoAcceptTrustedDevices` master switch is on. User-controlled per
+  /// device; only ever set on a non-web, non-ephemeral peer (a stable key).
+  final bool autoAccept;
+
   SavedDevice copyWith({
     String? endpointId,
     String? label,
@@ -50,6 +57,7 @@ class SavedDevice {
     String? lastTicket,
     String? nickname,
     bool clearNickname = false,
+    bool? autoAccept,
   }) {
     return SavedDevice(
       endpointId: endpointId ?? this.endpointId,
@@ -60,6 +68,7 @@ class SavedDevice {
       totalBytes: totalBytes ?? this.totalBytes,
       lastTicket: lastTicket ?? this.lastTicket,
       nickname: clearNickname ? null : (nickname ?? this.nickname),
+      autoAccept: autoAccept ?? this.autoAccept,
     );
   }
 
@@ -72,6 +81,7 @@ class SavedDevice {
     'totalBytes': totalBytes.toString(),
     'lastTicket': lastTicket,
     'nickname': nickname,
+    'autoAccept': autoAccept,
   };
 
   static SavedDevice? fromJson(Map<String, Object?> json) {
@@ -89,6 +99,9 @@ class SavedDevice {
           BigInt.zero,
       lastTicket: json['lastTicket'] as String?,
       nickname: json['nickname'] as String?,
+      // Absent on records written before the trusted-devices feature — those
+      // default to not-trusted, matching a fresh save.
+      autoAccept: (json['autoAccept'] as bool?) ?? false,
     );
   }
 
@@ -104,7 +117,8 @@ class SavedDevice {
           transferCount == other.transferCount &&
           totalBytes == other.totalBytes &&
           lastTicket == other.lastTicket &&
-          nickname == other.nickname;
+          nickname == other.nickname &&
+          autoAccept == other.autoAccept;
 
   @override
   int get hashCode => Object.hash(
@@ -116,5 +130,6 @@ class SavedDevice {
     totalBytes,
     lastTicket,
     nickname,
+    autoAccept,
   );
 }

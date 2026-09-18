@@ -70,7 +70,18 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
           if (_acceptInFlight || state.phase.isPastDecision) {
             return;
           }
-          _incomingOffer = _mapIncomingOffer(event);
+          final mapped = _mapIncomingOffer(event);
+          // Trusted device + master switch on → skip the Accept/Decline card
+          // and accept straight away. Pass the offer explicitly so the accept
+          // uses this full manifest (not a stale, manifest-less connecting
+          // offer). The `autoAccepted` flag rides along to the receiving screen
+          // banner and the desktop toast.
+          if (_shouldAutoAccept(mapped)) {
+            _incomingOffer = mapped.copyWith(autoAccepted: true);
+            unawaited(acceptOffer(offer: _incomingOffer));
+            return;
+          }
+          _incomingOffer = mapped;
           state = TransferSessionState.offerPending(offer: _incomingOffer!);
           return;
         case rust_receiver.ReceiverTransferPhase.connecting:
@@ -80,7 +91,16 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
           // events once a real offer is in hand so we never regress a confirm
           // or receiving screen back to "connecting".
           if (_incomingOffer == null) {
-            final connecting = _mapIncomingOffer(event);
+            var connecting = _mapIncomingOffer(event);
+            // The connecting event already carries the sender's endpointId, so
+            // we can tell a trusted device apart before the offer lands and mark
+            // the offer auto-accepted now. That makes the desktop toast render
+            // button-less from the very first transition instead of briefly
+            // showing Accept/Decline. The real accept still waits for OfferReady
+            // (that's when the manifest/destinations exist).
+            if (_shouldAutoAccept(connecting)) {
+              connecting = connecting.copyWith(autoAccepted: true);
+            }
             _incomingOffer = connecting;
             state = TransferSessionState.connecting(offer: connecting);
           }
@@ -237,6 +257,7 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
   Future<void> acceptOffer({
     TransferTextDelivery? textDelivery,
     SavedTextLocation? savedText,
+    TransferIncomingOffer? offer,
   }) async {
     // A second Accept destroys the transfer the first one started, so the
     // second is dropped.
@@ -260,7 +281,11 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
     }
     _acceptInFlight = true;
     try {
-      await _acceptOffer(textDelivery: textDelivery, savedText: savedText);
+      await _acceptOffer(
+        textDelivery: textDelivery,
+        savedText: savedText,
+        offer: offer,
+      );
     } finally {
       _acceptInFlight = false;
     }
@@ -269,9 +294,14 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
   Future<void> _acceptOffer({
     TransferTextDelivery? textDelivery,
     SavedTextLocation? savedText,
+    TransferIncomingOffer? offer,
   }) async {
     final source = ref.read(transfersServiceSourceProvider);
-    final offer = state.offer ?? _incomingOffer ?? _offerFromFakeSource(source);
+    // An explicit [offer] wins: the auto-accept path passes the freshly-mapped
+    // OfferReady offer (full manifest + autoAccepted flag). Falling back to
+    // `state.offer` there would risk the manifest-less `connecting` offer, whose
+    // empty file list would starve Android's destination creation.
+    offer ??= state.offer ?? _incomingOffer ?? _offerFromFakeSource(source);
     _textDelivery = textDelivery;
     _savedText = savedText;
     // Inline text already arrived in the offer — there's nothing to transfer,
@@ -359,6 +389,33 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
   void dismissTransferResult() {
     state = const TransferSessionState.idle();
     _incomingOffer = null;
+  }
+
+  /// Whether an incoming [offer] should be accepted automatically: the app-wide
+  /// master switch is on, the sender is a trusted (`autoAccept`) saved device,
+  /// and its identity is a stable, re-matchable key. Web / ephemeral peers are
+  /// excluded (their key is fresh each session, so trust can't attach to it),
+  /// as are text offers (accepting text needs a Copy-vs-Save choice that only
+  /// the in-app prompt can make).
+  bool _shouldAutoAccept(TransferIncomingOffer offer) {
+    final ep = offer.senderEndpointId;
+    if (ep == null || ep.isEmpty) return false;
+    if (offer.sender.web || offer.sender.ephemeral) return false;
+    if (offer.isTextOffer) return false;
+    // Fail closed: any error reading the settings / saved-devices providers
+    // (unavailable, mid-rebuild, or unwired in a test harness) means we fall
+    // back to the safe default of prompting the user rather than accepting
+    // silently.
+    try {
+      final master = ref
+          .read(settingsControllerProvider)
+          .settings
+          .autoAcceptTrustedDevices;
+      if (!master) return false;
+      return ref.read(trustedEndpointIdsProvider).contains(ep);
+    } catch (_) {
+      return false;
+    }
   }
 
   TransferIncomingOffer _mapIncomingOffer(

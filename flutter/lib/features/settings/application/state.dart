@@ -13,6 +13,7 @@ class AppSettings {
     this.minimizeToTray = false,
     this.launchAtStartup = false,
     this.keepScreenOnDuringTransfer = true,
+    this.autoAcceptTrustedDevices = true,
   });
 
   final String deviceName;
@@ -51,6 +52,14 @@ class AppSettings {
   /// switch.
   final bool keepScreenOnDuringTransfer;
 
+  /// Master switch for auto-accepting incoming offers from devices the user has
+  /// marked trusted (see `SavedDevice.autoAccept`). When off, every offer shows
+  /// the Accept/Decline prompt regardless of per-device trust — a quick
+  /// kill-switch for untrusted environments without un-trusting each device.
+  /// Defaults **on**: trust is already opt-in per device, so the switch exists
+  /// to disable, not to enable.
+  final bool autoAcceptTrustedDevices;
+
   AppSettings copyWith({
     String? deviceName,
     String? downloadRoot,
@@ -62,6 +71,7 @@ class AppSettings {
     bool? minimizeToTray,
     bool? launchAtStartup,
     bool? keepScreenOnDuringTransfer,
+    bool? autoAcceptTrustedDevices,
   }) {
     return AppSettings(
       deviceName: deviceName ?? this.deviceName,
@@ -77,6 +87,8 @@ class AppSettings {
       launchAtStartup: launchAtStartup ?? this.launchAtStartup,
       keepScreenOnDuringTransfer:
           keepScreenOnDuringTransfer ?? this.keepScreenOnDuringTransfer,
+      autoAcceptTrustedDevices:
+          autoAcceptTrustedDevices ?? this.autoAcceptTrustedDevices,
     );
   }
 
@@ -93,7 +105,8 @@ class AppSettings {
           themeMode == other.themeMode &&
           minimizeToTray == other.minimizeToTray &&
           launchAtStartup == other.launchAtStartup &&
-          keepScreenOnDuringTransfer == other.keepScreenOnDuringTransfer;
+          keepScreenOnDuringTransfer == other.keepScreenOnDuringTransfer &&
+          autoAcceptTrustedDevices == other.autoAcceptTrustedDevices;
 
   @override
   int get hashCode => Object.hash(
@@ -106,6 +119,7 @@ class AppSettings {
     minimizeToTray,
     launchAtStartup,
     keepScreenOnDuringTransfer,
+    autoAcceptTrustedDevices,
   );
 }
 

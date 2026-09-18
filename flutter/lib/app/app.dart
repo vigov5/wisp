@@ -431,9 +431,26 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
             transfer_state.TransferSessionPhase.connecting,
             transfer_state.TransferSessionPhase.offerPending,
           };
+          // Terminal phases where any incoming toast — a decision one or the
+          // button-less auto-accept info one — has outlived its purpose.
+          const settled = {
+            transfer_state.TransferSessionPhase.completed,
+            transfer_state.TransferSessionPhase.cancelled,
+            transfer_state.TransferSessionPhase.failed,
+            transfer_state.TransferSessionPhase.idle,
+          };
           final wasAwaiting =
               prev != null && awaitingDecision.contains(prev.phase);
-          if (wasAwaiting && !awaitingDecision.contains(next.phase)) {
+          final leftAwaiting =
+              wasAwaiting && !awaitingDecision.contains(next.phase);
+          // An auto-accepted offer's toast carries no Accept/Decline to go
+          // stale, so keep it up as the transfer moves connecting → receiving;
+          // it's cleared only once the transfer finishes (settled, below). A
+          // normal decision toast is still pulled the moment the offer stops
+          // awaiting a decision.
+          final prevAutoAccepted = prev?.offer?.autoAccepted ?? false;
+          if ((leftAwaiting && !prevAutoAccepted) ||
+              settled.contains(next.phase)) {
             unawaited(DesktopIntegration.instance.dismissIncomingTransfer());
           }
         }
@@ -453,10 +470,16 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
           final offer = next.offer;
           final sender = offer?.displaySenderName ?? 'Someone';
           final isText = offer?.isTextOffer ?? false;
+          // A trusted-device auto-accept still deserves a heads-up, but with no
+          // Accept/Decline — the decision is already made. The toast just
+          // announces the incoming transfer and opens the window on click.
+          final autoAccepted = offer?.autoAccepted ?? false;
           // File offers get one-tap Accept / Decline buttons on the toast.
           // Text offers omit them — accepting text needs a Copy-vs-Save choice
           // that only makes sense in the in-app prompt, so the toast just
-          // opens the window.
+          // opens the window. Auto-accepted offers omit them for the same
+          // "nothing to decide" reason.
+          final withButtons = !isText && !autoAccepted;
           final notifier = ref.read(transfersServiceProvider.notifier);
           // The OS can surface a toast late (or keep it in the Action Center),
           // so guard the one-tap actions: only respond if the offer is still
@@ -470,21 +493,23 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
               title: isText
                   ? '$sender is sending you text'
                   : '$sender is sending you files',
-              body: 'Click to review and accept in Wisp.',
-              onAccept: isText
-                  ? null
-                  : () {
+              body: autoAccepted
+                  ? 'Trusted device — accepting automatically.'
+                  : 'Click to review and accept in Wisp.',
+              onAccept: withButtons
+                  ? () {
                       if (offerStillPending()) {
                         unawaited(notifier.acceptOffer());
                       }
-                    },
-              onDecline: isText
-                  ? null
-                  : () {
+                    }
+                  : null,
+              onDecline: withButtons
+                  ? () {
                       if (offerStillPending()) {
                         unawaited(notifier.declineOffer());
                       }
-                    },
+                    }
+                  : null,
             ),
           );
         }

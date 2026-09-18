@@ -13,6 +13,7 @@ const String _themeModeKey = 'settings.theme_mode';
 const String _minimizeToTrayKey = 'settings.minimize_to_tray';
 const String _launchAtStartupKey = 'settings.launch_at_startup';
 const String _keepScreenOnKey = 'settings.keep_screen_on_transfer';
+const String _autoAcceptTrustedKey = 'settings.auto_accept_trusted';
 const String _contextMenuPromptedKey = 'settings.context_menu_prompted';
 
 class SettingsRepository {
@@ -42,6 +43,7 @@ class SettingsRepository {
       minimizeToTray: false,
       launchAtStartup: false,
       keepScreenOnDuringTransfer: true,
+      autoAcceptTrustedDevices: true,
     );
     await save(seeded);
     return seeded;
@@ -68,6 +70,10 @@ class SettingsRepository {
     await prefs.setBool(_minimizeToTrayKey, settings.minimizeToTray);
     await prefs.setBool(_launchAtStartupKey, settings.launchAtStartup);
     await prefs.setBool(_keepScreenOnKey, settings.keepScreenOnDuringTransfer);
+    await prefs.setBool(
+      _autoAcceptTrustedKey,
+      settings.autoAcceptTrustedDevices,
+    );
   }
 
   /// Whether the one-time "add Wisp to the right-click menu?" prompt has been
@@ -98,6 +104,10 @@ class SettingsRepository {
       // Defaults true for installs that predate the key, matching a fresh
       // install: the slow-transfer trap it avoids is not opt-in behaviour.
       keepScreenOnDuringTransfer: prefs.getBool(_keepScreenOnKey) ?? true,
+      // Defaults true for installs predating the key — the switch disables an
+      // already opt-in-per-device behaviour, so an absent key means "not
+      // disabled". No trusted devices exist on such installs anyway.
+      autoAcceptTrustedDevices: prefs.getBool(_autoAcceptTrustedKey) ?? true,
     );
   }
 }

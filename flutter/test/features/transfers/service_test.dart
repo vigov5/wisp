@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:app/features/saved_devices/application/saved_devices_controller.dart';
 import 'package:app/features/saved_devices/application/saved_devices_repository.dart';
+import 'package:app/features/settings/application/state.dart';
+import 'package:app/features/settings/settings_providers.dart';
 import 'package:app/features/transfers/feature.dart';
 import 'package:app/platform/rust/receiver/fake_source.dart';
 import 'package:app/src/rust/api/error.dart' as rust_error;
@@ -345,6 +347,184 @@ void main() {
     expect(saved, hasLength(1));
     expect(saved.single.endpointId, 'endpoint-maya');
   });
+
+  test('auto-accepts an offer from a trusted device', () async {
+    final source = FakeReceiverServiceSource();
+    final container = await _containerWithTrust(
+      source: source,
+      masterOn: true,
+      trusted: const ['endpoint-trusted'],
+    );
+    addTearDown(container.dispose);
+    // Subscribe so the service processes incoming events.
+    container.read(transfersServiceProvider);
+
+    source.emitIncomingOffer(
+      senderName: 'Maya',
+      senderEndpointId: 'endpoint-trusted',
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    final state = container.read(transfersServiceProvider);
+    expect(
+      state.phase,
+      TransferSessionPhase.receiving,
+      reason: 'a trusted device skips the Accept prompt and starts receiving',
+    );
+    expect(state.offer?.autoAccepted, isTrue);
+    expect(source.lastRespondToOfferAccept, isTrue);
+    expect(source.respondToOfferCalls, 1);
+  });
+
+  test('does not auto-accept an untrusted device', () async {
+    final source = FakeReceiverServiceSource();
+    final container = await _containerWithTrust(
+      source: source,
+      masterOn: true,
+      trusted: const ['someone-else'],
+    );
+    addTearDown(container.dispose);
+    container.read(transfersServiceProvider);
+
+    source.emitIncomingOffer(
+      senderName: 'Maya',
+      senderEndpointId: 'endpoint-unknown',
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      container.read(transfersServiceProvider).phase,
+      TransferSessionPhase.offerPending,
+    );
+    expect(source.respondToOfferCalls, 0);
+  });
+
+  test('master switch off suppresses auto-accept for a trusted device', () async {
+    final source = FakeReceiverServiceSource();
+    final container = await _containerWithTrust(
+      source: source,
+      masterOn: false,
+      trusted: const ['endpoint-trusted'],
+    );
+    addTearDown(container.dispose);
+    container.read(transfersServiceProvider);
+
+    source.emitIncomingOffer(
+      senderName: 'Maya',
+      senderEndpointId: 'endpoint-trusted',
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      container.read(transfersServiceProvider).phase,
+      TransferSessionPhase.offerPending,
+      reason: 'the kill-switch overrides per-device trust',
+    );
+    expect(source.respondToOfferCalls, 0);
+  });
+
+  test('never auto-accepts a web/ephemeral sender even if its key is '
+      'in the trusted set', () async {
+    final source = FakeReceiverServiceSource();
+    final container = await _containerWithTrust(
+      source: source,
+      masterOn: true,
+      trusted: const ['endpoint-web'],
+    );
+    addTearDown(container.dispose);
+    container.read(transfersServiceProvider);
+
+    source.emitIncomingOffer(
+      senderName: 'Browser',
+      senderEndpointId: 'endpoint-web',
+      senderWeb: true,
+      senderEphemeral: true,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      container.read(transfersServiceProvider).phase,
+      TransferSessionPhase.offerPending,
+      reason: "an ephemeral key isn't a durable identity trust can attach to",
+    );
+    expect(source.respondToOfferCalls, 0);
+  });
+
+  test('connecting from a trusted device marks the offer auto-accepted '
+      'before the accept fires at OfferReady', () async {
+    final source = FakeReceiverServiceSource();
+    final container = await _containerWithTrust(
+      source: source,
+      masterOn: true,
+      trusted: const ['endpoint-trusted'],
+    );
+    addTearDown(container.dispose);
+    container.read(transfersServiceProvider);
+
+    // The connecting event already carries the endpointId, so the offer is
+    // flagged auto-accepted immediately — that's what lets the desktop toast
+    // render button-less from the first frame.
+    source.emitConnecting(
+      senderName: 'Maya',
+      senderEndpointId: 'endpoint-trusted',
+    );
+    await Future<void>.delayed(Duration.zero);
+    final connecting = container.read(transfersServiceProvider);
+    expect(connecting.phase, TransferSessionPhase.connecting);
+    expect(connecting.offer?.autoAccepted, isTrue);
+    expect(
+      source.respondToOfferCalls,
+      0,
+      reason: 'no manifest yet — the accept must wait for OfferReady',
+    );
+
+    source.emitIncomingOffer(
+      senderName: 'Maya',
+      senderEndpointId: 'endpoint-trusted',
+    );
+    await Future<void>.delayed(Duration.zero);
+    final state = container.read(transfersServiceProvider);
+    expect(state.phase, TransferSessionPhase.receiving);
+    expect(state.offer?.autoAccepted, isTrue);
+    expect(source.respondToOfferCalls, 1);
+  });
+}
+
+AppSettings _settings({required bool autoAccept}) => AppSettings(
+  deviceName: 'Me',
+  downloadRoot: '/tmp',
+  discoverableByDefault: true,
+  discoveryServerUrl: null,
+  autoAcceptTrustedDevices: autoAccept,
+);
+
+/// Builds a container wired with a real (in-memory) saved-devices repository
+/// seeded with [trusted] endpointIds, and settings whose auto-accept master
+/// switch is [masterOn] — the two inputs the auto-accept gate reads.
+Future<ProviderContainer> _containerWithTrust({
+  required FakeReceiverServiceSource source,
+  required bool masterOn,
+  List<String> trusted = const [],
+}) async {
+  SharedPreferences.setMockInitialValues({});
+  final prefs = await SharedPreferences.getInstance();
+  final repo = SavedDevicesRepository(prefs: prefs);
+  for (final ep in trusted) {
+    await repo.trustFromOffer(
+      endpointId: ep,
+      label: 'Trusted device',
+      deviceType: 'laptop',
+    );
+  }
+  return ProviderContainer(
+    overrides: [
+      transfersServiceSourceProvider.overrideWithValue(source),
+      savedDevicesRepositoryProvider.overrideWithValue(repo),
+      initialAppSettingsProvider.overrideWithValue(
+        _settings(autoAccept: masterOn),
+      ),
+    ],
+  );
 }
 
 /// Counts accepts and answers them only after a turn of the event loop, so a

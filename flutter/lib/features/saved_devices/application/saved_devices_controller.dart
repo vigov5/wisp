@@ -27,6 +27,19 @@ final savedNicknamesProvider = Provider<Map<String, String>>((ref) {
   };
 });
 
+/// The set of endpointIds the user has marked auto-accept (trusted). Cheap
+/// membership test for the receive flow, which checks it the instant an offer
+/// (or even the pre-offer connect) arrives to decide whether to skip the
+/// Accept/Decline prompt. Whether the auto-accept actually fires is additionally
+/// gated by the app-wide `autoAcceptTrustedDevices` master switch.
+final trustedEndpointIdsProvider = Provider<Set<String>>((ref) {
+  final devices = ref.watch(savedDevicesProvider);
+  return {
+    for (final d in devices)
+      if (d.autoAccept) d.endpointId,
+  };
+});
+
 class SavedDevicesController extends Notifier<List<SavedDevice>> {
   @override
   List<SavedDevice> build() {
@@ -56,6 +69,29 @@ class SavedDevicesController extends Notifier<List<SavedDevice>> {
   Future<void> rename(String endpointId, String? nickname) async {
     final repo = ref.read(savedDevicesRepositoryProvider);
     await repo.rename(endpointId, nickname);
+    state = repo.loadAll();
+  }
+
+  /// Turn auto-accept (trust) on or off for a saved device.
+  Future<void> setAutoAccept(String endpointId, bool value) async {
+    final repo = ref.read(savedDevicesRepositoryProvider);
+    await repo.setAutoAccept(endpointId, value);
+    state = repo.loadAll();
+  }
+
+  /// Trust a device straight from the incoming-offer card, creating the record
+  /// if this is the first transfer with it.
+  Future<void> trustFromOffer({
+    required String endpointId,
+    required String label,
+    required String deviceType,
+  }) async {
+    final repo = ref.read(savedDevicesRepositoryProvider);
+    await repo.trustFromOffer(
+      endpointId: endpointId,
+      label: label,
+      deviceType: deviceType,
+    );
     state = repo.loadAll();
   }
 

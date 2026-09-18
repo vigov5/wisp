@@ -69,7 +69,11 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
 
   void emitIncomingOffer({
     required String senderName,
-    String senderEndpointId = 'endpoint-1',
+    // Null by default so a plain offer carries no endpoint id — matching the
+    // legacy fake and letting widget tests that don't wire the saved-devices
+    // repo render the card without a nickname lookup. The auto-accept tests
+    // pass a real id to exercise the trusted-device path.
+    String? senderEndpointId,
     String senderDeviceType = 'laptop',
     bool senderWeb = false,
     bool senderEphemeral = false,
@@ -114,6 +118,11 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
         (sum, file) => sum + file.size,
       ),
       bytesReceived: received,
+      // The real bridge carries the sender's endpointId on the OfferReady event
+      // (crates/app/src/receiver/session.rs), which the trusted-device
+      // auto-accept check matches against. Mirror it here so the fake is
+      // faithful to that.
+      senderEndpointId: senderEndpointId,
       totalSizeLabel: '0 B',
       files: incomingFiles,
       error: null,

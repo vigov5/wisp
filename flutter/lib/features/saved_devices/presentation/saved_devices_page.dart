@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../theme/wisp_theme.dart';
+import '../../settings/application/controller.dart';
 import '../../transfers/application/pubkey_visual.dart';
 import '../application/saved_device.dart';
 import '../application/saved_devices_controller.dart';
@@ -12,6 +13,11 @@ class SavedDevicesPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final devices = ref.watch(savedDevicesProvider);
+    final autoAcceptEnabled = ref.watch(
+      settingsControllerProvider.select(
+        (s) => s.settings.autoAcceptTrustedDevices,
+      ),
+    );
     return Scaffold(
       backgroundColor: context.wc.bg,
       appBar: AppBar(
@@ -40,23 +46,38 @@ class SavedDevicesPage extends ConsumerWidget {
             ),
         ],
       ),
-      body: devices.isEmpty
-          ? _emptyState(context)
-          : ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: devices.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 8),
-              itemBuilder: (context, index) {
-                final device = devices[index];
-                return _SavedDeviceRow(
-                  device: device,
-                  onRename: () => _renameDevice(context, ref, device),
-                  onDelete: () => ref
-                      .read(savedDevicesProvider.notifier)
-                      .remove(device.endpointId),
-                );
-              },
-            ),
+      body: Column(
+        children: [
+          // Auto-accept is a two-part gate: the app-wide master switch AND the
+          // per-device toggle. If the master is off, the per-device switches
+          // below still record intent but never fire — say so up front so a
+          // trusted device that isn't auto-accepting isn't a mystery.
+          if (!autoAcceptEnabled && devices.isNotEmpty)
+            const _AutoAcceptDisabledBanner(),
+          Expanded(
+            child: devices.isEmpty
+                ? _emptyState(context)
+                : ListView.separated(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: devices.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final device = devices[index];
+                      return _SavedDeviceRow(
+                        device: device,
+                        onRename: () => _renameDevice(context, ref, device),
+                        onDelete: () => ref
+                            .read(savedDevicesProvider.notifier)
+                            .remove(device.endpointId),
+                        onToggleAutoAccept: (value) => ref
+                            .read(savedDevicesProvider.notifier)
+                            .setAutoAccept(device.endpointId, value),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -198,11 +219,13 @@ class _SavedDeviceRow extends StatelessWidget {
     required this.device,
     required this.onRename,
     required this.onDelete,
+    required this.onToggleAutoAccept,
   });
 
   final SavedDevice device;
   final VoidCallback onRename;
   final VoidCallback onDelete;
+  final ValueChanged<bool> onToggleAutoAccept;
 
   @override
   Widget build(BuildContext context) {
@@ -233,59 +256,37 @@ class _SavedDeviceRow extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: context.wc.border),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(
-              isPhone ? Icons.smartphone_rounded : Icons.laptop_mac_rounded,
-              size: 26,
-              color: context.wc.ink.withValues(alpha: 0.8),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    primary,
-                    style: wispSans(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: context.wc.ink,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  if (hasNickname) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      broadcast.isEmpty
-                          ? 'No name from them'
-                          : 'Their name: $broadcast',
-                      style: wispSans(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w400,
-                        color: context.wc.muted,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                  const SizedBox(height: 6),
-                  Row(
+            Row(
+              children: [
+                Icon(
+                  isPhone ? Icons.smartphone_rounded : Icons.laptop_mac_rounded,
+                  size: 26,
+                  color: context.wc.ink.withValues(alpha: 0.8),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      PubkeyBadge(
-                        endpointId: device.endpointId,
-                        size: PubkeyBadgeSize.small,
-                        tooltip:
-                            'Identity badge (from public key) — '
-                            'same color = same device.',
+                      Text(
+                        primary,
+                        style: wispSans(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: context.wc.ink,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(width: 8),
-                      Flexible(
-                        child: Text(
-                          '${device.transferCount} transfer'
-                          '${device.transferCount == 1 ? '' : 's'} · '
-                          '${_relativeTime(device.lastSeenAt)}',
+                      if (hasNickname) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          broadcast.isEmpty
+                              ? 'No name from them'
+                              : 'Their name: $broadcast',
                           style: wispSans(
                             fontSize: 11.5,
                             fontWeight: FontWeight.w400,
@@ -294,27 +295,150 @@ class _SavedDeviceRow extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
+                      ],
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          PubkeyBadge(
+                            endpointId: device.endpointId,
+                            size: PubkeyBadgeSize.small,
+                            tooltip:
+                                'Identity badge (from public key) — '
+                                'same color = same device.',
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              '${device.transferCount} transfer'
+                              '${device.transferCount == 1 ? '' : 's'} · '
+                              '${_relativeTime(device.lastSeenAt)}',
+                              style: wispSans(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w400,
+                                color: context.wc.muted,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
-              ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.edit_outlined, size: 19),
+                  color: context.wc.muted,
+                  onPressed: onRename,
+                  tooltip: 'Rename',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 20),
+                  color: context.wc.muted,
+                  onPressed: onDelete,
+                  tooltip: 'Remove',
+                ),
+              ],
             ),
-            IconButton(
-              icon: const Icon(Icons.edit_outlined, size: 19),
-              color: context.wc.muted,
-              onPressed: onRename,
-              tooltip: 'Rename',
-            ),
-            IconButton(
-              icon: const Icon(Icons.close_rounded, size: 20),
-              color: context.wc.muted,
-              onPressed: onDelete,
-              tooltip: 'Remove',
+            const SizedBox(height: 8),
+            _AutoAcceptToggle(
+              value: device.autoAccept,
+              onChanged: onToggleAutoAccept,
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Warns that the app-wide "Auto-accept from trusted devices" master switch is
+/// off, so the per-device switches below record trust but won't fire until it's
+/// turned back on in Settings. Toggling stays enabled on purpose — the user can
+/// still set up trust ahead of re-enabling the master switch.
+class _AutoAcceptDisabledBanner extends StatelessWidget {
+  const _AutoAcceptDisabledBanner();
+
+  // App-wide "warning" amber, matching the receiver "Registering" badge and the
+  // reliability status row.
+  static const Color _warn = Color(0xFFD4A824);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 14, 16, 2),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: _warn.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _warn.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.warning_amber_rounded, size: 18, color: _warn),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Auto-accept is turned off in Settings. Devices you trust here '
+              "won't be accepted automatically until you turn it back on.",
+              style: wispSans(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
+                color: context.wc.ink,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Compact trust switch shown at the bottom of each saved-device card. When on,
+/// incoming offers from this device are accepted automatically (subject to the
+/// app-wide "Auto-accept from trusted devices" master switch in Settings).
+class _AutoAcceptToggle extends StatelessWidget {
+  const _AutoAcceptToggle({required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(
+          value ? Icons.verified_user_rounded : Icons.shield_outlined,
+          size: 16,
+          color: value ? kAccentCyanStrong : context.wc.muted,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            value ? 'Auto-accept on' : 'Auto-accept off',
+            style: wispSans(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: value ? context.wc.ink : context.wc.muted,
+            ),
+          ),
+        ),
+        Transform.scale(
+          scale: 0.8,
+          child: Switch(
+            value: value,
+            onChanged: onChanged,
+            thumbColor: const WidgetStatePropertyAll(Colors.white),
+            trackColor: WidgetStateProperty.resolveWith((states) {
+              return states.contains(WidgetState.selected)
+                  ? kAccentCyanStrong
+                  : context.wc.border;
+            }),
+          ),
+        ),
+      ],
     );
   }
 }
