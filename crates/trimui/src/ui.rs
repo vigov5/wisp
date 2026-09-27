@@ -227,14 +227,25 @@ pub fn list(
         return 0;
     }
 
-    // Rows can differ in height, so size the window off the tallest one to
-    // guarantee whatever is drawn actually fits.
-    let tallest = rows
-        .iter()
-        .map(Row::height)
-        .max()
-        .unwrap_or(metrics::ROW_HEIGHT);
-    let visible = ((area.h + metrics::GAP) / (tallest + metrics::GAP)).max(1) as usize;
+    // Count how many rows actually fit, by their own heights.
+    //
+    // Sizing the window off the tallest row instead under-counts whenever the
+    // list mixes heights — a settings menu where two of seven rows carry a
+    // subtitle reported room for six, so it drew a scrollbar and clipped the
+    // last row while half the screen sat empty.
+    let visible = {
+        let mut used = 0;
+        let mut fits = 0;
+        for row in rows {
+            let next = used + row.height() + if fits == 0 { 0 } else { metrics::GAP };
+            if next > area.h {
+                break;
+            }
+            used = next;
+            fits += 1;
+        }
+        fits.max(1)
+    };
     let offset = scroll_offset(rows.len(), selected, visible, scroll);
 
     let mut y = area.y;
@@ -435,6 +446,44 @@ mod tests {
             list(&mut canvas, &mut fonts, area, &[], Some(0), 0, "Empty"),
             0
         );
+    }
+
+    /// A menu whose rows mix heights must not claim it needs scrolling while
+    /// half the screen is empty — the settings list did exactly that, because
+    /// the window was sized off its tallest row.
+    #[test]
+    fn a_list_that_fits_draws_no_scrollbar() {
+        let mut canvas = Canvas::new(1024, 606);
+        let mut fonts = fonts();
+        let area = Rect::new(0, 0, 1024, 606);
+
+        // Seven rows, two of them with a subtitle, as the settings menu has.
+        let rows: Vec<Row> = (0..7)
+            .map(|i| {
+                let row = Row::new(format!("Row {i}"));
+                if i == 0 || i == 5 {
+                    row.with_subtitle("hint")
+                } else {
+                    row
+                }
+            })
+            .collect();
+
+        let total: i32 = rows.iter().map(Row::height).sum::<i32>() + 6 * metrics::GAP;
+        assert!(total <= 606, "the fixture must genuinely fit");
+
+        canvas.clear(theme::BG);
+        list(&mut canvas, &mut fonts, area, &rows, Some(0), 0, "Empty");
+
+        // Look below the last row, where only a scrollbar track reaches — the
+        // rows themselves span the full width, so the selected one's
+        // background would otherwise read as a false positive.
+        let below = (total + metrics::GAP) as usize;
+        let stray = (below..606)
+            .flat_map(|y| (1018..1024).map(move |x| (y, x)))
+            .filter(|(y, x)| canvas.pixels()[y * 1024 + x] != theme::BG)
+            .count();
+        assert_eq!(stray, 0, "no scrollbar when everything fits");
     }
 
     #[test]

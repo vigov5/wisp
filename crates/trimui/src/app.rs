@@ -258,6 +258,12 @@ pub struct App {
     /// Set once the current offer has been auto-accepted, so a repeated
     /// `OfferReady` cannot answer twice.
     auto_accepted: bool,
+    /// Set when the user declined and left. The transfer is over as far as
+    /// they are concerned, so a terminal event arriving afterwards must not
+    /// pull them back into a result screen they already dismissed.
+    offer_dismissed: bool,
+    /// Set once a cancel has been asked for on an incoming transfer.
+    cancel_requested: bool,
     fatal: Option<String>,
     toast: Option<Toast>,
 
@@ -311,6 +317,8 @@ impl App {
             qr: None,
             offer: None,
             auto_accepted: false,
+            offer_dismissed: false,
+            cancel_requested: false,
             fatal: None,
             toast: None,
             settings_cursor: Cursor::default(),
@@ -442,9 +450,18 @@ impl App {
         let phase = offer.phase;
         let mut requests = Vec::new();
 
+        // A transfer the user already walked away from must not drag the UI
+        // back; only a brand new one clears that.
+        if self.offer_dismissed && phase != ReceiverOfferPhase::Connecting {
+            self.offer = Some(offer);
+            return requests;
+        }
+
         match phase {
             ReceiverOfferPhase::Connecting => {
                 self.auto_accepted = false;
+                self.offer_dismissed = false;
+                self.cancel_requested = false;
                 self.offer_scroll = 0;
                 self.text_scroll = 0;
                 self.screen = Screen::Transfer;
@@ -477,6 +494,20 @@ impl App {
             | ReceiverOfferPhase::Declined => {
                 self.text_scroll = 0;
                 self.screen = Screen::Result;
+                // A device that just sent us something is the most likely one
+                // we will send back to, and we already hold its ticket. This
+                // is what makes the send picker's recent list useful before
+                // the first outbound transfer rather than after it.
+                if phase == ReceiverOfferPhase::Completed
+                    && !offer.sender_ephemeral
+                    && let (Some(id), Some(ticket)) = (
+                        offer.sender_endpoint_id.as_deref(),
+                        offer.sender_ticket.as_deref(),
+                    )
+                {
+                    self.config.remember_device(id, &offer.sender_name, ticket);
+                    requests.push(AppRequest::SaveConfig);
+                }
             }
         }
 
@@ -905,9 +936,17 @@ impl App {
                     OfferDecision::Accept(AcceptedDestinations::default()),
                 ))]
             }
-            Button::B => vec![AppRequest::Engine(EngineCommand::Respond(
-                OfferDecision::Decline,
-            ))],
+            Button::B => {
+                // Go straight back. Waiting here for a `Declined` event to
+                // arrive is what left the screen stuck when none did — and
+                // from the user's side the transfer is already over.
+                self.offer_dismissed = true;
+                self.offer = None;
+                self.screen = Screen::Home;
+                vec![AppRequest::Engine(EngineCommand::Respond(
+                    OfferDecision::Decline,
+                ))]
+            }
             Button::X => {
                 // Trust, then accept — the pairing of the two is the whole
                 // point of the shortcut.
@@ -945,13 +984,22 @@ impl App {
     }
 
     fn on_transfer(&mut self, button: Button) -> Vec<AppRequest> {
-        match button {
-            Button::B => {
-                self.toast(self.s().toast_cancelling);
-                vec![AppRequest::Engine(EngineCommand::Cancel)]
-            }
-            _ => Vec::new(),
+        if button != Button::B {
+            return Vec::new();
         }
+        // Same rule as the send side: one press asks the transfer to stop, a
+        // second leaves anyway, so a cancel that never produces a terminal
+        // event cannot trap the user here.
+        if self.cancel_requested {
+            self.cancel_requested = false;
+            self.offer_dismissed = true;
+            self.offer = None;
+            self.screen = Screen::Home;
+            return vec![AppRequest::Engine(EngineCommand::Cancel)];
+        }
+        self.cancel_requested = true;
+        self.toast(self.s().toast_cancelling);
+        vec![AppRequest::Engine(EngineCommand::Cancel)]
     }
 
     fn on_result(&mut self, button: Button) -> Vec<AppRequest> {
@@ -2169,16 +2217,18 @@ impl App {
             strings.list_empty,
         );
 
-        ui::footer(
-            canvas,
-            fonts,
-            &[
-                ("A", strings.hint_pick),
-                ("Y", strings.hint_pick_folder),
-                ("X", strings.hint_continue),
-                ("B", strings.hint_back),
-            ],
-        );
+        // Y only queues a folder, so offering it while the cursor sits on a
+        // file or on ".." advertises something that would do nothing.
+        let on_folder = self
+            .send_pick_entry(self.send_pick_cursor.index)
+            .is_some_and(|path| path.is_dir());
+        let mut hints: Vec<(&str, &str)> = vec![("A", strings.hint_pick)];
+        if on_folder {
+            hints.push(("Y", strings.hint_pick_folder));
+        }
+        hints.push(("X", strings.hint_continue));
+        hints.push(("B", strings.hint_back));
+        ui::footer(canvas, fonts, &hints);
     }
 
     fn render_send_to(&mut self, canvas: &mut Canvas, fonts: &mut Fonts) {
@@ -2679,6 +2729,99 @@ mod tests {
             r,
             AppRequest::Engine(EngineCommand::Respond(OfferDecision::Decline))
         )));
+    }
+
+    /// Declining used to leave the screen where it was, waiting for a
+    /// `Declined` event that does not always come.
+    /// Without this the send picker's recent list stays empty until the first
+    /// outbound transfer — which is exactly when you most want a destination
+    /// already in it.
+    #[test]
+    fn receiving_from_a_device_makes_it_a_send_destination() {
+        let mut app = app();
+        let mut event = offer(ReceiverOfferPhase::Completed);
+        event.sender_ticket = Some("sender-ticket".to_owned());
+        let requests = app.handle_engine(EngineEvent::Offer(event));
+
+        assert_eq!(app.config.recent_devices.len(), 1);
+        assert_eq!(app.config.recent_devices[0].label, "Pixel 7");
+        assert_eq!(app.config.recent_devices[0].ticket, "sender-ticket");
+        assert!(requests.iter().any(|r| matches!(r, AppRequest::SaveConfig)));
+
+        // And it shows up where the user will look for it.
+        assert!(
+            app.send_targets()
+                .iter()
+                .any(|target| target.label() == "Pixel 7")
+        );
+    }
+
+    #[test]
+    fn an_ephemeral_sender_never_becomes_a_destination() {
+        let mut app = app();
+        let mut event = offer(ReceiverOfferPhase::Completed);
+        event.sender_ticket = Some("throwaway".to_owned());
+        event.sender_ephemeral = true;
+        app.handle_engine(EngineEvent::Offer(event));
+        assert!(app.config.recent_devices.is_empty());
+    }
+
+    #[test]
+    fn a_failed_receive_does_not_record_the_sender() {
+        let mut app = app();
+        let mut event = offer(ReceiverOfferPhase::Failed);
+        event.sender_ticket = Some("sender-ticket".to_owned());
+        app.handle_engine(EngineEvent::Offer(event));
+        assert!(app.config.recent_devices.is_empty());
+    }
+
+    #[test]
+    fn declining_returns_home_immediately() {
+        let mut app = app();
+        app.handle_engine(EngineEvent::Offer(offer(ReceiverOfferPhase::OfferReady)));
+        let requests = app.handle_key(press(Button::B));
+
+        assert_eq!(app.screen(), Screen::Home, "B must get out");
+        assert!(requests.iter().any(|r| matches!(
+            r,
+            AppRequest::Engine(EngineCommand::Respond(OfferDecision::Decline))
+        )));
+    }
+
+    #[test]
+    fn a_late_terminal_event_does_not_reopen_a_dismissed_offer() {
+        let mut app = app();
+        app.handle_engine(EngineEvent::Offer(offer(ReceiverOfferPhase::OfferReady)));
+        app.handle_key(press(Button::B));
+
+        app.handle_engine(EngineEvent::Offer(offer(ReceiverOfferPhase::Declined)));
+        assert_eq!(app.screen(), Screen::Home, "stay where the user left it");
+    }
+
+    #[test]
+    fn a_new_transfer_after_declining_is_shown_normally() {
+        let mut app = app();
+        app.handle_engine(EngineEvent::Offer(offer(ReceiverOfferPhase::OfferReady)));
+        app.handle_key(press(Button::B));
+
+        // A fresh connection clears the dismissal.
+        app.handle_engine(EngineEvent::Offer(offer(ReceiverOfferPhase::Connecting)));
+        assert_eq!(app.screen(), Screen::Transfer);
+        app.handle_engine(EngineEvent::Offer(offer(ReceiverOfferPhase::OfferReady)));
+        assert_eq!(app.screen(), Screen::Offer);
+    }
+
+    #[test]
+    fn a_second_cancel_leaves_an_incoming_transfer() {
+        let mut app = app();
+        app.handle_engine(EngineEvent::Offer(offer(ReceiverOfferPhase::Receiving)));
+        assert_eq!(app.screen(), Screen::Transfer);
+
+        app.handle_key(press(Button::B));
+        assert_eq!(app.screen(), Screen::Transfer, "first press only asks");
+
+        app.handle_key(press(Button::B));
+        assert_eq!(app.screen(), Screen::Home);
     }
 
     #[test]
