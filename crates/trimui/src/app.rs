@@ -498,14 +498,7 @@ impl App {
                 // we will send back to, and we already hold its ticket. This
                 // is what makes the send picker's recent list useful before
                 // the first outbound transfer rather than after it.
-                if phase == ReceiverOfferPhase::Completed
-                    && !offer.sender_ephemeral
-                    && let (Some(id), Some(ticket)) = (
-                        offer.sender_endpoint_id.as_deref(),
-                        offer.sender_ticket.as_deref(),
-                    )
-                {
-                    self.config.remember_device(id, &offer.sender_name, ticket);
+                if phase == ReceiverOfferPhase::Completed && self.remember_sender(&offer) {
                     requests.push(AppRequest::SaveConfig);
                 }
             }
@@ -513,6 +506,28 @@ impl App {
 
         self.offer = Some(offer);
         requests
+    }
+
+    /// Records an incoming sender as a future send destination.
+    ///
+    /// Needs both a stable identity and a ticket: without the ticket there is
+    /// nothing to dial, and an ephemeral peer's key dies with its session.
+    /// Returns whether anything was recorded, so callers only ask for a
+    /// config write when there is something to write.
+    fn remember_sender(&mut self, offer: &ReceiverOfferEvent) -> bool {
+        if offer.sender_ephemeral {
+            return false;
+        }
+        match (
+            offer.sender_endpoint_id.as_deref(),
+            offer.sender_ticket.as_deref(),
+        ) {
+            (Some(id), Some(ticket)) => {
+                self.config.remember_device(id, &offer.sender_name, ticket);
+                true
+            }
+            _ => false,
+        }
     }
 
     fn apply_send(&mut self, event: SendEvent) -> Vec<AppRequest> {
@@ -957,6 +972,11 @@ impl App {
                         self.toast(self.s().toast_no_identity);
                     } else {
                         self.config.trust(&endpoint, &offer.sender_name);
+                        // Trusting a device is the clearest statement that
+                        // files keep moving between it and here, and its
+                        // ticket is in hand right now — so make it a send
+                        // destination too rather than discarding that.
+                        self.remember_sender(&offer);
                         let message = fill(self.s().toast_trusted, &offer.sender_name);
                         self.toast(message);
                         requests.push(AppRequest::SaveConfig);
@@ -1024,6 +1044,7 @@ impl App {
                     fill(self.s().toast_untrusted, &offer.sender_name)
                 } else {
                     self.config.trust(&endpoint, &offer.sender_name);
+                    self.remember_sender(&offer);
                     fill(self.s().toast_trusted, &offer.sender_name)
                 };
                 self.toast(message);
@@ -2822,6 +2843,39 @@ mod tests {
 
         app.handle_key(press(Button::B));
         assert_eq!(app.screen(), Screen::Home);
+    }
+
+    /// Trusting a device is a statement that files keep moving both ways, and
+    /// its ticket is available at that moment — the device where this was
+    /// missed had a trusted Pixel 7 and an empty send list.
+    #[test]
+    fn trusting_a_device_also_makes_it_a_send_destination() {
+        let mut app = app();
+        let mut event = offer(ReceiverOfferPhase::OfferReady);
+        event.sender_ticket = Some("pixel-ticket".to_owned());
+        app.handle_engine(EngineEvent::Offer(event));
+
+        app.handle_key(press(Button::X));
+        assert!(app.config.is_trusted("sender-key"));
+        assert_eq!(app.config.recent_devices.len(), 1);
+        assert_eq!(app.config.recent_devices[0].ticket, "pixel-ticket");
+    }
+
+    /// With no nearby results at all, the recent group is the first one — its
+    /// label must still appear.
+    #[test]
+    fn the_recent_group_is_labelled_even_with_nothing_nearby() {
+        let mut app = app();
+        app.config.remember_device("k", "MacBook Air", "t");
+        app.screen = Screen::SendTo;
+
+        let rows = app.send_to_rows();
+        let recent = app.s().send_via_recent;
+        assert!(
+            rows.iter()
+                .any(|row| row.subtitle.as_deref() == Some(recent)),
+            "the recent group must be labelled: {rows:?}"
+        );
     }
 
     #[test]
