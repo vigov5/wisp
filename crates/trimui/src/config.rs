@@ -77,6 +77,12 @@ pub struct Config {
     pub server: Option<String>,
     /// Auto-accept offers from these senders (feature R6).
     pub trusted: Vec<TrustedDevice>,
+    /// Save folders the user has picked before, most recent first.
+    ///
+    /// Reaching a folder through the browser takes several presses, and the
+    /// same handful of destinations get reused; this puts them one press away
+    /// on the picker's first page.
+    pub recent_save_roots: Vec<PathBuf>,
     /// Hex-encoded 32-byte iroh secret key; generated on first run.
     pub secret_key: Option<String>,
     /// Raw evdev code -> button name, for devices whose layout does not match
@@ -94,6 +100,7 @@ impl Default for Config {
             conflict: Conflict::Rename,
             server: None,
             trusted: Vec::new(),
+            recent_save_roots: Vec::new(),
             secret_key: None,
             button_overrides: HashMap::new(),
         }
@@ -197,6 +204,32 @@ impl Config {
             endpoint_id: endpoint_id.to_owned(),
             name: name.to_owned(),
         });
+    }
+
+    /// How many previously chosen save folders are kept.
+    pub const MAX_RECENT_SAVE_ROOTS: usize = 30;
+
+    /// Records `path` as the most recently chosen save folder.
+    ///
+    /// Moves an existing entry to the front rather than duplicating it, so
+    /// re-picking a folder promotes it instead of filling the list with
+    /// copies of the same destination.
+    pub fn remember_save_root(&mut self, path: &Path) {
+        self.recent_save_roots.retain(|entry| entry != path);
+        self.recent_save_roots.insert(0, path.to_path_buf());
+        self.recent_save_roots.truncate(Self::MAX_RECENT_SAVE_ROOTS);
+    }
+
+    /// Previously chosen folders that still exist, most recent first.
+    ///
+    /// A folder on a card that has since been swapped would otherwise sit in
+    /// the list forever and fail on selection.
+    pub fn recent_save_roots_present(&self) -> Vec<PathBuf> {
+        self.recent_save_roots
+            .iter()
+            .filter(|path| path.is_dir())
+            .cloned()
+            .collect()
     }
 
     pub fn untrust(&mut self, endpoint_id: &str) {
@@ -522,6 +555,66 @@ overlayfs:/overlay / overlay rw,noatime,lowerdir=/,upperdir=/overlay/upper 0 0
     fn an_unreadable_mounts_file_refuses_a_mnt_path() {
         // Better to stop than to guess, when the destination is the card.
         assert!(!save_root_is_writable(Path::new("/mnt/SDCARD/Wisp"), ""));
+    }
+
+    #[test]
+    fn a_chosen_save_root_is_remembered_most_recent_first() {
+        let mut config = Config::default();
+        config.remember_save_root(Path::new("/mnt/SDCARD/Roms/FC"));
+        config.remember_save_root(Path::new("/mnt/SDCARD/Wisp"));
+        assert_eq!(
+            config.recent_save_roots,
+            vec![
+                PathBuf::from("/mnt/SDCARD/Wisp"),
+                PathBuf::from("/mnt/SDCARD/Roms/FC"),
+            ]
+        );
+    }
+
+    #[test]
+    fn re_picking_a_folder_promotes_it_instead_of_duplicating() {
+        let mut config = Config::default();
+        for path in ["/a", "/b", "/c"] {
+            config.remember_save_root(Path::new(path));
+        }
+        config.remember_save_root(Path::new("/a"));
+        assert_eq!(
+            config.recent_save_roots,
+            vec![
+                PathBuf::from("/a"),
+                PathBuf::from("/c"),
+                PathBuf::from("/b"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_recent_list_is_capped() {
+        let mut config = Config::default();
+        for i in 0..Config::MAX_RECENT_SAVE_ROOTS + 12 {
+            config.remember_save_root(Path::new(&format!("/folder/{i}")));
+        }
+        assert_eq!(
+            config.recent_save_roots.len(),
+            Config::MAX_RECENT_SAVE_ROOTS
+        );
+        // The newest survives, the oldest is dropped.
+        assert_eq!(
+            config.recent_save_roots[0],
+            PathBuf::from(&format!("/folder/{}", Config::MAX_RECENT_SAVE_ROOTS + 11))
+        );
+        assert!(
+            !config
+                .recent_save_roots
+                .contains(&PathBuf::from("/folder/0"))
+        );
+    }
+
+    #[test]
+    fn recent_folders_on_a_swapped_card_are_filtered_out() {
+        let mut config = Config::default();
+        config.remember_save_root(Path::new("/definitely/not/here"));
+        assert!(config.recent_save_roots_present().is_empty());
     }
 
     #[test]

@@ -237,6 +237,17 @@ fn scenes() -> Vec<(&'static str, App)> {
         scenes.push(("button-test", app));
     }
 
+    {
+        // Last row of Settings.
+        let mut app = base_app();
+        app.handle_key(press(Button::Y));
+        for _ in 0..6 {
+            app.handle_key(press(Button::Down));
+        }
+        app.handle_key(press(Button::A));
+        scenes.push(("about", app));
+    }
+
     scenes
 }
 

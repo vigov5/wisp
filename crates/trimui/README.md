@@ -120,7 +120,13 @@ the LAN address.
 | Y | Settings | — | — | — | — |
 | D-pad | — | Scroll files | — | Scroll | Move |
 
-Received files go to `/mnt/SDCARD/Wisp` unless changed in Settings.
+Received files go to `/mnt/SDCARD/Wisp` unless changed in Settings. The folder
+picker lists the last 30 folders you chose before the built-in suggestions, so
+a destination reached once through the browser is one press away afterwards.
+
+The last Settings row, *About*, shows the version and this handheld's **full**
+identity key — untruncated on purpose, so it can be compared against what the
+sending device displays.
 
 ## Settings file
 
@@ -135,6 +141,7 @@ SSH:
   "conflict": "rename",
   "server": null,
   "trusted": [{ "endpoint_id": "…", "name": "Pixel 7" }],
+  "recent_save_roots": ["/mnt/SDCARD/Roms/FC", "/mnt/SDCARD/Wisp"],
   "secret_key": "…",
   "button_overrides": {}
 }

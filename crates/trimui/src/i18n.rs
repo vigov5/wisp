@@ -143,11 +143,26 @@ pub struct Strings {
     pub row_device_name: &'static str,
     pub row_device_name_hint: &'static str,
     pub row_language: &'static str,
+    pub row_about: &'static str,
     pub conflict_rename: &'static str,
     pub conflict_reject: &'static str,
 
+    // About
+    pub about_title: &'static str,
+    pub about_version: &'static str,
+    pub about_identity: &'static str,
+    pub about_identity_hint: &'static str,
+    pub about_save_folder: &'static str,
+    pub about_project: &'static str,
+
     // Folder picker
     pub folder_title: &'static str,
+    /// Heading above folders the user has chosen before.
+    pub folder_recent: &'static str,
+    pub folder_suggested: &'static str,
+    /// Marks the folder currently in use. A word, not a tick: the bundled
+    /// Noto Sans has no U+2713 and renders it as a blank box.
+    pub folder_in_use: &'static str,
     pub folder_browse: &'static str,
     pub folder_use_this: &'static str,
     pub folder_changed: &'static str,
@@ -244,10 +259,21 @@ pub static EN: Strings = Strings {
     row_device_name: "Device name",
     row_device_name_hint: "Edit settings.json over SSH",
     row_language: "Language",
+    row_about: "About",
     conflict_rename: "Rename (keep both)",
     conflict_reject: "Reject",
 
+    about_title: "About Wisp",
+    about_version: "Version",
+    about_identity: "Device identity",
+    about_identity_hint: "Senders remember this handheld by this key",
+    about_save_folder: "Save folder",
+    about_project: "github.com/vigov5/wisp",
+
     folder_title: "Save folder",
+    folder_recent: "Recently used",
+    folder_suggested: "Suggested",
+    folder_in_use: "in use",
     folder_browse: "Browse…",
     folder_use_this: "[ Use this folder ]",
     folder_changed: "Save folder changed",
@@ -336,10 +362,21 @@ pub static VI: Strings = Strings {
     row_device_name: "Tên thiết bị",
     row_device_name_hint: "Sửa trong settings.json qua SSH",
     row_language: "Ngôn ngữ",
+    row_about: "Thông tin",
     conflict_rename: "Đổi tên (giữ cả hai)",
     conflict_reject: "Từ chối",
 
+    about_title: "Thông tin Wisp",
+    about_version: "Phiên bản",
+    about_identity: "Danh tính máy",
+    about_identity_hint: "Máy gửi nhớ máy này bằng khoá đó",
+    about_save_folder: "Thư mục lưu",
+    about_project: "github.com/vigov5/wisp",
+
     folder_title: "Thư mục lưu",
+    folder_recent: "Đã dùng gần đây",
+    folder_suggested: "Gợi ý",
+    folder_in_use: "đang dùng",
     folder_browse: "Duyệt thư mục…",
     folder_use_this: "[ Chọn thư mục này ]",
     folder_changed: "Đã đổi thư mục lưu",
@@ -440,6 +477,32 @@ mod tests {
                 vi.matches("{}").count(),
                 "placeholder mismatch between {en:?} and {vi:?}"
             );
+        }
+    }
+
+    /// The bundled Noto Sans renders a missing glyph as a blank box, which
+    /// looked like a rendering fault when a tick was used as the "in use"
+    /// marker. Keep the UI to characters the font actually has.
+    #[test]
+    fn ui_strings_avoid_glyphs_the_bundled_font_lacks() {
+        let missing = ['\u{2713}', '\u{2714}', '\u{2717}', '\u{2718}'];
+        for lang in [Lang::En, Lang::Vi] {
+            let s = lang.strings();
+            for value in [
+                s.folder_in_use,
+                s.folder_recent,
+                s.folder_suggested,
+                s.hint_accept,
+                s.hint_done,
+                s.row_about,
+            ] {
+                for ch in missing {
+                    assert!(
+                        !value.contains(ch),
+                        "{value:?} uses {ch:?}, which the font has no glyph for"
+                    );
+                }
+            }
         }
     }
 

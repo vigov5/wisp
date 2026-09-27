@@ -44,6 +44,7 @@ pub enum Screen {
     SaveFolder,
     Trusted,
     ButtonTest,
+    About,
 }
 
 /// What the app asks `main` to do after handling an input or event.
@@ -77,16 +78,18 @@ enum SettingsRow {
     Trusted,
     ButtonTest,
     DeviceName,
+    About,
 }
 
 impl SettingsRow {
-    const ORDER: [SettingsRow; 6] = [
+    const ORDER: [SettingsRow; 7] = [
         SettingsRow::SaveFolder,
         SettingsRow::Conflict,
         SettingsRow::Language,
         SettingsRow::Trusted,
         SettingsRow::ButtonTest,
         SettingsRow::DeviceName,
+        SettingsRow::About,
     ];
 
     fn at(index: usize) -> Option<Self> {
@@ -111,6 +114,7 @@ impl SettingsRow {
             SettingsRow::DeviceName => Row::new(strings.row_device_name)
                 .with_subtitle(strings.row_device_name_hint)
                 .with_value(app.config.device_name.clone()),
+            SettingsRow::About => Row::new(strings.row_about).with_value(env!("CARGO_PKG_VERSION")),
         }
     }
 }
@@ -377,6 +381,7 @@ impl App {
             Screen::Settings => self.on_settings(button),
             Screen::SaveFolder => self.on_save_folder(button),
             Screen::Trusted => self.on_trusted(button),
+            Screen::About => self.on_about(button),
             Screen::ButtonTest => self.on_button_test(button),
         }
     }
@@ -550,6 +555,10 @@ impl App {
                     self.screen = Screen::ButtonTest;
                     Vec::new()
                 }
+                Some(SettingsRow::About) => {
+                    self.screen = Screen::About;
+                    Vec::new()
+                }
                 Some(SettingsRow::DeviceName) | None => Vec::new(),
             },
             _ => Vec::new(),
@@ -558,18 +567,56 @@ impl App {
 
     /// Folder picker rows: the shortcuts, then the current directory's
     /// children once the user starts browsing.
+    /// The folders offered on the picker's first page, in display order:
+    /// previously chosen ones first, then the built-in suggestions that are
+    /// not already among them.
+    ///
+    /// Shared by `folder_rows` and `choose_folder` so the row a user sees and
+    /// the folder that gets selected cannot drift apart.
+    fn folder_candidates(&self) -> Vec<(PathBuf, bool)> {
+        let recent = self.config.recent_save_roots_present();
+        let mut out: Vec<(PathBuf, bool)> =
+            recent.iter().map(|path| (path.clone(), true)).collect();
+        for path in Config::save_root_suggestions() {
+            if !recent.contains(&path) {
+                out.push((path, false));
+            }
+        }
+        out
+    }
+
     fn folder_rows(&self) -> Vec<Row> {
         match &self.browser {
             None => {
-                let mut rows: Vec<Row> = Config::save_root_suggestions()
-                    .into_iter()
-                    .map(|path| {
-                        let selected = path == self.config.save_root;
-                        let row = Row::new(path.display().to_string());
-                        if selected { row.with_value("✓") } else { row }
+                let strings = self.s();
+                let candidates = self.folder_candidates();
+                // Group labels only earn their space when there are two groups
+                // to tell apart; on a fresh install everything is a suggestion
+                // and saying so on every screen is noise.
+                let mixed = candidates.iter().any(|(_, recent)| *recent)
+                    && candidates.iter().any(|(_, recent)| !*recent);
+                let mut previous_recent: Option<bool> = None;
+                let mut rows: Vec<Row> = candidates
+                    .iter()
+                    .map(|(path, is_recent)| {
+                        let mut row = Row::new(path.display().to_string());
+                        // Label only the first row of each group: a heading on
+                        // every row would drown the paths it is grouping.
+                        if mixed && previous_recent != Some(*is_recent) {
+                            row = row.with_subtitle(if *is_recent {
+                                strings.folder_recent
+                            } else {
+                                strings.folder_suggested
+                            });
+                        }
+                        previous_recent = Some(*is_recent);
+                        if *path == self.config.save_root {
+                            row = row.with_value(strings.folder_in_use);
+                        }
+                        row
                     })
                     .collect();
-                rows.push(Row::new(self.s().folder_browse).with_value("›"));
+                rows.push(Row::new(strings.folder_browse).with_value("›"));
                 rows
             }
             Some(browser) => {
@@ -625,9 +672,9 @@ impl App {
         let index = self.folder_cursor.index;
         match self.browser.as_mut() {
             None => {
-                let suggestions = Config::save_root_suggestions();
-                if index < suggestions.len() {
-                    return self.set_save_root(suggestions[index].clone());
+                let candidates = self.folder_candidates();
+                if let Some((path, _)) = candidates.get(index).cloned() {
+                    return self.set_save_root(path);
                 }
                 // "Duyệt thư mục…"
                 let start = PathBuf::from("/mnt/SDCARD");
@@ -667,9 +714,13 @@ impl App {
     }
 
     fn set_save_root(&mut self, path: PathBuf) -> Vec<AppRequest> {
+        // Remember it either way: re-picking the folder already in use is
+        // still a signal that it is the one the user reaches for.
+        self.config.remember_save_root(&path);
         if path == self.config.save_root {
+            self.browser = None;
             self.screen = Screen::Settings;
-            return Vec::new();
+            return vec![AppRequest::SaveConfig];
         }
         self.config.save_root = path;
         self.toast(self.s().folder_changed);
@@ -707,6 +758,13 @@ impl App {
         }
     }
 
+    fn on_about(&mut self, button: Button) -> Vec<AppRequest> {
+        if matches!(button, Button::A | Button::B) {
+            self.screen = Screen::Settings;
+        }
+        Vec::new()
+    }
+
     fn on_button_test(&mut self, button: Button) -> Vec<AppRequest> {
         // Start is the only way out, so every other button stays testable.
         if button == Button::Start {
@@ -733,6 +791,7 @@ impl App {
             Screen::Settings => self.render_settings(canvas, fonts),
             Screen::SaveFolder => self.render_save_folder(canvas, fonts),
             Screen::Trusted => self.render_trusted(canvas, fonts),
+            Screen::About => self.render_about(canvas, fonts),
             Screen::ButtonTest => self.render_button_test(canvas, fonts),
         }
 
@@ -1432,6 +1491,87 @@ impl App {
         );
     }
 
+    fn render_about(&mut self, canvas: &mut Canvas, fonts: &mut Fonts) {
+        let strings = self.s();
+        let content = ui::header(canvas, fonts, strings.about_title, None);
+        ui::panel(canvas, content);
+        let inner = content.inset(metrics::GAP * 2);
+        let mut y = inner.y;
+
+        // The identity is the one long value here, so it gets the full width
+        // and no truncation — the point of showing it is to compare it, in
+        // full, against what the sender displays.
+        let entries: [(&str, String, Option<&str>); 4] = [
+            (
+                strings.about_version,
+                env!("CARGO_PKG_VERSION").to_owned(),
+                None,
+            ),
+            (
+                strings.about_identity,
+                self.endpoint_id.clone().unwrap_or_else(|| "—".to_owned()),
+                Some(strings.about_identity_hint),
+            ),
+            (
+                strings.about_save_folder,
+                self.config.save_root.display().to_string(),
+                None,
+            ),
+            (strings.device_name, self.config.device_name.clone(), None),
+        ];
+
+        for (label, value, hint) in entries {
+            fonts.draw(
+                canvas,
+                inner.x,
+                y,
+                label,
+                text::SMALL,
+                theme::TEXT_MUTED,
+                Weight::Regular,
+            );
+            y += fonts.line_height(text::SMALL);
+            let lines = fonts.wrap(&value, text::BODY, inner.w);
+            for line in &lines {
+                fonts.draw(
+                    canvas,
+                    inner.x,
+                    y,
+                    line,
+                    text::BODY,
+                    theme::TEXT,
+                    Weight::Regular,
+                );
+                y += fonts.line_height(text::BODY);
+            }
+            if let Some(hint) = hint {
+                fonts.draw(
+                    canvas,
+                    inner.x,
+                    y,
+                    hint,
+                    text::SMALL,
+                    theme::TEXT_FAINT,
+                    Weight::Regular,
+                );
+                y += fonts.line_height(text::SMALL);
+            }
+            y += metrics::GAP;
+        }
+
+        fonts.draw_in(
+            canvas,
+            Rect::new(inner.x, content.bottom() - 48, inner.w, 30),
+            strings.about_project,
+            text::SMALL,
+            theme::ACCENT,
+            Weight::Regular,
+            Align::Left,
+        );
+
+        ui::footer(canvas, fonts, &[("B", strings.hint_back)]);
+    }
+
     fn render_button_test(&mut self, canvas: &mut Canvas, fonts: &mut Fonts) {
         let strings = self.s();
         let content = ui::header(canvas, fonts, strings.button_test_title, None);
@@ -1773,6 +1913,42 @@ mod tests {
     }
 
     #[test]
+    fn about_is_the_last_settings_row_and_opens() {
+        assert_eq!(
+            SettingsRow::ORDER.last(),
+            Some(&SettingsRow::About),
+            "About belongs at the end of the menu"
+        );
+        let mut app = app();
+        open_settings_row(&mut app, SettingsRow::About);
+        assert_eq!(app.screen(), Screen::About);
+
+        app.handle_key(press(Button::B));
+        assert_eq!(app.screen(), Screen::Settings);
+    }
+
+    #[test]
+    fn choosing_a_folder_records_it_and_keeps_the_rows_aligned() {
+        // Use a directory that really exists, since the picker filters recent
+        // entries by presence on disk.
+        let dir = std::env::temp_dir();
+        let mut app = app();
+        app.config.remember_save_root(&dir);
+
+        let candidates = app.folder_candidates();
+        assert_eq!(
+            candidates
+                .first()
+                .map(|(path, recent)| (path.clone(), *recent)),
+            Some((dir.clone(), true)),
+            "a remembered folder leads the list"
+        );
+        // One row per candidate, plus the trailing "Browse…" entry, or the
+        // index the handler uses would point at the wrong folder.
+        assert_eq!(app.folder_rows().len(), candidates.len() + 1);
+    }
+
+    #[test]
     fn switching_language_persists_but_leaves_the_receiver_alone() {
         let mut app = app();
         assert_eq!(app.config.lang, Lang::En, "English is the default");
@@ -1807,6 +1983,7 @@ mod tests {
                 Screen::Settings,
                 Screen::SaveFolder,
                 Screen::Trusted,
+                Screen::About,
                 Screen::ButtonTest,
             ] {
                 app.screen = screen;
@@ -1934,6 +2111,7 @@ mod tests {
             Screen::Settings,
             Screen::SaveFolder,
             Screen::Trusted,
+            Screen::About,
             Screen::ButtonTest,
         ] {
             app.screen = screen;
