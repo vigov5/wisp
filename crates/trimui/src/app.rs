@@ -12,14 +12,14 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use wisp_app::{
-    AcceptedDestinations, OfferDecision, PairingCodeState, QrPairingInfo, ReceiverOfferEvent,
-    ReceiverOfferPhase,
+    AcceptedDestinations, NearbyReceiver, OfferDecision, PairingCodeState, QrPairingInfo,
+    ReceiverOfferEvent, ReceiverOfferPhase, SendEvent, SendPhase,
 };
 use wisp_core::util::human_size;
 
 use crate::config::Config;
 use crate::draw::{Canvas, Rect};
-use crate::engine::EngineCommand;
+use crate::engine::{EngineCommand, SendTarget};
 use crate::font::{Align, Fonts, Weight};
 use crate::i18n::{Strings, fill, fill2, plural};
 use crate::input::{Button, KeyEvent};
@@ -29,6 +29,25 @@ use crate::ui::{self, Row};
 
 /// How long a toast stays on screen.
 const TOAST_LIFETIME: Duration = Duration::from_secs(3);
+
+/// How long the destination picker browses the LAN for receivers.
+const NEARBY_SCAN_SECS: u64 = 6;
+
+/// Rendezvous codes are six characters.
+const CODE_LENGTH: usize = 6;
+
+/// Keys per row on the on-screen keyboard. Nine keeps the grid four rows
+/// deep, so every character is at most a few presses away.
+const CODE_COLUMNS: usize = 9;
+
+/// The on-screen keyboard's alphabet. Codes are upper-case alphanumeric, and
+/// the input is the only text this app ever has to type.
+const CODE_KEYS: [char; 36] = [
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', //
+    '9', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', //
+    'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', //
+    'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', //
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -45,6 +64,14 @@ pub enum Screen {
     Trusted,
     ButtonTest,
     About,
+    /// Choosing what to send.
+    SendPick,
+    /// Choosing where to send it.
+    SendTo,
+    /// Typing a six-character pairing code.
+    SendCode,
+    SendProgress,
+    SendResult,
 }
 
 /// What the app asks `main` to do after handling an input or event.
@@ -148,48 +175,60 @@ impl Cursor {
     }
 }
 
-/// Folder picker state: the suggestion list, then a directory walk.
+/// Filesystem browser, used for both pickers.
+///
+/// The save-folder picker lists directories only — offering files there would
+/// present choices that cannot be selected. The send picker lists both.
 #[derive(Debug, Clone)]
 struct Browser {
     dir: PathBuf,
     entries: Vec<PathBuf>,
     cursor: Cursor,
+    include_files: bool,
 }
 
 impl Browser {
-    fn open(dir: PathBuf) -> Self {
-        let entries = Self::read_dirs(&dir);
+    fn open(dir: PathBuf, include_files: bool) -> Self {
+        let entries = Self::read_entries(&dir, include_files);
         Self {
             dir,
             entries,
             cursor: Cursor::default(),
+            include_files,
         }
     }
 
-    /// Only directories: this picker chooses where files land, so listing
-    /// files would offer choices that cannot be selected.
-    fn read_dirs(dir: &Path) -> Vec<PathBuf> {
-        let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
-            .filter(|path| {
-                // Hidden folders are noise here, and `.wisp` is our own state.
-                !path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with('.'))
-            })
-            .collect();
-        out.sort();
-        out
+    /// Directories first, then files, each sorted by name — the order a file
+    /// manager uses, and the one that keeps a folder's subfolders together
+    /// rather than interleaved with its contents.
+    fn read_entries(dir: &Path, include_files: bool) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        let mut files: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            // Hidden entries are noise here, and `.wisp` is our own state.
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with('.'))
+            {
+                continue;
+            }
+            if path.is_dir() {
+                dirs.push(path);
+            } else if include_files {
+                files.push(path);
+            }
+        }
+        dirs.sort();
+        files.sort();
+        dirs.extend(files);
+        dirs
     }
 
     fn enter(&mut self, path: PathBuf) {
         self.dir = path;
-        self.entries = Self::read_dirs(&self.dir);
+        self.entries = Self::read_entries(&self.dir, self.include_files);
         self.cursor = Cursor::default();
     }
 
@@ -229,6 +268,22 @@ pub struct App {
     text_scroll: usize,
     browser: Option<Browser>,
     last_key: Option<KeyEvent>,
+
+    // --- sending
+    send_browser: Option<Browser>,
+    /// Paths queued for the next send, in the order they were picked.
+    send_selection: Vec<PathBuf>,
+    send_pick_cursor: Cursor,
+    send_to_cursor: Cursor,
+    /// `None` while a scan is in flight; `Some(Err(_))` when it failed.
+    nearby: Option<Result<Vec<NearbyReceiver>, String>>,
+    /// The code being typed, and where the on-screen keyboard's cursor sits.
+    code_input: String,
+    code_key: usize,
+    send_event: Option<SendEvent>,
+    /// Set once the finished send has been written to the recent list, so a
+    /// repeated terminal event cannot record it twice.
+    send_recorded: bool,
 }
 
 impl App {
@@ -253,11 +308,30 @@ impl App {
             text_scroll: 0,
             browser: None,
             last_key: None,
+            send_browser: None,
+            send_selection: Vec::new(),
+            send_pick_cursor: Cursor::default(),
+            send_to_cursor: Cursor::default(),
+            nearby: None,
+            code_input: String::new(),
+            code_key: 0,
+            send_event: None,
+            send_recorded: false,
         }
     }
 
     pub fn screen(&self) -> Screen {
         self.screen
+    }
+
+    /// Jumps straight to a send screen with `selection` already queued.
+    ///
+    /// Only for `examples/preview.rs`: rendering the send flow off-device
+    /// otherwise means walking a file picker that has nothing to walk. The
+    /// app itself never calls this.
+    pub fn preview_send(&mut self, screen: Screen, selection: Vec<PathBuf>) {
+        self.send_selection = selection;
+        self.screen = screen;
     }
 
     /// Puts the app into the "cannot run" state before the loop starts, used
@@ -309,6 +383,12 @@ impl App {
                 Vec::new()
             }
             E::Offer(offer) => self.apply_offer(offer),
+            E::Nearby(found) => {
+                self.nearby = Some(found);
+                self.send_to_cursor.clamp(self.send_to_rows().len());
+                Vec::new()
+            }
+            E::Send(event) => self.apply_send(event),
             E::Fatal(message) => {
                 self.fatal = Some(message);
                 Vec::new()
@@ -362,6 +442,36 @@ impl App {
         requests
     }
 
+    fn apply_send(&mut self, event: SendEvent) -> Vec<AppRequest> {
+        let mut requests = Vec::new();
+        match event.phase {
+            SendPhase::Completed
+            | SendPhase::Declined
+            | SendPhase::Failed
+            | SendPhase::Cancelled => {
+                self.screen = Screen::SendResult;
+                // Only a completed transfer proves the ticket works, so only
+                // that one is worth offering again later.
+                if event.phase == SendPhase::Completed && !self.send_recorded {
+                    self.send_recorded = true;
+                    let reusable = !event.remote_ephemeral.unwrap_or(false);
+                    if let (true, Some(id), Some(ticket)) = (
+                        reusable,
+                        event.remote_endpoint_id.as_deref(),
+                        event.remote_ticket.as_deref(),
+                    ) {
+                        self.config
+                            .remember_device(id, &event.destination_label, ticket);
+                        requests.push(AppRequest::SaveConfig);
+                    }
+                }
+            }
+            _ => self.screen = Screen::SendProgress,
+        }
+        self.send_event = Some(event);
+        requests
+    }
+
     // ----------------------------------------------------------------- input
 
     pub fn handle_key(&mut self, event: KeyEvent) -> Vec<AppRequest> {
@@ -383,6 +493,11 @@ impl App {
             Screen::Trusted => self.on_trusted(button),
             Screen::About => self.on_about(button),
             Screen::ButtonTest => self.on_button_test(button),
+            Screen::SendPick => self.on_send_pick(button),
+            Screen::SendTo => self.on_send_to(button),
+            Screen::SendCode => self.on_send_code(button),
+            Screen::SendProgress => self.on_send_progress(button),
+            Screen::SendResult => self.on_send_result(button),
         }
     }
 
@@ -397,9 +512,286 @@ impl App {
                 self.screen = Screen::Settings;
                 Vec::new()
             }
+            Button::X => {
+                self.open_send_picker();
+                Vec::new()
+            }
             Button::B => vec![AppRequest::Exit],
             _ => Vec::new(),
         }
+    }
+
+    // ------------------------------------------------------------------ send
+
+    fn open_send_picker(&mut self) {
+        // Start where files actually are. Falling back to the save folder's
+        // parent keeps this usable off-device, where /mnt/SDCARD is absent.
+        let start = [PathBuf::from("/mnt/SDCARD"), self.config.save_root.clone()]
+            .into_iter()
+            .find(|path| path.is_dir())
+            .unwrap_or_else(|| PathBuf::from("/"));
+        self.send_browser = Some(Browser::open(start, true));
+        self.send_pick_cursor = Cursor::default();
+        self.send_selection.clear();
+        self.screen = Screen::SendPick;
+    }
+
+    /// Rows of the send picker: an "up" entry when there is a parent, then
+    /// the directory's contents.
+    fn send_pick_rows(&self) -> Vec<Row> {
+        let Some(browser) = self.send_browser.as_ref() else {
+            return Vec::new();
+        };
+        let strings = self.s();
+        let mut rows = Vec::new();
+        if browser.dir.parent().is_some() {
+            rows.push(Row::new(".."));
+        }
+        for path in &browser.entries {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?")
+                .to_owned();
+            if path.is_dir() {
+                rows.push(Row::new(name).with_value("›"));
+            } else {
+                let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                let row = Row::new(name);
+                rows.push(if self.send_selection.contains(path) {
+                    row.with_value(strings.send_picked)
+                } else {
+                    row.with_value(human_size(size))
+                });
+            }
+        }
+        rows
+    }
+
+    /// Maps a row index to the entry it shows, accounting for the leading
+    /// "up" row. Shared with the renderer for the same reason the settings
+    /// menu is: an index that means two different things is a bug waiting.
+    fn send_pick_entry(&self, index: usize) -> Option<PathBuf> {
+        let browser = self.send_browser.as_ref()?;
+        let offset = usize::from(browser.dir.parent().is_some());
+        if index < offset {
+            return None;
+        }
+        browser.entries.get(index - offset).cloned()
+    }
+
+    fn on_send_pick(&mut self, button: Button) -> Vec<AppRequest> {
+        let count = self.send_pick_rows().len();
+        match button {
+            Button::Up => self.send_pick_cursor.move_by(-1, count),
+            Button::Down => self.send_pick_cursor.move_by(1, count),
+            Button::A => {
+                let index = self.send_pick_cursor.index;
+                match self.send_pick_entry(index) {
+                    None => {
+                        if let Some(browser) = self.send_browser.as_mut() {
+                            browser.up();
+                        }
+                        self.send_pick_cursor = Cursor::default();
+                    }
+                    Some(path) if path.is_dir() => {
+                        if let Some(browser) = self.send_browser.as_mut() {
+                            browser.enter(path);
+                        }
+                        self.send_pick_cursor = Cursor::default();
+                    }
+                    Some(path) => {
+                        if let Some(at) =
+                            self.send_selection.iter().position(|entry| *entry == path)
+                        {
+                            self.send_selection.remove(at);
+                        } else {
+                            self.send_selection.push(path);
+                        }
+                    }
+                }
+            }
+            Button::Y => {
+                // Whole folder in one press: the common case is "send this
+                // directory", and ticking its files one by one is tedious.
+                if let Some(path) = self.send_pick_entry(self.send_pick_cursor.index)
+                    && path.is_dir()
+                    && !self.send_selection.contains(&path)
+                {
+                    self.send_selection.push(path);
+                }
+            }
+            Button::X => {
+                if !self.send_selection.is_empty() {
+                    return self.open_send_destinations();
+                }
+                self.toast(self.s().send_nothing_picked);
+            }
+            Button::B => {
+                self.send_browser = None;
+                self.screen = Screen::Home;
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn open_send_destinations(&mut self) -> Vec<AppRequest> {
+        self.nearby = None;
+        self.send_to_cursor = Cursor::default();
+        self.screen = Screen::SendTo;
+        vec![AppRequest::Engine(EngineCommand::ScanNearby {
+            timeout_secs: NEARBY_SCAN_SECS,
+        })]
+    }
+
+    /// Destinations, in one list: devices found on the LAN, then devices sent
+    /// to before, then the manual code entry.
+    fn send_targets(&self) -> Vec<SendTarget> {
+        let mut out = Vec::new();
+        if let Some(Ok(found)) = self.nearby.as_ref() {
+            for receiver in found {
+                out.push(SendTarget::Ticket {
+                    ticket: receiver.ticket.clone(),
+                    label: receiver.label.clone(),
+                });
+            }
+        }
+        for device in &self.config.recent_devices {
+            // A device discovered right now is already listed; showing it
+            // twice would just split the user's attention.
+            let already = out.iter().any(|target| match target {
+                SendTarget::Ticket { ticket, .. } => *ticket == device.ticket,
+                SendTarget::Code(_) => false,
+            });
+            if !already {
+                out.push(SendTarget::Ticket {
+                    ticket: device.ticket.clone(),
+                    label: device.label.clone(),
+                });
+            }
+        }
+        out
+    }
+
+    fn send_to_rows(&self) -> Vec<Row> {
+        let strings = self.s();
+        let nearby_count = match self.nearby.as_ref() {
+            Some(Ok(found)) => found.len(),
+            _ => 0,
+        };
+        let mut rows: Vec<Row> = self
+            .send_targets()
+            .iter()
+            .enumerate()
+            .map(|(index, target)| {
+                Row::new(target.label().to_owned()).with_subtitle(if index < nearby_count {
+                    strings.send_via_nearby
+                } else {
+                    strings.send_via_recent
+                })
+            })
+            .collect();
+
+        match self.nearby.as_ref() {
+            None => rows.push(Row::new(strings.send_scanning)),
+            Some(Err(message)) => {
+                rows.push(Row::new(strings.send_scan_failed).with_subtitle(message.clone()))
+            }
+            Some(Ok(_)) => {}
+        }
+        rows.push(Row::new(strings.send_enter_code).with_value("›"));
+        rows
+    }
+
+    fn on_send_to(&mut self, button: Button) -> Vec<AppRequest> {
+        let rows = self.send_to_rows().len();
+        match button {
+            Button::Up => self.send_to_cursor.move_by(-1, rows),
+            Button::Down => self.send_to_cursor.move_by(1, rows),
+            Button::Y => return self.open_send_destinations(),
+            Button::B => {
+                self.screen = Screen::SendPick;
+            }
+            Button::A => {
+                let targets = self.send_targets();
+                let index = self.send_to_cursor.index;
+                if let Some(target) = targets.get(index).cloned() {
+                    return self.start_send(target);
+                }
+                // Anything past the targets is either the scan status line,
+                // which does nothing, or the code entry, which is last.
+                if index + 1 == rows {
+                    self.code_input.clear();
+                    self.code_key = 0;
+                    self.screen = Screen::SendCode;
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn start_send(&mut self, destination: SendTarget) -> Vec<AppRequest> {
+        self.send_event = None;
+        self.send_recorded = false;
+        self.screen = Screen::SendProgress;
+        vec![AppRequest::Engine(EngineCommand::StartSend {
+            paths: self.send_selection.clone(),
+            destination,
+        })]
+    }
+
+    fn on_send_code(&mut self, button: Button) -> Vec<AppRequest> {
+        let keys = CODE_KEYS.len();
+        match button {
+            Button::Left => self.code_key = self.code_key.saturating_sub(1),
+            Button::Right => self.code_key = (self.code_key + 1).min(keys - 1),
+            Button::Up => self.code_key = self.code_key.saturating_sub(CODE_COLUMNS),
+            Button::Down => self.code_key = (self.code_key + CODE_COLUMNS).min(keys - 1),
+            Button::A => {
+                if self.code_input.chars().count() < CODE_LENGTH {
+                    self.code_input.push(CODE_KEYS[self.code_key]);
+                }
+            }
+            Button::X => {
+                self.code_input.pop();
+            }
+            Button::Start => {
+                if self.code_input.chars().count() == CODE_LENGTH {
+                    let code = self.code_input.clone();
+                    return self.start_send(SendTarget::Code(code));
+                }
+            }
+            Button::B => self.screen = Screen::SendTo,
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn on_send_progress(&mut self, button: Button) -> Vec<AppRequest> {
+        if button == Button::B {
+            self.toast(self.s().toast_cancelling);
+            return vec![AppRequest::Engine(EngineCommand::CancelSend)];
+        }
+        Vec::new()
+    }
+
+    fn on_send_result(&mut self, button: Button) -> Vec<AppRequest> {
+        match button {
+            Button::A | Button::B => {
+                self.send_event = None;
+                self.send_selection.clear();
+                self.send_browser = None;
+                self.screen = Screen::Home;
+            }
+            Button::X => {
+                // Same selection, different destination.
+                return self.open_send_destinations();
+            }
+            _ => {}
+        }
+        Vec::new()
     }
 
     fn on_offer(&mut self, button: Button) -> Vec<AppRequest> {
@@ -688,7 +1080,8 @@ impl App {
                         .map(Path::to_path_buf)
                         .unwrap_or_else(|| PathBuf::from("/"))
                 };
-                self.browser = Some(Browser::open(start));
+                // Directories only: this picker chooses a destination folder.
+                self.browser = Some(Browser::open(start, false));
                 self.folder_cursor = Cursor::default();
                 Vec::new()
             }
@@ -793,6 +1186,11 @@ impl App {
             Screen::Trusted => self.render_trusted(canvas, fonts),
             Screen::About => self.render_about(canvas, fonts),
             Screen::ButtonTest => self.render_button_test(canvas, fonts),
+            Screen::SendPick => self.render_send_pick(canvas, fonts),
+            Screen::SendTo => self.render_send_to(canvas, fonts),
+            Screen::SendCode => self.render_send_code(canvas, fonts),
+            Screen::SendProgress => self.render_send_progress(canvas, fonts),
+            Screen::SendResult => self.render_send_result(canvas, fonts),
         }
 
         self.render_toast(canvas, fonts);
@@ -1044,6 +1442,7 @@ impl App {
             canvas,
             fonts,
             &[
+                ("X", strings.hint_send),
                 ("A", strings.hint_new_code),
                 ("Y", strings.hint_settings),
                 ("B", strings.hint_exit),
@@ -1638,6 +2037,325 @@ impl App {
         ui::footer(canvas, fonts, &[("Start", strings.hint_back)]);
     }
 
+    fn render_send_pick(&mut self, canvas: &mut Canvas, fonts: &mut Fonts) {
+        let strings = self.s();
+        let title = self
+            .send_browser
+            .as_ref()
+            .map(|browser| browser.dir.display().to_string())
+            .unwrap_or_else(|| strings.send_title.to_owned());
+        let status = if self.send_selection.is_empty() {
+            None
+        } else {
+            Some(fill(
+                strings.send_selected_count,
+                &self.send_selection.len().to_string(),
+            ))
+        };
+        let content = ui::header(canvas, fonts, &title, status.as_deref());
+
+        let rows = self.send_pick_rows();
+        self.send_pick_cursor.clamp(rows.len());
+        self.send_pick_cursor.scroll = ui::list(
+            canvas,
+            fonts,
+            content,
+            &rows,
+            Some(self.send_pick_cursor.index),
+            self.send_pick_cursor.scroll,
+            strings.list_empty,
+        );
+
+        ui::footer(
+            canvas,
+            fonts,
+            &[
+                ("A", strings.hint_pick),
+                ("Y", strings.hint_pick_folder),
+                ("X", strings.hint_continue),
+                ("B", strings.hint_back),
+            ],
+        );
+    }
+
+    fn render_send_to(&mut self, canvas: &mut Canvas, fonts: &mut Fonts) {
+        let strings = self.s();
+        let status = fill(
+            strings.send_selected_count,
+            &self.send_selection.len().to_string(),
+        );
+        let content = ui::header(canvas, fonts, strings.send_to_title, Some(&status));
+
+        let rows = self.send_to_rows();
+        self.send_to_cursor.clamp(rows.len());
+        self.send_to_cursor.scroll = ui::list(
+            canvas,
+            fonts,
+            content,
+            &rows,
+            Some(self.send_to_cursor.index),
+            self.send_to_cursor.scroll,
+            strings.list_empty,
+        );
+
+        ui::footer(
+            canvas,
+            fonts,
+            &[
+                ("A", strings.hint_select),
+                ("Y", strings.hint_rescan),
+                ("B", strings.hint_back),
+            ],
+        );
+    }
+
+    fn render_send_code(&mut self, canvas: &mut Canvas, fonts: &mut Fonts) {
+        let strings = self.s();
+        let content = ui::header(canvas, fonts, strings.send_code_title, None);
+
+        // The code being typed, shown at the size the other device shows it.
+        let entry = Rect::new(content.x, content.y, content.w, 140);
+        ui::panel(canvas, entry);
+        let typed: String = self
+            .code_input
+            .chars()
+            .chain(std::iter::repeat('_'))
+            .take(CODE_LENGTH)
+            .flat_map(|ch| [ch, ' '])
+            .collect();
+        fonts.draw_in(
+            canvas,
+            Rect::new(entry.x, entry.y + 20, entry.w, 80),
+            typed.trim_end(),
+            text::CODE,
+            theme::TEXT,
+            Weight::Bold,
+            Align::Center,
+        );
+        fonts.draw_in(
+            canvas,
+            Rect::new(entry.x, entry.bottom() - 34, entry.w, 26),
+            strings.send_code_hint,
+            text::SMALL,
+            theme::TEXT_FAINT,
+            Weight::Regular,
+            Align::Center,
+        );
+
+        // Keyboard grid.
+        let grid_top = entry.bottom() + metrics::GAP;
+        let cell = (content.w / CODE_COLUMNS as i32).min(76);
+        let rows = CODE_KEYS.len().div_ceil(CODE_COLUMNS) as i32;
+        let grid_w = cell * CODE_COLUMNS as i32;
+        let origin_x = content.x + (content.w - grid_w) / 2;
+
+        for (index, key) in CODE_KEYS.iter().enumerate() {
+            let column = (index % CODE_COLUMNS) as i32;
+            let row = (index / CODE_COLUMNS) as i32;
+            let rect = Rect::new(
+                origin_x + column * cell,
+                grid_top + row * cell,
+                cell - 6,
+                cell - 6,
+            );
+            let selected = index == self.code_key;
+            canvas.fill_round_rect(
+                rect,
+                10,
+                if selected {
+                    theme::ACCENT_STRONG
+                } else {
+                    theme::SURFACE
+                },
+            );
+            if !selected {
+                canvas.stroke_rect(rect, 1, theme::BORDER);
+            }
+            fonts.draw_in(
+                canvas,
+                Rect::new(rect.x, rect.y + (rect.h - 30) / 2, rect.w, 32),
+                &key.to_string(),
+                text::HEADING,
+                if selected {
+                    theme::ON_ACCENT
+                } else {
+                    theme::TEXT
+                },
+                Weight::Bold,
+                Align::Center,
+            );
+        }
+        let _ = rows;
+
+        ui::footer(
+            canvas,
+            fonts,
+            &[
+                ("A", strings.hint_type),
+                ("X", strings.hint_delete),
+                ("Start", strings.hint_send_now),
+                ("B", strings.hint_back),
+            ],
+        );
+    }
+
+    fn render_send_progress(&mut self, canvas: &mut Canvas, fonts: &mut Fonts) {
+        let strings = self.s();
+        let content = ui::header(canvas, fonts, strings.send_progress_title, None);
+        let Some(event) = self.send_event.clone() else {
+            return;
+        };
+
+        let panel_rect = Rect::new(content.x, content.y, content.w, 260);
+        ui::panel(canvas, panel_rect);
+        let inner = panel_rect.inset(metrics::GAP + 6);
+
+        fonts.draw_in(
+            canvas,
+            Rect::new(inner.x, inner.y, inner.w, 36),
+            &event.destination_label,
+            text::HEADING,
+            theme::TEXT,
+            Weight::Bold,
+            Align::Left,
+        );
+        fonts.draw_in(
+            canvas,
+            Rect::new(
+                inner.x,
+                inner.y + fonts.line_height(text::HEADING) + 6,
+                inner.w,
+                30,
+            ),
+            &event.status_message,
+            text::BODY,
+            theme::TEXT_MUTED,
+            Weight::Regular,
+            Align::Left,
+        );
+
+        // Hashing runs before a byte moves and is slow on a big file, so it
+        // gets its own fraction rather than sitting at 0%.
+        let (done, total) = match (event.bytes_hashed, event.phase) {
+            (Some(hashed), SendPhase::Preparing) => (hashed, event.total_size),
+            _ => (event.bytes_sent, event.total_size),
+        };
+        let fraction = if total > 0 {
+            done as f32 / total as f32
+        } else {
+            0.0
+        };
+        let bar = Rect::new(inner.x, inner.y + 120, inner.w, 16);
+        ui::progress_bar(canvas, bar, fraction, theme::ACCENT_STRONG);
+
+        fonts.draw(
+            canvas,
+            inner.x,
+            bar.bottom() + 12,
+            &format!("{} / {}", human_size(done), human_size(total)),
+            text::BODY,
+            theme::TEXT,
+            Weight::Regular,
+        );
+        let percent = format!("{}%", (fraction * 100.0).round() as i32);
+        fonts.draw_in(
+            canvas,
+            Rect::new(inner.x, bar.y - 48, inner.w, 44),
+            &percent,
+            text::TITLE,
+            theme::TEXT,
+            Weight::Bold,
+            Align::Right,
+        );
+
+        ui::footer(canvas, fonts, &[("B", strings.hint_cancel)]);
+    }
+
+    fn render_send_result(&mut self, canvas: &mut Canvas, fonts: &mut Fonts) {
+        let strings = self.s();
+        let Some(event) = self.send_event.clone() else {
+            self.screen = Screen::Home;
+            return;
+        };
+
+        let (title, color, headline) = match event.phase {
+            SendPhase::Completed => (
+                strings.send_completed,
+                theme::SUCCESS,
+                fill2(
+                    plural(
+                        event.item_count,
+                        strings.send_sent_summary_one,
+                        strings.send_sent_summary,
+                    ),
+                    &event.item_count.to_string(),
+                    &human_size(event.total_size),
+                ),
+            ),
+            SendPhase::Declined => (
+                strings.send_declined,
+                theme::TEXT_MUTED,
+                strings.send_declined_body.to_owned(),
+            ),
+            SendPhase::Cancelled => (
+                strings.send_cancelled,
+                theme::WARNING,
+                strings.cancelled_body.to_owned(),
+            ),
+            _ => (
+                strings.send_failed,
+                theme::DANGER,
+                event
+                    .error
+                    .as_ref()
+                    .map(|error| error.title().to_owned())
+                    .unwrap_or_else(|| event.status_message.clone()),
+            ),
+        };
+
+        let content = ui::header(canvas, fonts, title, None);
+        let head = Rect::new(content.x, content.y, content.w, 120);
+        ui::panel(canvas, head);
+        let inner = head.inset(metrics::GAP);
+        fonts.draw_in(
+            canvas,
+            Rect::new(inner.x, inner.y, inner.w, 36),
+            &headline,
+            text::HEADING,
+            color,
+            Weight::Bold,
+            Align::Left,
+        );
+        let detail = match event.phase {
+            SendPhase::Completed => event.destination_label.clone(),
+            _ => event
+                .error
+                .as_ref()
+                .map(|error| error.message().to_owned())
+                .unwrap_or_else(|| event.destination_label.clone()),
+        };
+        fonts.draw_in(
+            canvas,
+            Rect::new(
+                inner.x,
+                inner.y + fonts.line_height(text::HEADING) + 6,
+                inner.w,
+                30,
+            ),
+            &detail,
+            text::BODY,
+            theme::TEXT_MUTED,
+            Weight::Regular,
+            Align::Left,
+        );
+
+        ui::footer(
+            canvas,
+            fonts,
+            &[("A", strings.hint_done), ("X", strings.hint_other_device)],
+        );
+    }
+
     fn render_toast(&mut self, canvas: &mut Canvas, fonts: &mut Fonts) {
         let Some(toast) = self.toast.clone() else {
             return;
@@ -1910,6 +2628,213 @@ mod tests {
                 .iter()
                 .any(|r| matches!(r, AppRequest::RestartEngine))
         );
+    }
+
+    fn send_event(phase: SendPhase) -> SendEvent {
+        SendEvent {
+            phase,
+            destination_label: "Pixel 7".to_owned(),
+            status_message: String::new(),
+            item_count: 2,
+            total_size: 2048,
+            bytes_sent: 0,
+            plan: None,
+            snapshot: None,
+            remote_device_type: None,
+            remote_endpoint_id: Some("peer-key".to_owned()),
+            remote_ephemeral: Some(false),
+            remote_ticket: Some("peer-ticket".to_owned()),
+            bytes_hashed: None,
+            connection_path: None,
+            connection_candidates: Vec::new(),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn x_on_home_opens_the_send_picker() {
+        let mut app = app();
+        app.handle_key(press(Button::X));
+        assert_eq!(app.screen(), Screen::SendPick);
+    }
+
+    #[test]
+    fn continuing_with_nothing_picked_does_not_advance() {
+        let mut app = app();
+        app.handle_key(press(Button::X));
+        let requests = app.handle_key(press(Button::X));
+        assert_eq!(app.screen(), Screen::SendPick, "still picking");
+        assert!(requests.is_empty());
+    }
+
+    #[test]
+    fn continuing_with_a_selection_scans_for_destinations() {
+        let mut app = app();
+        app.handle_key(press(Button::X));
+        app.send_selection.push(PathBuf::from("/tmp/a.bin"));
+        let requests = app.handle_key(press(Button::X));
+
+        assert_eq!(app.screen(), Screen::SendTo);
+        assert!(
+            requests
+                .iter()
+                .any(|r| matches!(r, AppRequest::Engine(EngineCommand::ScanNearby { .. })))
+        );
+    }
+
+    #[test]
+    fn nearby_results_and_recent_devices_both_become_targets() {
+        let mut app = app();
+        app.config
+            .remember_device("key-old", "MacBook", "ticket-old");
+        app.handle_engine(EngineEvent::Nearby(Ok(vec![NearbyReceiver {
+            fullname: "pixel".to_owned(),
+            label: "Pixel 7".to_owned(),
+            device_type: "phone".to_owned(),
+            code: String::new(),
+            ticket: "ticket-new".to_owned(),
+            endpoint_id: "key-new".to_owned(),
+            over_usb: false,
+        }])));
+
+        let labels: Vec<String> = app
+            .send_targets()
+            .iter()
+            .map(|t| t.label().to_owned())
+            .collect();
+        assert_eq!(labels, vec!["Pixel 7", "MacBook"], "nearby leads");
+    }
+
+    #[test]
+    fn a_device_found_nearby_is_not_listed_twice() {
+        let mut app = app();
+        app.config.remember_device("key", "Pixel 7", "same-ticket");
+        app.handle_engine(EngineEvent::Nearby(Ok(vec![NearbyReceiver {
+            fullname: "pixel".to_owned(),
+            label: "Pixel 7".to_owned(),
+            device_type: "phone".to_owned(),
+            code: String::new(),
+            ticket: "same-ticket".to_owned(),
+            endpoint_id: "key".to_owned(),
+            over_usb: false,
+        }])));
+        assert_eq!(app.send_targets().len(), 1);
+    }
+
+    #[test]
+    fn the_code_keyboard_types_deletes_and_only_sends_when_complete() {
+        let mut app = app();
+        app.screen = Screen::SendCode;
+
+        // '0' is the first key; move right twice to reach '2'.
+        app.handle_key(press(Button::A));
+        app.handle_key(press(Button::Right));
+        app.handle_key(press(Button::A));
+        assert_eq!(app.code_input, "01");
+
+        app.handle_key(press(Button::X));
+        assert_eq!(app.code_input, "0");
+
+        // Start does nothing until six characters are in.
+        assert!(app.handle_key(press(Button::Start)).is_empty());
+        assert_eq!(app.screen(), Screen::SendCode);
+
+        while app.code_input.chars().count() < CODE_LENGTH {
+            app.handle_key(press(Button::A));
+        }
+        let requests = app.handle_key(press(Button::Start));
+        assert!(
+            requests
+                .iter()
+                .any(|r| matches!(r, AppRequest::Engine(EngineCommand::StartSend { .. })))
+        );
+        assert_eq!(app.screen(), Screen::SendProgress);
+    }
+
+    #[test]
+    fn the_keyboard_cursor_stays_inside_the_grid() {
+        let mut app = app();
+        app.screen = Screen::SendCode;
+        for _ in 0..40 {
+            app.handle_key(press(Button::Right));
+            app.handle_key(press(Button::Down));
+        }
+        assert!(app.code_key < CODE_KEYS.len());
+        for _ in 0..40 {
+            app.handle_key(press(Button::Left));
+            app.handle_key(press(Button::Up));
+        }
+        assert_eq!(app.code_key, 0);
+    }
+
+    #[test]
+    fn a_completed_send_is_remembered_for_next_time() {
+        let mut app = app();
+        let requests = app.handle_engine(EngineEvent::Send(send_event(SendPhase::Completed)));
+        assert_eq!(app.screen(), Screen::SendResult);
+        assert_eq!(app.config.recent_devices.len(), 1);
+        assert_eq!(app.config.recent_devices[0].ticket, "peer-ticket");
+        assert!(requests.iter().any(|r| matches!(r, AppRequest::SaveConfig)));
+    }
+
+    #[test]
+    fn a_failed_send_is_not_remembered() {
+        let mut app = app();
+        app.handle_engine(EngineEvent::Send(send_event(SendPhase::Failed)));
+        assert_eq!(app.screen(), Screen::SendResult);
+        assert!(app.config.recent_devices.is_empty());
+    }
+
+    #[test]
+    fn an_ephemeral_receiver_is_not_offered_again() {
+        let mut app = app();
+        let mut event = send_event(SendPhase::Completed);
+        // A browser receiver's key is thrown away when the tab closes, so the
+        // ticket would never dial twice.
+        event.remote_ephemeral = Some(true);
+        app.handle_engine(EngineEvent::Send(event));
+        assert!(app.config.recent_devices.is_empty());
+    }
+
+    #[test]
+    fn cancelling_a_send_asks_the_engine() {
+        let mut app = app();
+        app.handle_engine(EngineEvent::Send(send_event(SendPhase::Sending)));
+        assert_eq!(app.screen(), Screen::SendProgress);
+        let requests = app.handle_key(press(Button::B));
+        assert!(
+            requests
+                .iter()
+                .any(|r| matches!(r, AppRequest::Engine(EngineCommand::CancelSend)))
+        );
+    }
+
+    #[test]
+    fn every_send_screen_renders_in_both_languages() {
+        let mut fonts = Fonts::load().unwrap();
+        let mut canvas = Canvas::new(1024, 768);
+        for lang in [Lang::En, Lang::Vi] {
+            for phase in [
+                SendPhase::Preparing,
+                SendPhase::Sending,
+                SendPhase::Completed,
+                SendPhase::Declined,
+                SendPhase::Failed,
+            ] {
+                let mut app = app();
+                app.config.lang = lang;
+                app.handle_engine(EngineEvent::Send(send_event(phase)));
+                app.render(&mut canvas, &mut fonts);
+            }
+
+            let mut app = app();
+            app.config.lang = lang;
+            app.config.remember_device("k", "Laptop", "t");
+            for screen in [Screen::SendPick, Screen::SendTo, Screen::SendCode] {
+                app.screen = screen;
+                app.render(&mut canvas, &mut fonts);
+            }
+        }
     }
 
     #[test]

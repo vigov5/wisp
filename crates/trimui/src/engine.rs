@@ -17,9 +17,11 @@ use anyhow::{Context, Result};
 use iroh::SecretKey;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc as tokio_mpsc;
+use tokio_stream::StreamExt;
 use wisp_app::{
-    ConflictPolicy, OfferDecision, PairingCodeState, QrPairingInfo, ReceiverConfig, ReceiverEvent,
-    ReceiverOfferEvent, ReceiverService,
+    ConflictPolicy, NearbyReceiver, OfferDecision, PairingCodeState, QrPairingInfo, ReceiverConfig,
+    ReceiverEvent, ReceiverOfferEvent, ReceiverService, SendConfig, SendDestination, SendDraft,
+    SendEvent, SendInput, SendSession,
 };
 
 use crate::config::{Config, Conflict};
@@ -48,6 +50,11 @@ pub enum EngineEvent {
     /// A fresh offline-pairing payload for the QR panel.
     Pairing(QrPairingInfo),
     Offer(ReceiverOfferEvent),
+    /// Result of a nearby scan: the devices found, or the reason there are
+    /// none.
+    Nearby(Result<Vec<NearbyReceiver>, String>),
+    /// Progress of the outbound transfer.
+    Send(SendEvent),
     /// The receiver could not start at all.
     Fatal(String),
 }
@@ -58,7 +65,40 @@ pub enum EngineCommand {
     Cancel,
     /// Ask the rendezvous server for a new short code.
     RefreshCode,
+    /// Browse the LAN for receivers, for the send destination picker.
+    ScanNearby {
+        timeout_secs: u64,
+    },
+    /// Send `paths` to `destination`.
+    StartSend {
+        paths: Vec<PathBuf>,
+        destination: SendTarget,
+    },
+    /// Abort the outbound transfer.
+    CancelSend,
     Shutdown,
+}
+
+/// Where a send is going, in terms the UI can hold onto.
+///
+/// Kept separate from `SendDestination` so the app layer never has to build
+/// one: a ticket from a nearby scan and a ticket from the recent list are the
+/// same thing here, which is what lets both reuse one code path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SendTarget {
+    /// A six-character rendezvous code the user typed.
+    Code(String),
+    /// A ticket, from a nearby scan or a previously used device.
+    Ticket { ticket: String, label: String },
+}
+
+impl SendTarget {
+    pub fn label(&self) -> &str {
+        match self {
+            SendTarget::Code(code) => code,
+            SendTarget::Ticket { label, .. } => label,
+        }
+    }
 }
 
 /// Everything the receiver needs, resolved from [`Config`] before start.
@@ -160,6 +200,9 @@ async fn drive(
     mut commands: tokio_mpsc::UnboundedReceiver<EngineCommand>,
 ) {
     let server = settings.server.clone();
+    // Kept because an outbound send needs to introduce this device by name,
+    // and the receiver config takes ownership of the original.
+    let device_name = settings.device_name.clone();
     let config = ReceiverConfig {
         device_name: settings.device_name,
         // The protocol's device taxonomy only has phone and laptop. A
@@ -199,6 +242,14 @@ async fn drive(
             "mDNS advertising failed; the short code and QR still work"
         );
     }
+
+    // Shared so a nearby scan can run on its own task: the scan blocks for
+    // its full timeout, and doing it inline would freeze the event loop — and
+    // with it the UI — for those seconds.
+    let service = std::sync::Arc::new(service);
+
+    // Cancel handle for the outbound transfer, when one is running.
+    let mut send_cancel: Option<wisp_app::send::SendCancelHandle> = None;
 
     let mut receiver_events = service.subscribe_events();
     let mut pairing_code = service.subscribe_pairing_code();
@@ -280,6 +331,63 @@ async fn drive(
                         Err(err) => {
                             let _ = events.send(EngineEvent::CodeUnavailable(format!("{err}")));
                         }
+                    }
+                }
+                Some(EngineCommand::ScanNearby { timeout_secs }) => {
+                    let service = std::sync::Arc::clone(&service);
+                    let events = events.clone();
+                    tokio::spawn(async move {
+                        let found = service
+                            .scan_nearby(timeout_secs)
+                            .await
+                            .map_err(|err| format!("{err}"));
+                        let _ = events.send(EngineEvent::Nearby(found));
+                    });
+                }
+                Some(EngineCommand::StartSend { paths, destination }) => {
+                    let draft = SendDraft::new(
+                        SendConfig {
+                            device_name: device_name.clone(),
+                            device_type: "laptop".to_owned(),
+                        },
+                        paths.into_iter().map(SendInput::Path).collect(),
+                    );
+                    let target = match destination {
+                        SendTarget::Code(code) => {
+                            SendDestination::code(code, server.clone())
+                        }
+                        SendTarget::Ticket { ticket, label } => {
+                            SendDestination::nearby(ticket, label)
+                        }
+                    };
+                    // Reuse the receiver's endpoint: binding a second one with
+                    // the same secret key makes the two fight for the relay
+                    // slot.
+                    let session =
+                        SendSession::with_endpoint(draft, target, service.endpoint());
+                    let run = session.start();
+                    send_cancel = Some(run.cancel_handle());
+                    let (mut stream, _outcome) = run.into_parts();
+                    let events = events.clone();
+                    tokio::spawn(async move {
+                        // The terminal SendEvent already carries the outcome,
+                        // so the UI is driven from the stream alone.
+                        while let Some(event) = stream.next().await {
+                            if events.send(EngineEvent::Send(event)).is_err() {
+                                break;
+                            }
+                        }
+                    });
+                }
+                Some(EngineCommand::CancelSend) => {
+                    if let Some(handle) = send_cancel.as_ref()
+                        && let Err(err) = handle.cancel_transfer().await
+                    {
+                        tracing::warn!(
+                            target: "wisp_trimui::engine",
+                            error = %err,
+                            "cancelling the send failed"
+                        );
                     }
                 }
                 Some(EngineCommand::Shutdown) | None => break,

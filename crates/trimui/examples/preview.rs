@@ -248,7 +248,77 @@ fn scenes() -> Vec<(&'static str, App)> {
         scenes.push(("about", app));
     }
 
+    // --- sending
+
+    let queued = || {
+        vec![
+            std::path::PathBuf::from("/mnt/SDCARD/Roms/GBA/Metroid Fusion.gba"),
+            std::path::PathBuf::from("/mnt/SDCARD/Screenshots/shot.png"),
+        ]
+    };
+
+    {
+        let mut app = base_app();
+        app.handle_engine(EngineEvent::Nearby(Ok(vec![wisp_app::NearbyReceiver {
+            fullname: "pixel".to_owned(),
+            label: "Pixel 7".to_owned(),
+            device_type: "phone".to_owned(),
+            code: String::new(),
+            ticket: "ticket-a".to_owned(),
+            endpoint_id: "key-a".to_owned(),
+            over_usb: false,
+        }])));
+        app.config
+            .remember_device("key-b", "MacBook Air", "ticket-b");
+        app.preview_send(wisp_trimui::app::Screen::SendTo, queued());
+        scenes.push(("send-to", app));
+    }
+
+    {
+        let mut app = base_app();
+        app.preview_send(wisp_trimui::app::Screen::SendCode, queued());
+        scenes.push(("send-code", app));
+    }
+
+    {
+        let mut app = base_app();
+        let mut event = send_progress_event();
+        event.bytes_sent = 61 * 1024 * 1024;
+        app.handle_engine(EngineEvent::Send(event));
+        scenes.push(("send-progress", app));
+    }
+
+    {
+        let mut app = base_app();
+        let mut event = send_progress_event();
+        event.phase = wisp_app::SendPhase::Completed;
+        event.bytes_sent = event.total_size;
+        app.handle_engine(EngineEvent::Send(event));
+        scenes.push(("send-result", app));
+    }
+
     scenes
+}
+
+fn send_progress_event() -> wisp_app::SendEvent {
+    wisp_app::SendEvent {
+        phase: wisp_app::SendPhase::Sending,
+        destination_label: "Pixel 7".to_owned(),
+        status_message: "Sending Metroid Fusion.gba".to_owned(),
+        item_count: 2,
+        total_size: 148 * 1024 * 1024,
+        bytes_sent: 0,
+        plan: None,
+        snapshot: None,
+        remote_device_type: Some("phone".to_owned()),
+        remote_endpoint_id: Some("key-a".to_owned()),
+        remote_ephemeral: Some(false),
+        remote_ticket: Some("ticket-a".to_owned()),
+        bytes_hashed: None,
+        connection_path: None,
+        connection_candidates: Vec::new(),
+        error: None,
+    }
 }
 
 // ------------------------------------------------------------------ PNG out

@@ -1,14 +1,20 @@
 # wisp-trimui — Wisp receiver for the TrimUI Brick Pro (TG4040)
 
-A **receive-only** Wisp client that runs on the handheld itself: you pick the
-device on your phone or laptop, and the files land on the SD card.
+A Wisp client that runs on the handheld itself: receive files onto the SD card
+from a phone or laptop, and send files back off it.
 
-Sending is deliberately not implemented — see [Scope](#scope).
+Sending is by LAN discovery, a previously used device, or a typed pairing
+code. There is no QR pairing in either direction — the handheld has no camera
+to scan one with, and the receive screen shows a QR for the *other* device to
+scan.
 
 ## Scope
 
 | | Feature |
 | --- | --- |
+| S1 | Send files and folders, picked with an on-device browser |
+| S2 | Send to a device found on the LAN, or one sent to before |
+| S3 | Send to a typed pairing code (on-screen keyboard) |
 | R1 | Receive with the 6-character pairing code |
 | R2 | On-screen QR for offline pairing (no internet, same Wi-Fi) |
 | R3 | mDNS advertising, so the sender's "nearby" list finds the handheld |
@@ -116,9 +122,15 @@ the LAN address.
 | --- | --- | --- | --- | --- | --- |
 | A | New code | Accept | — | Done | Select |
 | B | Exit | Decline | Cancel | Done | Back |
-| X | — | Trust + accept | — | Trust / untrust sender | Remove (trusted list) |
+| X | **Send** | Trust + accept | — | Trust / untrust sender | Remove (trusted list) |
 | Y | Settings | — | — | — | — |
 | D-pad | — | Scroll files | — | Scroll | Move |
+
+Sending: **X** on the waiting screen opens a file picker — **A** enters a
+folder or ticks a file, **Y** queues a whole folder, **X** continues. The
+destination list shows devices found on the LAN first, then ones sent to
+before, then manual code entry; on the keyboard **A** types, **X** deletes and
+**Start** sends.
 
 Received files go to `/mnt/SDCARD/Wisp` unless changed in Settings. The folder
 picker lists the last 30 folders you chose before the built-in suggestions, so

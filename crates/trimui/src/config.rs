@@ -20,6 +20,18 @@ pub const DEFAULT_SAVE_ROOT: &str = "/mnt/SDCARD/Wisp";
 /// Hidden, so it does not show up as a folder in the stock file browser.
 pub const DEFAULT_STATE_DIR: &str = "/mnt/SDCARD/.wisp";
 
+/// A device this handheld has sent to before.
+///
+/// The ticket is what makes the entry useful: it carries the peer's addresses,
+/// so a repeat send dials directly instead of waiting on a discovery scan or a
+/// freshly typed code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentDevice {
+    pub label: String,
+    pub ticket: String,
+    pub endpoint_id: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrustedDevice {
     /// The sender's iroh endpoint id (its public key), which is what makes
@@ -83,6 +95,8 @@ pub struct Config {
     /// same handful of destinations get reused; this puts them one press away
     /// on the picker's first page.
     pub recent_save_roots: Vec<PathBuf>,
+    /// Devices sent to before, most recent first.
+    pub recent_devices: Vec<RecentDevice>,
     /// Hex-encoded 32-byte iroh secret key; generated on first run.
     pub secret_key: Option<String>,
     /// Raw evdev code -> button name, for devices whose layout does not match
@@ -101,6 +115,7 @@ impl Default for Config {
             server: None,
             trusted: Vec::new(),
             recent_save_roots: Vec::new(),
+            recent_devices: Vec::new(),
             secret_key: None,
             button_overrides: HashMap::new(),
         }
@@ -230,6 +245,38 @@ impl Config {
             .filter(|path| path.is_dir())
             .cloned()
             .collect()
+    }
+
+    /// How many previously used send destinations are kept.
+    pub const MAX_RECENT_DEVICES: usize = 20;
+
+    /// Records a successful send destination, newest first.
+    ///
+    /// Keyed by endpoint id so the same device re-dialled under a new ticket
+    /// updates its entry instead of accumulating one per session. Peers
+    /// without a stable identity — a browser or CLI sender's throwaway key —
+    /// are dropped: their ticket will not work twice, so offering it later
+    /// would only produce a failed dial.
+    pub fn remember_device(&mut self, endpoint_id: &str, label: &str, ticket: &str) {
+        if endpoint_id.is_empty() || ticket.is_empty() {
+            return;
+        }
+        self.recent_devices
+            .retain(|device| device.endpoint_id != endpoint_id);
+        self.recent_devices.insert(
+            0,
+            RecentDevice {
+                label: label.to_owned(),
+                ticket: ticket.to_owned(),
+                endpoint_id: endpoint_id.to_owned(),
+            },
+        );
+        self.recent_devices.truncate(Self::MAX_RECENT_DEVICES);
+    }
+
+    pub fn forget_device(&mut self, endpoint_id: &str) {
+        self.recent_devices
+            .retain(|device| device.endpoint_id != endpoint_id);
     }
 
     pub fn untrust(&mut self, endpoint_id: &str) {
@@ -555,6 +602,50 @@ overlayfs:/overlay / overlay rw,noatime,lowerdir=/,upperdir=/overlay/upper 0 0
     fn an_unreadable_mounts_file_refuses_a_mnt_path() {
         // Better to stop than to guess, when the destination is the card.
         assert!(!save_root_is_writable(Path::new("/mnt/SDCARD/Wisp"), ""));
+    }
+
+    #[test]
+    fn a_send_destination_is_remembered_and_keyed_by_identity() {
+        let mut config = Config::default();
+        config.remember_device("key-1", "Pixel 7", "ticket-a");
+        config.remember_device("key-2", "MacBook", "ticket-b");
+        // Same device, new session, new ticket: update rather than duplicate.
+        config.remember_device("key-1", "Pixel 7", "ticket-c");
+
+        assert_eq!(config.recent_devices.len(), 2);
+        assert_eq!(config.recent_devices[0].endpoint_id, "key-1");
+        assert_eq!(config.recent_devices[0].ticket, "ticket-c");
+    }
+
+    #[test]
+    fn a_peer_without_a_reusable_identity_is_not_remembered() {
+        let mut config = Config::default();
+        config.remember_device("", "Browser", "ticket");
+        config.remember_device("key", "CLI", "");
+        assert!(config.recent_devices.is_empty());
+    }
+
+    #[test]
+    fn the_recent_device_list_is_capped() {
+        let mut config = Config::default();
+        for i in 0..Config::MAX_RECENT_DEVICES + 5 {
+            config.remember_device(&format!("key-{i}"), "Device", "ticket");
+        }
+        assert_eq!(config.recent_devices.len(), Config::MAX_RECENT_DEVICES);
+        assert!(
+            !config
+                .recent_devices
+                .iter()
+                .any(|d| d.endpoint_id == "key-0")
+        );
+    }
+
+    #[test]
+    fn a_device_can_be_forgotten() {
+        let mut config = Config::default();
+        config.remember_device("key-1", "Pixel 7", "ticket");
+        config.forget_device("key-1");
+        assert!(config.recent_devices.is_empty());
     }
 
     #[test]
