@@ -1,0 +1,8 @@
+{
+"package":"dev.vigov5.wisp.trimui",
+"label":"Wisp",
+"icontop":"icon.png",
+"icon":"",
+"launch":"launch.sh",
+"description":"Receive files from your phone or computer over Wi-Fi"
+}

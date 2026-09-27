@@ -66,6 +66,12 @@ It is designed to feel as simple as AirDrop, but without being limited to Apple 
 - **Change your mind while connecting**
   Still waiting to connect? Step back from the connecting screen to your draft to pick a different device or connection method, without re-selecting your files.
 
+- **Receive straight onto a retro handheld**
+  A receive-only app for the [TrimUI Brick Pro](crates/trimui/README.md) puts
+  the pairing code and QR on the handheld's own screen, so ROMs and saves go
+  from your phone to the SD card without a computer in between. It draws to the
+  framebuffer directly, so it is one static binary with no runtime dependencies.
+
 - **Cross-platform**
   Native builds for macOS, Windows, Linux, and Android (on [Google Play](https://play.google.com/store/apps/details?id=dev.vigov5.wisp)), plus a [no-install web app](https://web.wisp.mooo.com). iOS support is planned.
 
@@ -87,6 +93,7 @@ It is designed to feel as simple as AirDrop, but without being limited to Apple 
 | macOS | [Latest release →](https://github.com/vigov5/wisp/releases/latest) |
 | Windows | [Latest release →](https://github.com/vigov5/wisp/releases/latest) |
 | Linux | [Latest release →](https://github.com/vigov5/wisp/releases/latest) |
+| TrimUI Brick Pro | [Build from source →](crates/trimui/README.md) — receive-only handheld app |
 | iOS | Coming soon |
 
 > [!TIP]
