@@ -127,10 +127,15 @@ the LAN address.
 | D-pad | — | Scroll files | — | Scroll | Move |
 
 Sending: **X** on the waiting screen opens a file picker — **A** enters a
-folder or ticks a file, **Y** queues a whole folder, **X** continues. The
-destination list shows devices found on the LAN first, then ones sent to
-before, then manual code entry; on the keyboard **A** types, **X** deletes and
-**Start** sends.
+folder or ticks a file, **Y** queues or un-queues a whole folder, **X**
+continues. Anything queued, file or folder, is marked in the list.
+
+The destination screen starts scanning the LAN straight away. Its first row is
+the scan control and stays put whether scanning or not, so it never shifts
+under the cursor; **A** on it (or **Y** anywhere) stops and restarts the
+search. Below it are the devices found, then devices sent to before, then
+manual code entry — on the keyboard **A** types, **X** deletes and **Start**
+sends.
 
 Received files go to `/mnt/SDCARD/Wisp` unless changed in Settings. The folder
 picker lists the last 30 folders you chose before the built-in suggestions, so

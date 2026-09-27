@@ -275,12 +275,24 @@ pub struct App {
     send_selection: Vec<PathBuf>,
     send_pick_cursor: Cursor,
     send_to_cursor: Cursor,
-    /// `None` while a scan is in flight; `Some(Err(_))` when it failed.
-    nearby: Option<Result<Vec<NearbyReceiver>, String>>,
+    /// Devices seen on the LAN, accumulated across scans.
+    ///
+    /// Accumulated rather than replaced: scanning repeats while the picker is
+    /// open, and rebuilding the list each round would shuffle rows under a
+    /// cursor the user is already moving.
+    nearby_found: Vec<NearbyReceiver>,
+    /// Why the last scan failed, if it did.
+    nearby_error: Option<String>,
+    /// Whether scanning is currently running. On by default; the first row of
+    /// the picker stops it.
+    scanning: bool,
     /// The code being typed, and where the on-screen keyboard's cursor sits.
     code_input: String,
     code_key: usize,
     send_event: Option<SendEvent>,
+    /// Set once cancel has been asked for, so a second press can leave even if
+    /// no terminal event ever arrives.
+    send_cancel_requested: bool,
     /// Set once the finished send has been written to the recent list, so a
     /// repeated terminal event cannot record it twice.
     send_recorded: bool,
@@ -312,10 +324,13 @@ impl App {
             send_selection: Vec::new(),
             send_pick_cursor: Cursor::default(),
             send_to_cursor: Cursor::default(),
-            nearby: None,
+            nearby_found: Vec::new(),
+            nearby_error: None,
+            scanning: false,
             code_input: String::new(),
             code_key: 0,
             send_event: None,
+            send_cancel_requested: false,
             send_recorded: false,
         }
     }
@@ -331,6 +346,9 @@ impl App {
     /// app itself never calls this.
     pub fn preview_send(&mut self, screen: Screen, selection: Vec<PathBuf>) {
         self.send_selection = selection;
+        // The destination picker arrives mid-scan in real use, so preview it
+        // that way rather than in its stopped state.
+        self.scanning = screen == Screen::SendTo;
         self.screen = screen;
     }
 
@@ -384,8 +402,32 @@ impl App {
             }
             E::Offer(offer) => self.apply_offer(offer),
             E::Nearby(found) => {
-                self.nearby = Some(found);
+                match found {
+                    Ok(receivers) => {
+                        self.nearby_error = None;
+                        for receiver in receivers {
+                            // Merge by identity: the same device seen again
+                            // updates its ticket rather than appearing twice.
+                            match self
+                                .nearby_found
+                                .iter_mut()
+                                .find(|seen| seen.endpoint_id == receiver.endpoint_id)
+                            {
+                                Some(seen) => *seen = receiver,
+                                None => self.nearby_found.push(receiver),
+                            }
+                        }
+                    }
+                    Err(message) => self.nearby_error = Some(message),
+                }
                 self.send_to_cursor.clamp(self.send_to_rows().len());
+                // Keep looking until the user says stop. The scan itself takes
+                // its full timeout, so this paces itself.
+                if self.scanning && self.screen == Screen::SendTo {
+                    return vec![AppRequest::Engine(EngineCommand::ScanNearby {
+                        timeout_secs: NEARBY_SCAN_SECS,
+                    })];
+                }
                 Vec::new()
             }
             E::Send(event) => self.apply_send(event),
@@ -553,17 +595,19 @@ impl App {
                 .and_then(|n| n.to_str())
                 .unwrap_or("?")
                 .to_owned();
-            if path.is_dir() {
-                rows.push(Row::new(name).with_value("›"));
+            let picked = self.send_selection.contains(path);
+            let row = Row::new(name);
+            // Folders are markable too — queueing one with Y used to leave the
+            // row looking exactly as before, so there was no way to tell it
+            // had worked.
+            rows.push(if picked {
+                row.with_value(strings.send_picked)
+            } else if path.is_dir() {
+                row.with_value("›")
             } else {
                 let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-                let row = Row::new(name);
-                rows.push(if self.send_selection.contains(path) {
-                    row.with_value(strings.send_picked)
-                } else {
-                    row.with_value(human_size(size))
-                });
-            }
+                row.with_value(human_size(size))
+            });
         }
         rows
     }
@@ -614,11 +658,16 @@ impl App {
             Button::Y => {
                 // Whole folder in one press: the common case is "send this
                 // directory", and ticking its files one by one is tedious.
+                // Toggles, so a mis-press is undoable without leaving.
                 if let Some(path) = self.send_pick_entry(self.send_pick_cursor.index)
                     && path.is_dir()
-                    && !self.send_selection.contains(&path)
                 {
-                    self.send_selection.push(path);
+                    match self.send_selection.iter().position(|entry| *entry == path) {
+                        Some(at) => {
+                            self.send_selection.remove(at);
+                        }
+                        None => self.send_selection.push(path),
+                    }
                 }
             }
             Button::X => {
@@ -637,7 +686,11 @@ impl App {
     }
 
     fn open_send_destinations(&mut self) -> Vec<AppRequest> {
-        self.nearby = None;
+        self.nearby_found.clear();
+        self.nearby_error = None;
+        self.scanning = true;
+        // Row 0 is the scan control, so start the cursor on the first real
+        // destination when there already is one.
         self.send_to_cursor = Cursor::default();
         self.screen = Screen::SendTo;
         vec![AppRequest::Engine(EngineCommand::ScanNearby {
@@ -649,13 +702,11 @@ impl App {
     /// to before, then the manual code entry.
     fn send_targets(&self) -> Vec<SendTarget> {
         let mut out = Vec::new();
-        if let Some(Ok(found)) = self.nearby.as_ref() {
-            for receiver in found {
-                out.push(SendTarget::Ticket {
-                    ticket: receiver.ticket.clone(),
-                    label: receiver.label.clone(),
-                });
-            }
+        for receiver in &self.nearby_found {
+            out.push(SendTarget::Ticket {
+                ticket: receiver.ticket.clone(),
+                label: receiver.label.clone(),
+            });
         }
         for device in &self.config.recent_devices {
             // A device discovered right now is already listed; showing it
@@ -674,32 +725,45 @@ impl App {
         out
     }
 
+    /// Destination rows: the scan control, then the devices it and the recent
+    /// list contribute, then manual code entry.
+    ///
+    /// The scan row is always present and always first, so it does not appear
+    /// and disappear under the cursor as scans start and finish.
     fn send_to_rows(&self) -> Vec<Row> {
         let strings = self.s();
-        let nearby_count = match self.nearby.as_ref() {
-            Some(Ok(found)) => found.len(),
-            _ => 0,
+        let scan = if self.scanning {
+            Row::new(strings.send_scanning).with_value(strings.send_stop)
+        } else {
+            Row::new(strings.send_scan_stopped).with_value(strings.hint_rescan)
         };
-        let mut rows: Vec<Row> = self
-            .send_targets()
-            .iter()
-            .enumerate()
-            .map(|(index, target)| {
-                Row::new(target.label().to_owned()).with_subtitle(if index < nearby_count {
-                    strings.send_via_nearby
-                } else {
-                    strings.send_via_recent
-                })
-            })
-            .collect();
+        let mut rows = vec![match self.nearby_error.as_ref() {
+            Some(message) => scan.with_subtitle(format!("{}: {message}", strings.send_scan_failed)),
+            None => scan,
+        }];
 
-        match self.nearby.as_ref() {
-            None => rows.push(Row::new(strings.send_scanning)),
-            Some(Err(message)) => {
-                rows.push(Row::new(strings.send_scan_failed).with_subtitle(message.clone()))
-            }
-            Some(Ok(_)) => {}
+        let nearby_count = self.nearby_found.len();
+        let mut labelled_nearby = false;
+        let mut labelled_recent = false;
+        for (index, target) in self.send_targets().iter().enumerate() {
+            let row = Row::new(target.label().to_owned());
+            // Label the first row of each group only; repeating it on every
+            // device would bury the names it is grouping.
+            rows.push(if index < nearby_count {
+                if labelled_nearby {
+                    row
+                } else {
+                    labelled_nearby = true;
+                    row.with_subtitle(strings.send_via_nearby)
+                }
+            } else if labelled_recent {
+                row
+            } else {
+                labelled_recent = true;
+                row.with_subtitle(strings.send_via_recent)
+            });
         }
+
         rows.push(Row::new(strings.send_enter_code).with_value("›"));
         rows
     }
@@ -709,18 +773,24 @@ impl App {
         match button {
             Button::Up => self.send_to_cursor.move_by(-1, rows),
             Button::Down => self.send_to_cursor.move_by(1, rows),
-            Button::Y => return self.open_send_destinations(),
+            Button::Y => return self.toggle_scanning(),
             Button::B => {
+                // Stop scanning on the way out: nothing is watching the
+                // results any more, and the browse is not free.
+                self.scanning = false;
                 self.screen = Screen::SendPick;
             }
             Button::A => {
-                let targets = self.send_targets();
                 let index = self.send_to_cursor.index;
-                if let Some(target) = targets.get(index).cloned() {
+                // Row 0 is the scan control, then one row per target, then the
+                // code entry last.
+                if index == 0 {
+                    return self.toggle_scanning();
+                }
+                let targets = self.send_targets();
+                if let Some(target) = targets.get(index - 1).cloned() {
                     return self.start_send(target);
                 }
-                // Anything past the targets is either the scan status line,
-                // which does nothing, or the code entry, which is last.
                 if index + 1 == rows {
                     self.code_input.clear();
                     self.code_key = 0;
@@ -732,9 +802,26 @@ impl App {
         Vec::new()
     }
 
+    /// Starts or stops the repeating LAN browse.
+    ///
+    /// Stopping only clears the flag: the scan already in flight finishes on
+    /// its own and its result is still merged, it simply does not queue
+    /// another.
+    fn toggle_scanning(&mut self) -> Vec<AppRequest> {
+        self.scanning = !self.scanning;
+        if self.scanning {
+            self.nearby_error = None;
+            return vec![AppRequest::Engine(EngineCommand::ScanNearby {
+                timeout_secs: NEARBY_SCAN_SECS,
+            })];
+        }
+        Vec::new()
+    }
+
     fn start_send(&mut self, destination: SendTarget) -> Vec<AppRequest> {
         self.send_event = None;
         self.send_recorded = false;
+        self.send_cancel_requested = false;
         self.screen = Screen::SendProgress;
         vec![AppRequest::Engine(EngineCommand::StartSend {
             paths: self.send_selection.clone(),
@@ -770,11 +857,27 @@ impl App {
     }
 
     fn on_send_progress(&mut self, button: Button) -> Vec<AppRequest> {
-        if button == Button::B {
-            self.toast(self.s().toast_cancelling);
+        if button != Button::B {
+            return Vec::new();
+        }
+        // This screen must never become a dead end. A send that fails before
+        // it emits anything — an unreachable ticket, an expired code — would
+        // otherwise leave the user here with nothing to press: the engine is
+        // not going to send a terminal event, so waiting for one is not an
+        // escape.
+        //
+        // First press asks the transfer to stop. A second press leaves
+        // regardless; the cancel has already been sent, and the engine tidies
+        // up on its own.
+        if self.send_cancel_requested || self.send_event.is_none() {
+            self.send_cancel_requested = false;
+            self.send_event = None;
+            self.screen = Screen::SendTo;
             return vec![AppRequest::Engine(EngineCommand::CancelSend)];
         }
-        Vec::new()
+        self.send_cancel_requested = true;
+        self.toast(self.s().toast_cancelling);
+        vec![AppRequest::Engine(EngineCommand::CancelSend)]
     }
 
     fn on_send_result(&mut self, button: Button) -> Vec<AppRequest> {
@@ -2098,12 +2201,17 @@ impl App {
             strings.list_empty,
         );
 
+        let scan_hint = if self.scanning {
+            strings.send_stop
+        } else {
+            strings.hint_rescan
+        };
         ui::footer(
             canvas,
             fonts,
             &[
                 ("A", strings.hint_select),
-                ("Y", strings.hint_rescan),
+                ("Y", scan_hint),
                 ("B", strings.hint_back),
             ],
         );
@@ -2202,7 +2310,28 @@ impl App {
     fn render_send_progress(&mut self, canvas: &mut Canvas, fonts: &mut Fonts) {
         let strings = self.s();
         let content = ui::header(canvas, fonts, strings.send_progress_title, None);
+
+        // The footer is drawn on every path below, including this one: an
+        // early return here is what made a send that produced no events look
+        // like a frozen screen with no way out.
         let Some(event) = self.send_event.clone() else {
+            let panel_rect = Rect::new(content.x, content.y, content.w, 120);
+            ui::panel(canvas, panel_rect);
+            fonts.draw_in(
+                canvas,
+                Rect::new(
+                    panel_rect.x,
+                    panel_rect.y + (panel_rect.h - 30) / 2,
+                    panel_rect.w,
+                    32,
+                ),
+                strings.send_starting,
+                text::BODY,
+                theme::TEXT_MUTED,
+                Weight::Regular,
+                Align::Center,
+            );
+            ui::footer(canvas, fonts, &[("B", strings.hint_back)]);
             return;
         };
 
@@ -2682,6 +2811,108 @@ mod tests {
         );
     }
 
+    fn nearby(label: &str, ticket: &str, key: &str) -> NearbyReceiver {
+        NearbyReceiver {
+            fullname: label.to_owned(),
+            label: label.to_owned(),
+            device_type: "phone".to_owned(),
+            code: String::new(),
+            ticket: ticket.to_owned(),
+            endpoint_id: key.to_owned(),
+            over_usb: false,
+        }
+    }
+
+    /// Row 0 is the scan control, always, so it cannot appear or vanish under
+    /// a cursor the user is moving.
+    #[test]
+    fn the_scan_row_is_always_first() {
+        let mut app = app();
+        let scanning = app.s().send_scanning;
+        let stopped = app.s().send_scan_stopped;
+
+        app.handle_key(press(Button::X));
+        app.send_selection.push(PathBuf::from("/tmp/a"));
+        app.handle_key(press(Button::X));
+        assert_eq!(app.send_to_rows()[0].title, scanning);
+
+        app.handle_engine(EngineEvent::Nearby(Ok(vec![nearby("Pixel 7", "t", "k")])));
+        assert_eq!(app.send_to_rows()[0].title, scanning, "still first");
+
+        app.handle_key(press(Button::A));
+        assert_eq!(app.send_to_rows()[0].title, stopped);
+    }
+
+    #[test]
+    fn scanning_repeats_until_stopped() {
+        let mut app = app();
+        app.screen = Screen::SendTo;
+        app.scanning = true;
+
+        let requests = app.handle_engine(EngineEvent::Nearby(Ok(Vec::new())));
+        assert!(
+            requests
+                .iter()
+                .any(|r| matches!(r, AppRequest::Engine(EngineCommand::ScanNearby { .. }))),
+            "a finished scan queues the next one"
+        );
+
+        app.scanning = false;
+        let requests = app.handle_engine(EngineEvent::Nearby(Ok(Vec::new())));
+        assert!(requests.is_empty(), "stopped means stopped");
+    }
+
+    #[test]
+    fn toggling_the_scan_row_starts_and_stops_it() {
+        let mut app = app();
+        app.screen = Screen::SendTo;
+        app.scanning = true;
+        app.send_to_cursor.index = 0;
+
+        assert!(app.handle_key(press(Button::A)).is_empty());
+        assert!(!app.scanning);
+
+        let requests = app.handle_key(press(Button::A));
+        assert!(app.scanning);
+        assert!(
+            requests
+                .iter()
+                .any(|r| matches!(r, AppRequest::Engine(EngineCommand::ScanNearby { .. })))
+        );
+    }
+
+    #[test]
+    fn the_row_below_the_scan_control_sends_to_the_first_device() {
+        let mut app = app();
+        app.screen = Screen::SendTo;
+        app.send_selection.push(PathBuf::from("/tmp/a"));
+        app.handle_engine(EngineEvent::Nearby(Ok(vec![nearby("Pixel 7", "t1", "k1")])));
+
+        app.send_to_cursor.index = 1;
+        let requests = app.handle_key(press(Button::A));
+        assert!(
+            requests.iter().any(|r| matches!(
+                r,
+                AppRequest::Engine(EngineCommand::StartSend { destination, .. })
+                    if destination.label() == "Pixel 7"
+            )),
+            "row 1 is the first device, not the scan row"
+        );
+    }
+
+    #[test]
+    fn repeated_scans_do_not_duplicate_a_device() {
+        let mut app = app();
+        app.screen = Screen::SendTo;
+        for ticket in ["t1", "t2"] {
+            app.handle_engine(EngineEvent::Nearby(Ok(vec![nearby(
+                "Pixel 7", ticket, "same-key",
+            )])));
+        }
+        assert_eq!(app.nearby_found.len(), 1);
+        assert_eq!(app.nearby_found[0].ticket, "t2", "newest ticket wins");
+    }
+
     #[test]
     fn nearby_results_and_recent_devices_both_become_targets() {
         let mut app = app();
@@ -2794,6 +3025,85 @@ mod tests {
         event.remote_ephemeral = Some(true);
         app.handle_engine(EngineEvent::Send(event));
         assert!(app.config.recent_devices.is_empty());
+    }
+
+    /// A send that fails before emitting anything used to leave this screen
+    /// with no footer and no working button.
+    #[test]
+    fn the_progress_screen_is_never_a_dead_end() {
+        let mut app = app();
+        app.screen = Screen::SendProgress;
+        assert!(app.send_event.is_none());
+
+        let requests = app.handle_key(press(Button::B));
+        assert_eq!(app.screen(), Screen::SendTo, "B must get out");
+        assert!(
+            requests
+                .iter()
+                .any(|r| matches!(r, AppRequest::Engine(EngineCommand::CancelSend)))
+        );
+    }
+
+    #[test]
+    fn a_second_cancel_leaves_even_if_the_transfer_never_stops() {
+        let mut app = app();
+        app.handle_engine(EngineEvent::Send(send_event(SendPhase::Sending)));
+        assert_eq!(app.screen(), Screen::SendProgress);
+
+        // First press asks; the transfer is still live, so we stay.
+        app.handle_key(press(Button::B));
+        assert_eq!(app.screen(), Screen::SendProgress);
+
+        // Second press leaves regardless.
+        app.handle_key(press(Button::B));
+        assert_eq!(app.screen(), Screen::SendTo);
+    }
+
+    #[test]
+    fn the_progress_screen_draws_its_footer_before_any_event() {
+        let mut app = app();
+        app.screen = Screen::SendProgress;
+        let mut fonts = Fonts::load().unwrap();
+        let mut canvas = Canvas::new(1024, 768);
+        app.render(&mut canvas, &mut fonts);
+
+        // Something must be drawn in the footer band, or there is no visible
+        // way out.
+        let pixels = canvas.pixels();
+        let footer_top = (768 - metrics::FOOTER_HEIGHT) as usize;
+        let lit = (footer_top..768)
+            .flat_map(|y| (0..1024).map(move |x| (y, x)))
+            .filter(|(y, x)| pixels[y * 1024 + x] != theme::BG)
+            .count();
+        assert!(lit > 0, "the footer must be drawn");
+    }
+
+    #[test]
+    fn a_queued_folder_is_marked_in_the_picker() {
+        let root = std::env::temp_dir().join("wisp-trimui-pick-test");
+        let child = root.join("folder");
+        std::fs::create_dir_all(&child).unwrap();
+
+        let mut app = app();
+        app.send_browser = Some(Browser::open(root.clone(), true));
+
+        let before = app.send_pick_rows();
+        let marker = app.s().send_picked;
+        assert!(
+            !before
+                .iter()
+                .any(|row| row.value.as_deref() == Some(marker)),
+            "nothing picked yet"
+        );
+
+        app.send_selection.push(child);
+        let after = app.send_pick_rows();
+        assert!(
+            after.iter().any(|row| row.value.as_deref() == Some(marker)),
+            "a queued folder must show it, or Y gives no feedback at all"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
