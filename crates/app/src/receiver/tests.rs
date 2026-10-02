@@ -5,8 +5,10 @@ use tokio::sync::{broadcast, oneshot, watch};
 
 use crate::error::{AppError, AppResult};
 
+use super::actor::registration_backoff_ticks;
 use super::runtime::{
-    OfferResolution, ReceiverRuntime, registration_needs_refresh, should_advertise,
+    OfferResolution, ReceiverRuntime, RegistrationOutcome, registration_needs_refresh,
+    should_advertise,
 };
 use super::session::ReceiverRun;
 use super::{
@@ -154,52 +156,49 @@ async fn busy_runtime_rejects_second_offer() -> AppResult<()> {
 }
 
 #[tokio::test]
-async fn maintain_registration_is_noop_when_no_server_url_configured() -> AppResult<()> {
+async fn no_registration_job_without_a_server_url() -> AppResult<()> {
     let Some(endpoint) = try_bind_endpoint().await? else {
         return Ok(());
     };
-    let mut runtime = ReceiverRuntime::new_for_test(test_config(), endpoint);
-
-    let (pairing_tx, mut pairing_rx) = watch::channel(PairingCodeState::Unavailable);
-    let (event_tx, mut event_rx) = broadcast::channel::<ReceiverEvent>(8);
-
-    // Mark "no new value" baseline so we can assert nothing was sent.
-    pairing_rx.borrow_and_update();
-
-    runtime
-        .maintain_registration(&pairing_tx, &event_tx)
-        .await?;
+    let runtime = ReceiverRuntime::new_for_test(test_config(), endpoint);
 
     assert!(
-        !pairing_rx.has_changed().unwrap(),
-        "pairing_tx must not be touched when no server URL is configured"
+        runtime.registration_job().is_none(),
+        "there is nothing to maintain without a rendezvous server"
     );
     assert!(
-        matches!(
-            event_rx.try_recv(),
-            Err(broadcast::error::TryRecvError::Empty)
-        ),
-        "event_tx must not receive anything when no server URL is configured"
+        runtime.forced_registration_job().is_none(),
+        "a post-transfer rotation has nothing to rotate either"
     );
     Ok(())
 }
 
+#[test]
+fn the_registration_backoff_doubles_and_settles_at_two_minutes() {
+    // Ticks are 15s apart, so 8 ticks is the two-minute ceiling: long enough
+    // to stop hammering a network that cannot register, short enough that a
+    // network coming back is noticed promptly — the attempt is the only thing
+    // that notices.
+    assert_eq!(registration_backoff_ticks(0), 0);
+    assert_eq!(registration_backoff_ticks(1), 1);
+    assert_eq!(registration_backoff_ticks(2), 2);
+    assert_eq!(registration_backoff_ticks(4), 8);
+    assert_eq!(registration_backoff_ticks(6), 8);
+    assert_eq!(registration_backoff_ticks(u32::MAX), 8);
+}
+
 #[tokio::test]
-async fn maintain_registration_does_not_rotate_fresh_code_after_claim() -> AppResult<()> {
+async fn a_fresh_code_survives_a_maintenance_pass() -> AppResult<()> {
     // Regression for the "code rotates while sender still connecting" bug.
     //
-    // Setup: receiver has a registration whose TTL has NOT expired.  In the
-    // old behavior, `maintain_registration` would call `pair_status` and, on
-    // a 404 (which the server returns once the sender claims the code), it
-    // would mint a new code immediately — visible to the user as the code
-    // changing mid-connect.  The fix removed that branch; rotation is now
-    // owned exclusively by TTL expiry and `OfferPrepared`.
+    // Setup: receiver has a registration whose TTL has NOT expired.  A
+    // maintenance pass polls `pair_status` and only rotates on a definite 404
+    // — the code the user is reading must not change underneath a sender that
+    // is still connecting, least of all because one poll failed.
     //
-    // We can verify the fix without a mock server because the function is
-    // now a pure no-op when the registration is fresh — no HTTP call happens
-    // at all.  Setting a bogus server URL is deliberate: if the buggy code
-    // path resurfaces, the test will fail by either erroring out on the
-    // unreachable host *or* sending a rotation event.
+    // Setting a bogus server URL is deliberate: the poll cannot reach it, and
+    // a failed poll must leave everything exactly as it was. If the buggy
+    // code path resurfaces, the test fails by sending a rotation event.
     let Some(endpoint) = try_bind_endpoint().await? else {
         return Ok(());
     };
@@ -218,9 +217,21 @@ async fn maintain_registration_does_not_rotate_fresh_code_after_claim() -> AppRe
     let (event_tx, mut event_rx) = broadcast::channel::<ReceiverEvent>(8);
     pairing_rx.borrow_and_update();
 
-    runtime
-        .maintain_registration(&pairing_tx, &event_tx)
-        .await?;
+    let outcome = runtime
+        .registration_job()
+        .expect("a server url is configured")
+        .run()
+        .await;
+    assert_eq!(
+        outcome,
+        RegistrationOutcome::Unchanged,
+        "an unreachable rendezvous server must not change the visible code"
+    );
+    assert!(
+        runtime
+            .apply_registration_outcome(outcome, &pairing_tx, &event_tx)
+            .await
+    );
 
     assert_eq!(
         runtime.registration_for_test(),
