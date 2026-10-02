@@ -52,13 +52,39 @@ pub enum SendSessionOutcome {
 #[derive(Debug)]
 pub struct SendRun {
     pub events: SendEventStream,
-    cancel_tx: Arc<Mutex<Option<watch::Sender<bool>>>>,
+    cancel: Arc<Mutex<CancelState>>,
     outcome_rx: oneshot::Receiver<AppResult<SendSessionOutcome>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct SendCancelHandle {
-    cancel_tx: Arc<Mutex<Option<watch::Sender<bool>>>>,
+    cancel: Arc<Mutex<CancelState>>,
+}
+
+/// Shared cancel state for one send.
+///
+/// `tx` is `None` until [`SendSession::drive`] has started the core session:
+/// resolving the destination and adopting an endpoint happen first, and on a
+/// slow or offline network that window is seconds long. A cancel arriving then
+/// used to be rejected as `NoActiveTransfer` and thrown away by both callers,
+/// so the send carried on — connected, offered, and was auto-accepted by a
+/// trusted receiver the user had already cancelled on. `requested` latches it
+/// instead, and `drive` honours it the moment it has a sender.
+#[derive(Debug, Default)]
+pub(crate) struct CancelState {
+    tx: Option<watch::Sender<bool>>,
+    requested: bool,
+}
+
+impl CancelState {
+    /// Adopts the core session's cancel sender, replaying a cancel that
+    /// arrived before there was anything to send it to.
+    fn adopt(&mut self, tx: watch::Sender<bool>) {
+        if self.requested {
+            let _ = tx.send(true);
+        }
+        self.tx = Some(tx);
+    }
 }
 
 pub type SendEventStream = UnboundedReceiverStream<SendEvent>;
@@ -115,17 +141,17 @@ impl SendSession {
     pub fn start(self) -> SendRun {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (outcome_tx, outcome_rx) = oneshot::channel();
-        let cancel_tx = Arc::new(Mutex::new(None));
-        let cancel_tx_for_task = Arc::clone(&cancel_tx);
+        let cancel = Arc::new(Mutex::new(CancelState::default()));
+        let cancel_for_task = Arc::clone(&cancel);
 
         tokio::spawn(async move {
-            let outcome = self.drive(event_tx, cancel_tx_for_task).await;
+            let outcome = self.drive(event_tx, cancel_for_task).await;
             let _ = outcome_tx.send(outcome);
         });
 
         SendRun {
             events: UnboundedReceiverStream::new(event_rx),
-            cancel_tx,
+            cancel,
             outcome_rx,
         }
     }
@@ -133,7 +159,7 @@ impl SendSession {
     async fn drive(
         self,
         event_tx: mpsc::UnboundedSender<SendEvent>,
-        cancel_tx_slot: Arc<Mutex<Option<watch::Sender<bool>>>>,
+        cancel_slot: Arc<Mutex<CancelState>>,
     ) -> AppResult<SendSessionOutcome> {
         let preview = self.draft.inspect()?;
         let mut destination_label = self.destination.display_label();
@@ -260,10 +286,10 @@ impl SendSession {
 
         let sender_run = sender.run_with_events();
         let (mut core_events, cancel_tx, outcome_rx, conn_info_rx) = sender_run.into_parts();
-        {
-            let mut slot = cancel_tx_slot.lock().await;
-            *slot = Some(cancel_tx);
-        }
+        // A cancel that arrived while we were resolving the destination had
+        // nowhere to land until now; `adopt` replays it rather than starting a
+        // transfer the user has already called off.
+        cancel_slot.lock().await.adopt(cancel_tx);
         let mut current_label = destination_label.clone();
         let mut current_plan: Option<TransferPlan> = None;
         // drift#29: track the latest transfer snapshot so the Failed
@@ -351,7 +377,7 @@ impl SendSession {
 impl SendRun {
     pub fn cancel_handle(&self) -> SendCancelHandle {
         SendCancelHandle {
-            cancel_tx: Arc::clone(&self.cancel_tx),
+            cancel: Arc::clone(&self.cancel),
         }
     }
 
@@ -376,15 +402,18 @@ impl SendRun {
 }
 
 impl SendCancelHandle {
+    /// Cancels the send, whether or not the core session exists yet.
+    ///
+    /// Always `Ok`: "there is nothing running" is not a failure the caller can
+    /// act on, and reporting it as one is what let a cancel be discarded —
+    /// see [`CancelState`].
     pub async fn cancel_transfer(&self) -> AppResult<()> {
-        let guard = self.cancel_tx.lock().await;
-        match guard.as_ref() {
-            Some(cancel_tx) => {
-                let _ = cancel_tx.send(true);
-                Ok(())
-            }
-            None => Err(AppError::NoActiveTransfer),
+        let mut state = self.cancel.lock().await;
+        state.requested = true;
+        if let Some(cancel_tx) = state.tx.as_ref() {
+            let _ = cancel_tx.send(true);
         }
+        Ok(())
     }
 }
 
@@ -876,7 +905,7 @@ fn map_sender_event(
 #[cfg(test)]
 mod tests {
     use super::{
-        CoreSenderEvent, SendRun, failed_event_from_error, is_receiver_decline_cancel,
+        CancelState, CoreSenderEvent, SendRun, failed_event_from_error, is_receiver_decline_cancel,
         map_sender_event, maybe_demote_pre_handshake_failure,
     };
     use crate::error::{AppError, UserFacingErrorKind};
@@ -1218,13 +1247,45 @@ mod tests {
         let (cancel_tx, cancel_rx) = watch::channel(false);
         let run = SendRun {
             events: UnboundedReceiverStream::new(event_rx),
-            cancel_tx: Arc::new(Mutex::new(Some(cancel_tx))),
+            cancel: Arc::new(Mutex::new(CancelState {
+                tx: Some(cancel_tx),
+                requested: false,
+            })),
             outcome_rx,
         };
 
         run.cancel_transfer().await.expect("cancel succeeds");
 
         assert!(*cancel_rx.borrow());
+        drop(outcome_tx);
+    }
+
+    #[tokio::test]
+    async fn a_cancel_before_the_session_exists_is_replayed_onto_it() {
+        // The window this covers is `drive` resolving the destination: the
+        // core session — and with it the watch sender — does not exist yet,
+        // but the user has already tapped Cancel. Dropping it there let the
+        // send run on and get auto-accepted by a trusted receiver.
+        let (_event_tx, event_rx) = mpsc::unbounded_channel();
+        let (outcome_tx, outcome_rx) = oneshot::channel();
+        let run = SendRun {
+            events: UnboundedReceiverStream::new(event_rx),
+            cancel: Arc::new(Mutex::new(CancelState::default())),
+            outcome_rx,
+        };
+        let handle = run.cancel_handle();
+
+        handle
+            .cancel_transfer()
+            .await
+            .expect("cancelling before the session exists is not an error");
+
+        // `drive` reaching the core session now adopts the pending request
+        // instead of starting a transfer the user called off.
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        run.cancel.lock().await.adopt(cancel_tx);
+
+        assert!(*cancel_rx.borrow(), "the latched cancel must be replayed");
         drop(outcome_tx);
     }
 }
