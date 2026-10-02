@@ -171,8 +171,8 @@ impl ReceiverService {
 
         // Channel sized for high-throughput receivers.  Progress events emit
         // every ~100 ms at peak — 10 events/sec.  16 used to be enough but
-        // any pause in the actor loop (e.g. the HTTP register call during
-        // `refresh_registration_after_offer`) lets the producer overflow
+        // any pause in the actor loop (the rendezvous calls used to be made
+        // there, and took seconds) lets the producer overflow
         // 16 slots in <2 s, causing `try_send` in
         // `ReceiverSession::handle_progress` to drop updates silently —
         // visible to users as a UI speed indicator stuck well below the

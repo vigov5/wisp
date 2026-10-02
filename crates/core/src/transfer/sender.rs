@@ -341,12 +341,24 @@ impl SenderSession {
                 }
                 None => {
                     let (progress, hashing_reporter) = self.spawn_hashing_reporter();
-                    let prepared = PreparedStore::prepare_with_progress(
-                        &scratch.path,
-                        self.request.files.clone(),
-                        progress,
-                    )
-                    .await;
+                    // Watch the cancel flag while hashing. Until now the first
+                    // check was at the dial below, so a cancel taken during a
+                    // long hash left the device hashing the whole payload
+                    // before it took any effect.
+                    let prepared = tokio::select! {
+                        prepared = PreparedStore::prepare_with_progress(
+                            &scratch.path,
+                            self.request.files.clone(),
+                            progress,
+                        ) => prepared,
+                        _ = wait_for_cancel(&mut cancel_rx) => {
+                            hashing_reporter.abort();
+                            return Ok(TransferOutcome::local_cancel(
+                                protocol_message::TransferRole::Sender,
+                                protocol_message::CancelPhase::WaitingForDecision,
+                            ));
+                        }
+                    };
                     hashing_reporter.abort();
                     let prepared = prepared?;
                     let prepared_plan = build_prepared_plan(&self.session_id, &prepared)?;

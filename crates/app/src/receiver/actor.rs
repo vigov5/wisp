@@ -8,7 +8,7 @@ use crate::types::{
     ConnectionPath, PairingCodeState, ReceiverOfferEvent, ReceiverOfferPhase, ReceiverRegistration,
 };
 
-use super::runtime::ReceiverRuntime;
+use super::runtime::{ReceiverRuntime, RegistrationJob, RegistrationOutcome};
 use super::{OfferDecision, ReceiverEvent, ReceiverLifecycle, ReceiverSnapshot};
 
 #[derive(Debug)]
@@ -84,21 +84,47 @@ pub(super) async fn run_receiver_actor(
     advert_reconcile.set_missed_tick_behavior(MissedTickBehavior::Delay);
     advert_reconcile.tick().await;
 
+    // Registration maintenance runs on its own task and reports back here,
+    // because only this loop may touch `runtime` — see [`RegistrationJob`] for
+    // why it must not be awaited inline.
+    let (job_tx, mut job_rx) = mpsc::channel::<RegistrationOutcome>(4);
+    let mut registration_running = false;
+    let mut registration_failures = 0u32;
+    let mut registration_cooldown = 0u32;
+
     loop {
         tokio::select! {
             _ = advert_reconcile.tick() => {
                 runtime.reconcile_advertising().await;
             }
             _ = maintenance.tick() => {
-                if runtime.maintain_registration(&pairing_tx, &event_tx).await.is_err() {
-                    let _ = pairing_tx.send(PairingCodeState::Unavailable);
+                if registration_cooldown > 0 {
+                    registration_cooldown -= 1;
+                } else if !registration_running
+                    && let Some(job) = runtime.registration_job()
+                {
+                    registration_running = true;
+                    spawn_registration_job(job, &job_tx);
+                }
+                let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
+            }
+            Some(outcome) = job_rx.recv() => {
+                registration_running = false;
+                if runtime
+                    .apply_registration_outcome(outcome, &pairing_tx, &event_tx)
+                    .await
+                {
+                    registration_failures = 0;
+                    registration_cooldown = 0;
+                    let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
+                } else {
+                    registration_failures = registration_failures.saturating_add(1);
+                    registration_cooldown = registration_backoff_ticks(registration_failures);
                     let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
                     let _ = event_tx.send(ReceiverEvent::DiscoverabilityChanged {
                         requested: runtime.discoverable_requested,
                         active: runtime.advertising_active(),
                     });
-                } else {
-                    let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
                 }
             }
             maybe_command = cmd_rx.recv() => {
@@ -195,9 +221,13 @@ pub(super) async fn run_receiver_actor(
                         // the sender and is dead on the server regardless
                         // of outcome, so a new code must be visible
                         // before the user attempts another send.
-                        let _ = runtime
-                            .refresh_registration_after_offer(&pairing_tx, &event_tx)
-                            .await;
+                        if !registration_running
+                            && let Some(job) = runtime.forced_registration_job()
+                        {
+                            registration_running = true;
+                            registration_cooldown = 0;
+                            spawn_registration_job(job, &job_tx);
+                        }
                         let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
                     }
                     ReceiverCommand::OfferConnectionPathChanged { offer_id, connection_path } => {
@@ -240,4 +270,39 @@ fn publish_snapshot(
         })
         .map_err(|_| AppError::SnapshotChannelClosed)?;
     Ok(())
+}
+
+/// Upper bound on a background registration attempt.
+///
+/// Nothing in it is urgent, but it holds the one-at-a-time slot, and the
+/// rendezvous client has no request timeout of its own — so without this an
+/// unbounded hang would stop registration maintenance for the rest of the
+/// session.
+const REGISTRATION_JOB_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn spawn_registration_job(job: RegistrationJob, job_tx: &mpsc::Sender<RegistrationOutcome>) {
+    let job_tx = job_tx.clone();
+    tokio::spawn(async move {
+        let outcome = tokio::time::timeout(REGISTRATION_JOB_TIMEOUT, job.run())
+            .await
+            .unwrap_or(RegistrationOutcome::Failed);
+        let _ = job_tx.send(outcome).await;
+    });
+}
+
+/// Maintenance ticks to sit out after `failures` consecutive failures: 1, 2,
+/// 4, then 8 — two minutes at the 15-second tick, and no further.
+///
+/// A receiver that is simply offline — a handheld serving its own hotspot, a
+/// laptop on an isolated LAN — can never register, and retrying every 15
+/// seconds forever only burns radio and fills the log. The ceiling stays low
+/// because nothing resets the count when the network comes back: the attempt
+/// itself is how we find out, so a long one would leave a usable network
+/// without a pairing code for minutes.
+pub(super) fn registration_backoff_ticks(failures: u32) -> u32 {
+    const MAX_TICKS: u32 = 8;
+    match failures {
+        0 => 0,
+        _ => (1u32 << (failures - 1).min(5)).min(MAX_TICKS),
+    }
 }

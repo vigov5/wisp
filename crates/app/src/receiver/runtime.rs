@@ -107,7 +107,7 @@ impl ReceiverRuntime {
     /// register via HTTP — those paths can't be hit in a unit test without a
     /// running server.  These helpers let the unit tests build a runtime
     /// already in the "registered" state so they can exercise downstream
-    /// logic (e.g. `maintain_registration`) in isolation.
+    /// logic (e.g. a [`RegistrationJob`]) in isolation.
     #[cfg(test)]
     pub(super) fn set_server_url_for_test(&mut self, url: Option<String>) {
         self.server_url = url;
@@ -221,172 +221,66 @@ impl ReceiverRuntime {
             .server_url
             .clone()
             .ok_or(AppError::ReceiverSetupIncomplete)?;
-        // `make_ticket` awaits `endpoint.online()`, which never resolves until a
-        // relay handshake completes — i.e. it hangs forever on an offline link
-        // (USB cable / isolated LAN). The receiver actor is single-threaded, so
-        // a hang here freezes the entire command loop: queued `SetDiscoverable`
-        // (which starts LAN advertising), offer handling, everything. Bound it.
-        // Offline there is no remote pairing to register for anyway, so timing
-        // out and surfacing the failure keeps the actor responsive while LAN
-        // discovery still runs off the offline ticket (see `reconcile_advertising`).
-        const REGISTRATION_TICKET_TIMEOUT: Duration = Duration::from_secs(10);
-        // A benchmark endpoint bound with no relay never comes online, so it
-        // would spend that timeout waiting and then fail to register at all.
-        // Register the direct addresses it does have instead — on the loopback
-        // / LAN link these runs use, that is the whole reachable set.
-        if crate::bench::no_relay() {
-            let ticket = make_ticket_offline(&self.endpoint).map_err(|e| AppError::Internal {
-                message: e.to_string(),
-            })?;
-            return self.register_ticket(resolved_url, ticket).await;
-        }
-        let ticket = match tokio::time::timeout(
-            REGISTRATION_TICKET_TIMEOUT,
-            make_ticket(&self.endpoint),
-        )
-        .await
-        {
-            Ok(Ok(ticket)) => ticket,
-            Ok(Err(e)) => {
-                return Err(AppError::Internal {
-                    message: e.to_string(),
-                });
-            }
-            Err(_) => {
-                warn!(
-                    timeout_secs = REGISTRATION_TICKET_TIMEOUT.as_secs(),
-                    "receiver.registration_ticket_timeout (offline / no relay) — skipping rendezvous registration"
-                );
-                return Err(AppError::Internal {
-                    message: "registration ticket timed out (offline / no relay)".to_owned(),
-                });
-            }
-        };
-        self.register_ticket(resolved_url, ticket).await
-    }
-
-    /// Publishes `ticket` to the rendezvous server and adopts the short code it
-    /// hands back.
-    async fn register_ticket(
-        &mut self,
-        server_url: String,
-        ticket: String,
-    ) -> AppResult<ReceiverRegistration> {
-        let registration = RendezvousClient::new(server_url)
-            .register_peer(ticket)
-            .await
-            .map_err(|e| AppError::Internal {
-                message: e.to_string(),
-            })?;
-        let registration = ReceiverRegistration {
-            code: registration.code,
-            expires_at: registration.expires_at,
-        };
+        let registration = mint_registration(&self.endpoint, &resolved_url).await?;
         self.registration = Some(registration.clone());
         self.reconcile_advertising().await;
         Ok(registration)
     }
 
-    pub(super) async fn refresh_registration_after_offer(
-        &mut self,
-        pairing_tx: &watch::Sender<PairingCodeState>,
-        event_tx: &broadcast::Sender<ReceiverEvent>,
-    ) -> AppResult<Option<ReceiverRegistration>> {
-        let Some(_) = self.server_url else {
-            return Ok(None);
-        };
-        let was_active = self.advertising_active();
-        let registration = self.ensure_registered_with_current_server().await?;
-        let _ = pairing_tx.send(PairingCodeState::Active(registration.clone()));
-        let _ = event_tx.send(ReceiverEvent::RegistrationUpdated(registration.clone()));
-        self.publish_discoverability_change_if_needed(was_active, event_tx);
-        Ok(Some(registration))
+    /// Packages a registration attempt so it can run *off* the actor task.
+    ///
+    /// `None` when no rendezvous server is configured — there is nothing to
+    /// maintain, and the caller skips the whole dance.
+    pub(super) fn registration_job(&self) -> Option<RegistrationJob> {
+        Some(RegistrationJob {
+            endpoint: self.endpoint.clone(),
+            server_url: self.server_url.clone()?,
+            existing: self.registration.clone(),
+            force: false,
+        })
     }
 
-    pub(super) async fn maintain_registration(
+    /// Same, but skips the "is the visible code still claimable?" poll and
+    /// mints a replacement outright. Used once a transfer settles: the sender
+    /// claimed our code, so it is dead on the server whatever the outcome.
+    pub(super) fn forced_registration_job(&self) -> Option<RegistrationJob> {
+        Some(RegistrationJob {
+            force: true,
+            ..self.registration_job()?
+        })
+    }
+
+    /// Folds a finished [`RegistrationJob`] back into the runtime.
+    ///
+    /// Returns whether the registration is usable, mirroring the error
+    /// signalling the actor used when it still ran this inline.
+    pub(super) async fn apply_registration_outcome(
         &mut self,
+        outcome: RegistrationOutcome,
         pairing_tx: &watch::Sender<PairingCodeState>,
         event_tx: &broadcast::Sender<ReceiverEvent>,
-    ) -> AppResult<()> {
-        let Some(server_url) = self.server_url.clone() else {
-            return Ok(());
-        };
-
-        let Some(existing) = self.registration.clone() else {
-            let registration = self.ensure_registered(Some(server_url)).await?;
-            let _ = pairing_tx.send(PairingCodeState::Active(registration.clone()));
-            let _ = event_tx.send(ReceiverEvent::RegistrationUpdated(registration));
-            return Ok(());
-        };
-
-        if registration_needs_refresh(&existing) {
-            let was_active = self.advertising_active();
-            let registration = self.ensure_registered(Some(server_url)).await?;
-            let _ = pairing_tx.send(PairingCodeState::Active(registration.clone()));
-            let _ = event_tx.send(ReceiverEvent::RegistrationUpdated(registration));
-            self.publish_discoverability_change_if_needed(was_active, event_tx);
-            return Ok(());
-        }
-
-        // Poll the rendezvous server for the current claim status of our
-        // pairing code.  Two outcomes that matter to us:
-        //
-        // 1. `Some(_)` — server still has an Open session under our code.
-        //    Nothing to do; the code is still usable for a new sender.
-        // 2. `None` — server returned 404, meaning the session was either
-        //    claimed (sender pulled the ticket) or purged (TTL).  Either
-        //    way the visible code is dead; we mint a new one immediately
-        //    so the user always sees a usable code, regardless of whether
-        //    the previous sender ever successfully connected.  This is
-        //    the "no grace period" policy: if a sender claims and then
-        //    fails to dial us, the previously-claimed code is gone and
-        //    we'd rather show a fresh one than leave the user staring at
-        //    a code that can never be claimed again until TTL.
-        //
-        // If the rotation itself fails (network blip, server 5xx, …) we
-        // emit `Stale(existing)` so the UI can prompt the user to tap
-        // Refresh manually — keeping the user informed without retrying
-        // aggressively on a flaky network.
-        let pair_status = RendezvousClient::new(server_url.clone())
-            .pair_status(&existing.code)
-            .await;
-
-        match pair_status {
-            Ok(Some(_)) => Ok(()),
-            Ok(None) => {
+    ) -> bool {
+        match outcome {
+            RegistrationOutcome::Unchanged => true,
+            RegistrationOutcome::Registered(registration) => {
                 let was_active = self.advertising_active();
-                match self.ensure_registered_with_current_server().await {
-                    Ok(registration) => {
-                        let _ = pairing_tx.send(PairingCodeState::Active(registration.clone()));
-                        let _ = event_tx.send(ReceiverEvent::RegistrationUpdated(registration));
-                        self.publish_discoverability_change_if_needed(was_active, event_tx);
-                        Ok(())
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            target: "wisp_app::receiver::runtime",
-                            %err,
-                            code = %existing.code,
-                            "pair status returned 404 but auto-rotation failed; \
-                             marking pairing code as Stale and waiting for the \
-                             user to tap Refresh"
-                        );
-                        let _ = pairing_tx.send(PairingCodeState::Stale(existing.clone()));
-                        Ok(())
-                    }
-                }
+                self.registration = Some(registration.clone());
+                self.reconcile_advertising().await;
+                let _ = pairing_tx.send(PairingCodeState::Active(registration.clone()));
+                let _ = event_tx.send(ReceiverEvent::RegistrationUpdated(registration));
+                self.publish_discoverability_change_if_needed(was_active, event_tx);
+                true
             }
-            Err(err) => {
-                // Network/transport error talking to the rendezvous server.
-                // Don't downgrade visible state to Stale on a single failure —
-                // that would flicker the UI on flaky connections.  Just log
-                // and try again on the next tick.
-                tracing::debug!(
-                    target: "wisp_app::receiver::runtime",
-                    %err,
-                    "pair_status request failed; will retry on next maintenance tick"
-                );
-                Ok(())
+            RegistrationOutcome::Stale => {
+                if let Some(existing) = self.registration.clone() {
+                    let _ = pairing_tx.send(PairingCodeState::Stale(existing));
+                }
+                true
+            }
+            RegistrationOutcome::Failed => {
+                self.reconcile_advertising().await;
+                let _ = pairing_tx.send(PairingCodeState::Unavailable);
+                false
             }
         }
     }
@@ -621,6 +515,162 @@ impl ReceiverRuntime {
             });
         }
     }
+}
+
+/// What a background registration attempt concluded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum RegistrationOutcome {
+    /// The visible code is still claimable — or the attempt failed in a way
+    /// not worth showing the user, such as one flaky poll. Nothing to publish.
+    Unchanged,
+    /// A fresh code was minted.
+    Registered(ReceiverRegistration),
+    /// The visible code is dead and minting a replacement failed, so the user
+    /// has to tap Refresh.
+    Stale,
+    /// The attempt failed outright — offline, or the server is down.
+    Failed,
+}
+
+/// A registration attempt, detached from [`ReceiverRuntime`] so it can run on
+/// its own task.
+///
+/// Every step here can block for a long time and the receiver actor must not:
+/// `make_ticket` waits on `endpoint.online()`, which never resolves on an
+/// offline link, and the rendezvous client carries no request timeout. The
+/// actor is also what drives the UI, so an inbound offer cannot reach the
+/// screen while it is parked in here — on a handheld sharing its own hotspot
+/// that measured 13.4 s between the offer landing and the screen showing it.
+pub(super) struct RegistrationJob {
+    endpoint: Endpoint,
+    server_url: String,
+    existing: Option<ReceiverRegistration>,
+    force: bool,
+}
+
+impl RegistrationJob {
+    pub(super) async fn run(self) -> RegistrationOutcome {
+        let RegistrationJob {
+            endpoint,
+            server_url,
+            existing,
+            force,
+        } = self;
+
+        let existing = match existing {
+            Some(existing) if !force && !registration_needs_refresh(&existing) => existing,
+            _ => return mint_outcome(&endpoint, &server_url).await,
+        };
+
+        // Poll the rendezvous server for the current claim status of our
+        // pairing code.  Two outcomes that matter to us:
+        //
+        // 1. `Some(_)` — server still has an Open session under our code.
+        //    Nothing to do; the code is still usable for a new sender.
+        // 2. `None` — server returned 404, meaning the session was either
+        //    claimed (sender pulled the ticket) or purged (TTL).  Either
+        //    way the visible code is dead; we mint a new one immediately
+        //    so the user always sees a usable code, regardless of whether
+        //    the previous sender ever successfully connected.  This is
+        //    the "no grace period" policy: if a sender claims and then
+        //    fails to dial us, the previously-claimed code is gone and
+        //    we'd rather show a fresh one than leave the user staring at
+        //    a code that can never be claimed again until TTL.
+        //
+        // If the rotation itself fails (network blip, server 5xx, …) we
+        // report `Stale` so the UI can prompt the user to tap Refresh —
+        // keeping the user informed without retrying aggressively on a
+        // flaky network.
+        match RendezvousClient::new(server_url.clone())
+            .pair_status(&existing.code)
+            .await
+        {
+            Ok(Some(_)) => RegistrationOutcome::Unchanged,
+            Ok(None) => match mint_registration(&endpoint, &server_url).await {
+                Ok(registration) => RegistrationOutcome::Registered(registration),
+                Err(err) => {
+                    warn!(
+                        target: "wisp_app::receiver::runtime",
+                        %err,
+                        code = %existing.code,
+                        "pair status returned 404 but auto-rotation failed;                          marking pairing code as Stale and waiting for the                          user to tap Refresh"
+                    );
+                    RegistrationOutcome::Stale
+                }
+            },
+            // Network/transport error talking to the rendezvous server.
+            // Don't downgrade visible state on a single failure — that would
+            // flicker the UI on flaky connections.  Just log and try again.
+            Err(err) => {
+                tracing::debug!(
+                    target: "wisp_app::receiver::runtime",
+                    %err,
+                    "pair_status request failed; will retry on the next maintenance tick"
+                );
+                RegistrationOutcome::Unchanged
+            }
+        }
+    }
+}
+
+async fn mint_outcome(endpoint: &Endpoint, server_url: &str) -> RegistrationOutcome {
+    match mint_registration(endpoint, server_url).await {
+        Ok(registration) => RegistrationOutcome::Registered(registration),
+        Err(_) => RegistrationOutcome::Failed,
+    }
+}
+
+/// Builds a ticket for `endpoint` and trades it for a short code.
+///
+/// Never call this from the receiver actor: see [`RegistrationJob`].
+async fn mint_registration(
+    endpoint: &Endpoint,
+    server_url: &str,
+) -> AppResult<ReceiverRegistration> {
+    // `make_ticket` awaits `endpoint.online()`, which never resolves until a
+    // relay handshake completes — i.e. it hangs forever on an offline link
+    // (USB cable / isolated LAN). Offline there is no remote pairing to
+    // register for anyway, so time out and surface the failure while LAN
+    // discovery keeps running off the offline ticket (`reconcile_advertising`).
+    const REGISTRATION_TICKET_TIMEOUT: Duration = Duration::from_secs(10);
+    // A benchmark endpoint bound with no relay never comes online, so it
+    // would spend that timeout waiting and then fail to register at all.
+    // Register the direct addresses it does have instead — on the loopback
+    // / LAN link these runs use, that is the whole reachable set.
+    let ticket = if crate::bench::no_relay() {
+        make_ticket_offline(endpoint).map_err(|e| AppError::Internal {
+            message: e.to_string(),
+        })?
+    } else {
+        match tokio::time::timeout(REGISTRATION_TICKET_TIMEOUT, make_ticket(endpoint)).await {
+            Ok(Ok(ticket)) => ticket,
+            Ok(Err(e)) => {
+                return Err(AppError::Internal {
+                    message: e.to_string(),
+                });
+            }
+            Err(_) => {
+                warn!(
+                    timeout_secs = REGISTRATION_TICKET_TIMEOUT.as_secs(),
+                    "receiver.registration_ticket_timeout (offline / no relay) — skipping rendezvous registration"
+                );
+                return Err(AppError::Internal {
+                    message: "registration ticket timed out (offline / no relay)".to_owned(),
+                });
+            }
+        }
+    };
+
+    let registration = RendezvousClient::new(server_url.to_owned())
+        .register_peer(ticket)
+        .await
+        .map_err(|e| AppError::Internal {
+            message: e.to_string(),
+        })?;
+    Ok(ReceiverRegistration {
+        code: registration.code,
+        expires_at: registration.expires_at,
+    })
 }
 
 pub(super) fn registration_needs_refresh(registration: &ReceiverRegistration) -> bool {
