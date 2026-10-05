@@ -11,6 +11,9 @@ name: Rust release (CLI + handheld)
 
 on:
   push:
+    # Same events as the Flutter release: a push to main proves the five
+    # targets still build (artifacts only, no release), a `v*` tag publishes.
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
