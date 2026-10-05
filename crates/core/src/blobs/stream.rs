@@ -282,8 +282,15 @@ pub(crate) struct StreamTarget {
     /// place: there is nothing to rename, and the platform is responsible for
     /// keeping it out of sight until the transfer reports success.
     pub(crate) platform_descriptor: bool,
-    /// Size from the manifest, used for progress accounting.
     pub(crate) size: u64,
+    /// A file already standing at the name this one wanted, of the size the
+    /// manifest describes, which [`Self::destination`] was renamed around.
+    ///
+    /// Set by the receiver's conflict handling, decided here: the collection
+    /// carries a hash per file, so if the bytes match, that file *is* this file
+    /// and there is nothing to fetch. Re-downloading it cost a handheld 684 MB
+    /// over a 1 MB/s link and left a `name (1)` copy beside the original.
+    pub(crate) adopt_if_matches: Option<PathBuf>,
 }
 
 /// Largest blob [`SourceStore`] will hold in memory.
@@ -380,6 +387,32 @@ async fn collect_blob(source: &BlobSource, hash: Hash) -> Result<Bytes> {
 /// Progress is a cumulative byte count across all targets, matching what the
 /// store-backed path emits, so the caller's tracker does not care which path
 /// produced it.
+/// Is the file at `path` exactly the blob `hash` names?
+///
+/// `iroh_blobs::Hash` is the BLAKE3 of the content, so this is the same
+/// question the fetch would answer by downloading it. Streamed rather than
+/// read whole: these are game images, and the device doing the asking has
+/// under a gigabyte of RAM.
+async fn file_has_hash(path: &Path, hash: Hash) -> bool {
+    use tokio::io::AsyncReadExt;
+
+    let Ok(mut file) = tokio::fs::File::open(path).await else {
+        return false;
+    };
+    let mut hasher = blake3::Hasher::new();
+    let mut buffer = vec![0u8; 256 * 1024];
+    loop {
+        match file.read(&mut buffer).await {
+            Ok(0) => break,
+            Ok(read) => {
+                hasher.update(&buffer[..read]);
+            }
+            Err(_) => return false,
+        }
+    }
+    Hash::from(*hasher.finalize().as_bytes()) == hash
+}
+
 pub(super) async fn stream_collection(
     source: BlobSource,
     root_hash: Hash,
@@ -437,8 +470,33 @@ pub(super) async fn stream_collection(
     planned.sort_unstable_by_key(|file| file.offset);
     let total_bytes: u64 = targets.iter().map(|target| target.size).sum();
 
+    // Adopt whatever is already on disk. The manifest gave the receiver no way
+    // to tell a same-named, same-sized file from the one about to be fetched —
+    // it carries paths and sizes only — so it renamed around it and left the
+    // question here, where the collection's per-file hash can answer it.
+    // Hashing 350 MB on a handheld costs a few seconds; fetching it again cost
+    // four and a half minutes and left a `name (1)` copy beside the original.
+    let mut adopted_bytes = 0u64;
+    let mut to_fetch: Vec<PlannedFile> = Vec::with_capacity(planned.len());
+    for file in planned {
+        let target = &targets[file.index];
+        if let Some(candidate) = target.adopt_if_matches.as_deref()
+            && file_has_hash(candidate, file.hash).await
+        {
+            debug!(
+                path = %target.transfer_path,
+                adopted = %candidate.display(),
+                "the copy already on disk is this file; not fetching it"
+            );
+            adopted_bytes = adopted_bytes.saturating_add(target.size);
+            continue;
+        }
+        to_fetch.push(file);
+    }
+    let planned = to_fetch;
+
     // Shared, because the slices do not finish in step.
-    let received = AtomicU64::new(0);
+    let received = AtomicU64::new(adopted_bytes);
     let progress = Mutex::new(ProgressCoalescer::new(PROGRESS_EMIT_INTERVAL));
 
     // Batched by size as well as by count; see [`FETCH_BATCH_BYTES`].
@@ -891,6 +949,43 @@ async fn resumable_prefix_len(partial: &Path) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use super::file_has_hash;
+    use iroh_blobs::Hash;
+
+    #[tokio::test]
+    async fn a_file_is_recognised_by_its_content_hash() {
+        // This is the question a fetch would answer by downloading the file.
+        // Answering it locally is what lets a receiver keep the copy it
+        // already has instead of writing `name (1)` beside it.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("game.chd");
+        let contents = vec![7u8; 300 * 1024];
+        tokio::fs::write(&path, &contents).await.unwrap();
+        let hash = Hash::from(*blake3::hash(&contents).as_bytes());
+
+        assert!(file_has_hash(&path, hash).await);
+    }
+
+    #[tokio::test]
+    async fn a_different_file_of_the_same_length_is_not_recognised() {
+        // Size was all the manifest offered, and size is exactly what this
+        // check exists to stop trusting.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("game.chd");
+        tokio::fs::write(&path, vec![7u8; 4096]).await.unwrap();
+        let other = Hash::from(*blake3::hash(&vec![9u8; 4096]).as_bytes());
+
+        assert!(!file_has_hash(&path, other).await);
+    }
+
+    #[tokio::test]
+    async fn a_missing_file_is_not_recognised() {
+        let dir = tempfile::tempdir().unwrap();
+        let hash = Hash::from(*blake3::hash(b"anything").as_bytes());
+
+        assert!(!file_has_hash(&dir.path().join("absent.chd"), hash).await);
+    }
+
     use super::*;
 
     fn unique_dir(prefix: &str) -> PathBuf {
@@ -975,6 +1070,7 @@ mod tests {
                 partial: parts.join(name),
                 platform_descriptor: false,
                 size: body.len() as u64,
+                adopt_if_matches: None,
             })
             .collect::<Vec<_>>();
         let total: u64 = targets.iter().map(|target| target.size).sum();
@@ -1128,6 +1224,7 @@ mod tests {
                     partial: root_dir.join("parts").join(name),
                     platform_descriptor: true,
                     size: body.len() as u64,
+                    adopt_if_matches: None,
                 }
             })
             .collect::<Vec<_>>();
@@ -1294,6 +1391,7 @@ mod tests {
                     partial: root_dir.join("parts").join(name),
                     platform_descriptor: true,
                     size: *len,
+                    adopt_if_matches: None,
                 }
             })
             .collect::<Vec<_>>();
