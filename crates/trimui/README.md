@@ -137,6 +137,13 @@ search. Below it are the devices found, then devices sent to before, then
 manual code entry — on the keyboard **A** types, **X** deletes and **Start**
 sends.
 
+**The handheld does not sleep while Wisp is open.** Suspending drops the
+Wi-Fi link, so a sleeping handheld is an unreachable one — it would sit there
+showing a pairing code nobody can connect to, and a transfer in flight would
+die. The launcher holds `/tmp/stay_awake`, the same flag the stock
+musicplayer, moonlight and usb_storage apps use, and releases it on exit.
+Close the app to get the battery back.
+
 Received files go to `/mnt/SDCARD/Wisp` unless changed in Settings. The folder
 picker lists the last 30 folders you chose before the built-in suggestions, so
 a destination reached once through the browser is one press away afterwards.

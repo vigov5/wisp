@@ -74,5 +74,34 @@ section "launcher"
 ps 2>/dev/null | grep -iE 'MainUI|runtrimui' | grep -v grep
 ls -l /usr/trimui/bin 2>/dev/null | head -n 20
 
+section "power management"
+# A transfer that outlasts the idle timer dies with the Wi-Fi link, so the app
+# has to hold the device awake while one is running. These are the handles it
+# could use, in order of preference: an Android-style wake lock is the clean
+# one (write a name to hold, write it again to /sys/power/wake_unlock to
+# release), autosleep says whether anything is arming a suspend at all, and
+# the backlight nodes say whether blanking is separate from suspending.
+for f in /sys/power/state /sys/power/autosleep /sys/power/wake_lock          /sys/power/wakeup_count /sys/power/pm_async; do
+    [ -e "$f" ] && echo "$f: $(cat "$f" 2>/dev/null)"
+done
+ls -l /sys/power/ 2>/dev/null
+echo "--- wakeup sources (first 15):"
+head -n 15 /sys/kernel/debug/wakeup_sources 2>/dev/null || echo "(not readable)"
+echo "--- backlight:"
+for d in /sys/class/backlight/*/; do
+    [ -d "$d" ] || continue
+    echo "$d brightness=$(cat "$d/brightness" 2>/dev/null) max=$(cat "$d/max_brightness" 2>/dev/null) bl_power=$(cat "$d/bl_power" 2>/dev/null)"
+done
+echo "--- fb blanking:"
+cat /sys/class/graphics/fb0/blank 2>/dev/null
+echo "--- who arms the idle timer (daemons still running under the app):"
+ps 2>/dev/null | grep -viE 'grep|\[' | head -n 40
+echo "--- trimui feature flags:"
+for f in /usr/trimui/features.json /mnt/SDCARD/features.json /mnt/UDISK/system.json; do
+    [ -r "$f" ] && { echo "--- $f"; cat "$f"; echo; }
+done
+echo "--- wifi power save:"
+iw dev wlan0 get power_save 2>/dev/null || echo "(no iw)"
+
 echo
 echo "===== done ====="
