@@ -72,6 +72,7 @@ fn main() -> Result<()> {
         engine = Some(Engine::start(EngineSettings::from_config(
             &app.config,
             secret_key.clone(),
+            &mounts,
         ))?);
     } else {
         let path = app.config.save_root.display().to_string();
@@ -128,6 +129,7 @@ fn main() -> Result<()> {
                     match Engine::start(EngineSettings::from_config(
                         &app.config,
                         secret_key.clone(),
+                        &mounts,
                     )) {
                         Ok(started) => engine = Some(started),
                         Err(err) => {

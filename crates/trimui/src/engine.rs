@@ -109,16 +109,32 @@ pub struct EngineSettings {
     pub conflict: Conflict,
     pub server: Option<String>,
     pub secret_key: SecretKey,
+    /// Save folders the user pointed at before this one, still on a mounted
+    /// card. The receiver service only sweeps the folder it is given, so
+    /// resume state left behind in an earlier one would sit there forever.
+    pub stale_roots: Vec<PathBuf>,
 }
 
 impl EngineSettings {
-    pub fn from_config(config: &Config, secret_key: SecretKey) -> Self {
+    /// `mounts` is `/proc/mounts`, used to drop remembered folders whose card
+    /// is not mounted. Sweeping one of those would walk into the overlay and
+    /// create directories on internal storage that the card hides on its next
+    /// mount — the same trap `main` guards the save root against.
+    pub fn from_config(config: &Config, secret_key: SecretKey, mounts: &str) -> Self {
+        let stale_roots = config
+            .recent_save_roots
+            .iter()
+            .filter(|root| *root != &config.save_root)
+            .filter(|root| crate::config::save_root_is_writable(root, mounts))
+            .cloned()
+            .collect();
         Self {
             device_name: config.device_name.clone(),
             save_root: config.save_root.clone(),
             conflict: config.conflict,
             server: config.server.clone(),
             secret_key,
+            stale_roots,
         }
     }
 }
@@ -195,11 +211,12 @@ fn conflict_policy(conflict: Conflict) -> ConflictPolicy {
 }
 
 async fn drive(
-    settings: EngineSettings,
+    mut settings: EngineSettings,
     events: std_mpsc::Sender<EngineEvent>,
     mut commands: tokio_mpsc::UnboundedReceiver<EngineCommand>,
 ) {
     let server = settings.server.clone();
+    let stale_roots = std::mem::take(&mut settings.stale_roots);
     // Kept because an outbound send needs to introduce this device by name,
     // and the receiver config takes ownership of the original.
     let device_name = settings.device_name.clone();
@@ -223,6 +240,29 @@ async fn drive(
     };
     let endpoint_id = service.endpoint().addr().id.to_string();
     let _ = events.send(EngineEvent::Ready { endpoint_id });
+
+    // Expire resume state the user left in folders this receiver is no longer
+    // pointed at, on the same schedule the service uses for the active one.
+    // Off the event loop: it walks directories on a slow card.
+    if !stale_roots.is_empty() {
+        tokio::spawn(async move {
+            for root in stale_roots {
+                let removed = wisp_core::transfer::path::sweep_stale_transfer_records(
+                    &root,
+                    wisp_app::STALE_TRANSFER_RECORD_TTL,
+                )
+                .await;
+                if removed > 0 {
+                    tracing::info!(
+                        target: "wisp_trimui::engine",
+                        root = %root.display(),
+                        removed,
+                        "swept stale transfer records from a previous save folder"
+                    );
+                }
+            }
+        });
+    }
 
     // A short code needs the rendezvous server; QR and mDNS do not. Failing
     // here must leave the receiver running.
@@ -409,6 +449,33 @@ mod tests {
     }
 
     #[test]
+    fn previous_save_folders_are_swept_but_only_on_a_mounted_card() {
+        // A remembered folder whose card is gone must be left alone: walking
+        // it would create directories on the internal overlay that the card
+        // hides again the moment it mounts.
+        const MOUNTS: &str = "overlayfs:/overlay / overlay rw,noatime 0 0
+/dev/mmcblk1p1 /mnt/SDCARD vfat rw,sync,relatime 0 0
+";
+        let mut config = Config::default();
+        config.save_root = PathBuf::from("/mnt/SDCARD/Wisp");
+        config.recent_save_roots = vec![
+            // The active folder — the receiver service already sweeps it.
+            PathBuf::from("/mnt/SDCARD/Wisp"),
+            PathBuf::from("/mnt/SDCARD/Roms/MD"),
+            // No /mnt/UDISK line in MOUNTS, so this one resolves to the overlay.
+            PathBuf::from("/mnt/UDISK/gone"),
+        ];
+
+        let settings =
+            EngineSettings::from_config(&config, SecretKey::from_bytes(&[3u8; 32]), MOUNTS);
+
+        assert_eq!(
+            settings.stale_roots,
+            vec![PathBuf::from("/mnt/SDCARD/Roms/MD")]
+        );
+    }
+
+    #[test]
     fn settings_are_taken_from_the_config() {
         let mut config = Config::default();
         config.device_name = "Brick Pro".to_owned();
@@ -416,7 +483,7 @@ mod tests {
         config.save_root = PathBuf::from("/mnt/SDCARD/Roms");
 
         let key = SecretKey::from_bytes(&[7u8; 32]);
-        let settings = EngineSettings::from_config(&config, key.clone());
+        let settings = EngineSettings::from_config(&config, key.clone(), "");
 
         assert_eq!(settings.device_name, "Brick Pro");
         assert_eq!(settings.conflict, Conflict::Reject);
