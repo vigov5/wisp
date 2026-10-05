@@ -98,7 +98,14 @@ To review the UI without a device:
 make trimui-preview   # -> target/preview/*.png
 ```
 
+CI does the same thing on a tag: `.github/workflows/rust-release.yml` runs
+this build on an arm64 Linux runner — the native path above, not `cross` —
+and attaches the packaged folder to the release as `wisp-trimui-<tag>.zip`.
+
 ## Install
+
+The release zip holds that same `Wisp/` folder, so unzipping it into
+`/mnt/SDCARD/Apps/` is the whole install and nothing has to be built.
 
 Copy the folder to `/mnt/SDCARD/Apps/Wisp/` on the card, then restart the
 launcher — MainUI only scans `Apps/` at startup, and it ignores `SIGTERM`:

@@ -1,0 +1,194 @@
+name: Rust release (CLI + handheld)
+
+# The Flutter workflow releases the GUI app. This one covers what it does not:
+# the `wisp` / `wisp-server` binaries, and the TrimUI Brick Pro pak — which up
+# to now had to be hand-carried onto the device, because the handheld's SFTP
+# refuses writes and its SSH channel dies on a sustained stream.
+#
+# Both workflows fire on the same `v*` tag and attach to the same release;
+# `action-gh-release` updates an existing release instead of failing, so
+# whichever finishes second just adds its files.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cli:
+    name: CLI (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux ships static musl rather than glibc: a release built against
+          # the runner's glibc refuses to start on any older distro.
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            musl: true
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            musl: true
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          # Cross-compiled from the arm64 runner; Apple's clang targets both.
+          - name: macos-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Name the build after the ref
+        shell: bash
+        run: echo "SAFE_VERSION=$(echo '${{ github.ref_name }}' | tr '/' '-')" >> $GITHUB_ENV
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # `ring` (via iroh) compiles C, so a musl target needs a musl C compiler.
+      # Both Linux runners are native for their target, so stock musl-tools is
+      # the whole toolchain — no container, no cross linker.
+      - name: Install musl toolchain
+        if: matrix.musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          lower=$(echo '${{ matrix.target }}' | tr '-' '_')
+          upper=$(echo "$lower" | tr 'a-z' 'A-Z')
+          echo "CC_${lower}=musl-gcc" >> $GITHUB_ENV
+          echo "CARGO_TARGET_${upper}_LINKER=musl-gcc" >> $GITHUB_ENV
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} -p wisp -p wisp-server
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: |
+          tar -czf "wisp-cli-${{ matrix.name }}-${{ env.SAFE_VERSION }}.tar.gz" \
+            -C "target/${{ matrix.target }}/release" wisp wisp-server
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $release = "target/${{ matrix.target }}/release"
+          Compress-Archive -Path "$release/wisp.exe", "$release/wisp-server.exe" `
+            -DestinationPath "wisp-cli-${{ matrix.name }}-${{ env.SAFE_VERSION }}.zip" -Force
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: wisp-cli-${{ matrix.name }}
+          path: |
+            wisp-cli-*.tar.gz
+            wisp-cli-*.zip
+          if-no-files-found: error
+
+  handheld:
+    name: TrimUI Brick Pro pak
+    # An arm64 runner builds the handheld's aarch64 binary natively, which is
+    # the path the port was developed on. Cross-compiling it from x86-64 needs
+    # `cross` plus Docker and has never been exercised here.
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Name the build after the ref
+        run: echo "SAFE_VERSION=$(echo '${{ github.ref_name }}' | tr '/' '-')" >> $GITHUB_ENV
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: trimui
+
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools zip
+          echo "CC_aarch64_unknown_linux_musl=musl-gcc" >> $GITHUB_ENV
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc" >> $GITHUB_ENV
+
+      - name: Build
+        run: cargo build --release --locked --target aarch64-unknown-linux-musl -p wisp-trimui
+
+      # The pak is the folder MainUI scans: binary + launch.sh + manifest + icon.
+      - name: Assemble the pak
+        run: make trimui-pak
+
+      - name: Check it is actually static aarch64
+        run: |
+          file target/trimui/Wisp/wisp-trimui
+          file target/trimui/Wisp/wisp-trimui | grep -q 'ARM aarch64'
+          file target/trimui/Wisp/wisp-trimui | grep -qE 'statically linked|static-pie linked'
+
+      # Zipped with the `Wisp/` folder inside, so unzipping it into
+      # /mnt/SDCARD/Apps/ on the card is the whole install.
+      - name: Package
+        run: |
+          mv target/trimui/Wisp .
+          zip -r "wisp-trimui-${{ env.SAFE_VERSION }}.zip" Wisp
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: wisp-trimui
+          path: wisp-trimui-*.zip
+          if-no-files-found: error
+
+  release:
+    name: Attach to the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [cli, handheld]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download every build
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect the archives
+        run: |
+          mkdir release-dist
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) \
+            -exec mv {} release-dist/ \;
+          ls -lh release-dist
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
