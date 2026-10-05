@@ -7,7 +7,7 @@ use iroh_blobs::{ALPN as BLOBS_ALPN, ticket::BlobTicket};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use super::error::{BlobError, BlobTextError, Result, error_chain};
 use super::source::{BlobSource, LanTarget};
@@ -245,6 +245,21 @@ fn blob_connect_options(addr: &EndpointAddr) -> Option<(ConnectOptions, BlobTran
 ///
 /// Returns the transport profile alongside, because the QUIC arm resolves one
 /// during its dial and the caller reports it.
+/// Drops the context [`BlobError::fetch`] is about to attach, when the
+/// flattened chain already opens with it.
+///
+/// `choose_source` and the stream both take `ticket_context` for their own
+/// wrapping, so re-attaching it reached the user's card as "fetching blob
+/// content for collection X from Y: fetching blob content for collection X
+/// from Y: <reason>" — the same phrase twice, pushing the reason itself
+/// further out of view.
+fn fetch_reason(chain: &str, ticket_context: &str) -> String {
+    chain
+        .strip_prefix(&format!("fetching blob content for {ticket_context}: "))
+        .unwrap_or(chain)
+        .to_owned()
+}
+
 async fn choose_source(
     endpoint: &Endpoint,
     ticket: &BlobTicket,
@@ -446,6 +461,12 @@ impl BlobReceiver {
                 }),
                 BlobSource::LanTcp(_) => None,
             };
+            // Keep the targets when the LAN path was chosen: they are plain
+            // paths and sizes, and the stream builds each file in `partial`
+            // before renaming it into place, so a second attempt continues
+            // from what the first one wrote.
+            let lan_retry_targets =
+                matches!(source, BlobSource::LanTcp(_)).then(|| targets.clone());
             let result = stream_collection(
                 source,
                 ticket.hash(),
@@ -454,6 +475,47 @@ impl BlobReceiver {
                 telemetry.as_ref(),
             )
             .await;
+            // `choose_source` proves the LAN path with a real handshake, but a
+            // transfer outlives that proof: the sender's provider port lives
+            // only as long as its send session, and the link can drop under
+            // load. QUIC is still up — the control stream is riding it — so a
+            // LAN path that dies partway should cost a reconnect, not the
+            // whole transfer. One retry: if QUIC cannot carry it either, the
+            // failure is real.
+            let result = match (result, lan_retry_targets) {
+                (Err(error), Some(targets)) => {
+                    warn!(
+                        %error,
+                        context = %ticket_context,
+                        "lan tcp failed mid-collection, retrying over quic"
+                    );
+                    match dial_blob_provider(
+                        &endpoint,
+                        ticket.addr(),
+                        transport_profile,
+                        &ticket_context,
+                    )
+                    .await
+                    {
+                        Ok((connection, _)) => {
+                            // No telemetry on the retry: it reads QUIC counters
+                            // from a connection that did not carry the first
+                            // half, so its numbers would describe neither.
+                            stream_collection(
+                                BlobSource::Quic(connection),
+                                ticket.hash(),
+                                targets,
+                                update_tx.clone(),
+                                None,
+                            )
+                            .await
+                        }
+                        // Report what actually broke, not the reconnect.
+                        Err(_) => Err(error),
+                    }
+                }
+                (result, _) => result,
+            };
             if let Some(telemetry) = telemetry.as_mut() {
                 telemetry
                     .finish(if result.is_ok() {
@@ -470,8 +532,16 @@ impl BlobReceiver {
                 // every failed receive: the update carried
                 // `BlobTextError("fetching blob content for <file>")` with the
                 // reason underneath it already thrown away.
+                // ...and drop the context this error already carries before
+                // re-attaching it. `choose_source` and the stream both take
+                // `ticket_context` for their own wrapping, so the flattened
+                // chain usually opens with the very phrase `fetch` is about to
+                // prepend — which reached the user's card as "fetching blob
+                // content for collection X from Y: fetching blob content for
+                // collection X from Y: <reason>".
+                let reason = fetch_reason(&error_chain(error), &ticket_context);
                 let _ = update_tx.send(BlobDownloadUpdate::Failed {
-                    error: BlobError::fetch(ticket_context, BlobTextError::new(error_chain(error))),
+                    error: BlobError::fetch(ticket_context, BlobTextError::new(reason)),
                 });
             }
             result
@@ -488,6 +558,24 @@ impl BlobReceiver {
 
 #[cfg(test)]
 mod tests {
+    use super::fetch_reason;
+
+    #[test]
+    fn the_fetch_reason_drops_a_context_that_is_about_to_be_re_attached() {
+        let context = "collection aaa08818af from fdf4c2610a";
+        let reason =
+            "connecting to blob provider for lan tcp 192.168.1.196:53585: no answer within 3000 ms";
+        let chain = format!("fetching blob content for {context}: {reason}");
+
+        assert_eq!(fetch_reason(&chain, context), reason);
+    }
+
+    #[test]
+    fn the_fetch_reason_keeps_a_chain_that_says_something_else() {
+        let chain = "reading the collection: unexpected end of file";
+        assert_eq!(fetch_reason(chain, "collection aaa from bbb"), chain);
+    }
+
     use std::net::SocketAddr;
     use std::time::{Duration, Instant};
 
