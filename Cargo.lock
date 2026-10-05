@@ -5375,6 +5375,7 @@ dependencies = [
  "serde_json",
  "time",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "wisp-app",
