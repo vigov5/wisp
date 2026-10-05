@@ -340,10 +340,87 @@ H1 (wrong stream) or H2/H3/H4 (iroh-level state).
    migration (H4), bouncing both devices off and back onto Wi-Fi may
    force iroh to settle on a single LAN path before the handshake.
 
+### Update 2026-06-28 (user re-report)
+
+New datapoint: the user now reproduces this **consistently across every
+connection method** — recents, relay, AND 6-char code entry (not just
+QR/code as first audited).  A deterministic failure across all paths
+argues *against* the flaky-network races (H2 keepalive / H4 path
+migration) and *toward* a reproducible stream-level stall: the receiver
+completes `accept_bi` + Hello exchange but its `read_sender_message(Offer)`
+(`receiver.rs:774`) never resolves even though the sender flushed the
+Offer frame.
+
+Code re-read reconfirms the "Unknown sender" path exactly: receiver
+blocks reading the Offer → user cancels → sender drops the connection →
+receiver's `conn.closed()` arm returns `Err` → `run_session` returns via
+`?` dropping `offer_tx` unsent → `session.rs` `Err(error)` arm builds a
+`failed_offer_event` with `sender_name = ""` → Flutter renders "Unknown
+sender".
+
+### Update 2026-10-05 (TrimUI handheld, both sides logged)
+
+First capture with timestamped logs from *both* ends, on a TG4040
+receiving from a Pixel 7 over the handheld's own hotspot. It moves the
+suspect earlier than the June reading had it.
+
+**Fourth connection method.** This repro used a **nearby/ticket**
+destination, so the fault is now seen on QR, code, recents and ticket —
+every `SendDestination` variant there is.
+
+**The sender never finished the offer phase.** Phone clock, normalised:
+
+```
+16:42:50.21  sender  connect.established  attempt_ms=41
+             … 30 s of silence on both sides …
+16:43:20.21  sender  HANDSHAKE_TIMEOUT (30s) fires
+```
+
+That timeout wraps `open_bi` + `run_offer_phase` only — *not* the
+decision wait ("the receiver isn't waiting on a human yet"). So the
+sender had **not** reached `WaitingForDecision`, which the 2026-05-23
+entry assumed it had. Its deduction — that the hellos were exchanged and
+the receiver was stuck in `read_sender_message(Offer)` — does not hold
+for this capture.
+
+**The receiver accepted the connection and then did nothing.** It
+allocated `offer_id=1` (so `WispProtocolHandler::accept` ran and
+`ReceiverSession::spawn` happened — the next offer got id 2) but never
+logged `dispatching OfferPrepared`. Its own `HANDSHAKE_STEP_TIMEOUT`
+(30 s, added later than the June entry) would have elapsed at the same
+moment, producing exactly the pre-offer failure the suppression above
+now hides — which is why the handheld's screen stayed blank throughout.
+
+**So the stall is at `open_bi`/`accept_bi` or the Hello exchange**, not
+at the Offer read. A stream opened but never observed by the peer fits:
+in QUIC a bidi stream only becomes visible once data is written to it.
+
+**It is not permanent.** A second attempt 37 s later, same pair, same
+network, completed the handshake in 0.17 s and transferred 102 MB.
+
+The step tracing lands with this entry, so the next repro says which of
+those three steps hangs.
+
 ### Follow-up
 
-- [ ] Add the receiver-side + sender-side handshake tracing described
-      above.
+- [x] Add the receiver-side + sender-side handshake tracing.  Receiver:
+      `target: "wisp_core::handshake::receiver"` logs each step in
+      `do_handshake` (await accept_bi → accept_bi ok → read Hello →
+      wrote Hello → read Offer → complete).  Sender:
+      `target: "wisp_core::handshake::sender"` logs opening the
+      bi-stream, then each `run_offer_phase` step (wrote Hello → read
+      receiver Hello → wrote+flushed Offer → offer ack read).
+      A single repro now shows whether the receiver prints "awaiting
+      sender Offer" without "read sender Offer" (→ confirms the read-Offer
+      stall) and whether the sender printed "wrote+flushed Offer".
+- [x] UX fix for the misleading label: the actor
+      (`receiver/actor.rs` `OfferFinished` arm) no longer force-broadcasts
+      a terminal `Failed`/`Declined` card for an **untracked** offer that
+      **never identified a sender** (empty `sender_name`).  A handshake
+      that dies before the offer is surfaced now fails silently instead of
+      painting a bogus "Unknown sender" failed-transfer card.  Offers that
+      reached the user (tracked) or that carry a real sender name still
+      surface as before.
 - [ ] Catch a repro with the new logs and identify the exact stuck
       step.
 - [ ] Depending on which step, fix at iroh-blobs / wisp protocol /
