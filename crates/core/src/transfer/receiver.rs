@@ -192,6 +192,14 @@ pub struct ExpectedTransferFile {
     /// location, so it is written in place instead of being built elsewhere and
     /// renamed, and the platform - not the conflict policy - decided its name.
     pub platform_descriptor: bool,
+    /// A file already sitting at the name this transfer wanted, the size the
+    /// manifest describes, which [`Self::destination`] was renamed around.
+    ///
+    /// The manifest carries no per-file hash, so at this point size is the only
+    /// evidence and it is not enough to overwrite on. The collection does carry
+    /// one, and the stream has it: if the bytes match, that file *is* this file
+    /// and the renamed copy never gets written.
+    pub adopt_if_matches: Option<PathBuf>,
 }
 
 impl ReceiverSession {
@@ -653,6 +661,7 @@ async fn run_session(
                 destination: file.destination.clone(),
                 platform_descriptor: file.platform_descriptor,
                 size: file.size,
+                adopt_if_matches: file.adopt_if_matches.clone(),
             })
             .collect::<Vec<_>>();
         let mut blob_download = match blob_receiver
@@ -1507,9 +1516,35 @@ async fn record_streamed_collection(
 ) -> Result<()> {
     let mut total = 0_u64;
     for exp in expected_files {
-        let metadata = fs::metadata(&exp.destination)
-            .await
-            .map_err(|source| TransferError::other("checking streamed file", source))?;
+        // The stream adopts a file already on disk when the collection's hash
+        // says it is this file, and then writes nothing at `destination` —
+        // there was nothing left to write. So a missing destination with an
+        // adopted candidate standing in for it is a success, not a gap.
+        let verified = match fs::metadata(&exp.destination).await {
+            Ok(metadata) => Some((exp.destination.clone(), metadata)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match exp.adopt_if_matches.as_ref() {
+                    Some(adopted) => fs::metadata(adopted)
+                        .await
+                        .ok()
+                        .map(|metadata| (adopted.clone(), metadata)),
+                    None => None,
+                }
+            }
+            Err(_) => None,
+        };
+        let (_checked_path, metadata) = match verified {
+            Some(found) => found,
+            None => {
+                return Err(TransferError::other(
+                    "checking streamed file",
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("{} is missing after the transfer", exp.path),
+                    ),
+                ));
+            }
+        };
         if metadata.len() != exp.size {
             return Err(TransferError::other(
                 "checking streamed file",
@@ -1570,9 +1605,14 @@ async fn build_expected_files(
 ) -> Result<BTreeMap<String, ExpectedTransferFile>> {
     let mut expected = BTreeMap::new();
     for file in &manifest.files {
-        let destination =
-            resolve_expected_destination(out_dir, &file.path, conflict_policy, resume_record)
-                .await?;
+        let (destination, adopt_if_matches) = resolve_expected_destination(
+            out_dir,
+            &file.path,
+            file.size,
+            conflict_policy,
+            resume_record,
+        )
+        .await?;
         expected.insert(
             file.path.clone(),
             ExpectedTransferFile {
@@ -1580,21 +1620,25 @@ async fn build_expected_files(
                 size: file.size,
                 destination,
                 platform_descriptor: false,
+                adopt_if_matches,
             },
         );
     }
     Ok(expected)
 }
 
+/// The destination to write, and the file already standing where this one
+/// wanted to go — see [`ExpectedTransferFile::adopt_if_matches`].
 async fn resolve_expected_destination(
     out_dir: &Path,
     transfer_path: &str,
+    size: u64,
     conflict_policy: ConflictPolicy,
     resume_record: Option<&TransferRecord>,
-) -> Result<PathBuf> {
+) -> Result<(PathBuf, Option<PathBuf>)> {
     let destination = resolve_transfer_destination(out_dir, transfer_path)?;
     match ensure_destination_available(out_dir, &destination).await {
-        Ok(()) => Ok(destination),
+        Ok(()) => Ok((destination, None)),
         Err(super::path::TransferPathError::DestinationExists { path })
             if path == destination
                 && match resume_record {
@@ -1604,13 +1648,23 @@ async fn resolve_expected_destination(
                     None => false,
                 } =>
         {
-            Ok(destination)
+            Ok((destination, None))
         }
         Err(super::path::TransferPathError::DestinationExists { .. }) => match conflict_policy {
             ConflictPolicy::Reject => {
                 Err(super::path::TransferPathError::DestinationExists { path: destination }.into())
             }
             ConflictPolicy::Rename => {
+                // Offer the occupant for adoption when it is the right size.
+                // Nothing is decided here: the stream compares its bytes
+                // against the collection's hash, and only then does the
+                // renamed copy get skipped.
+                let candidate = match fs::metadata(&destination).await {
+                    Ok(metadata) if metadata.is_file() && metadata.len() == size => {
+                        Some(destination.clone())
+                    }
+                    _ => None,
+                };
                 let resolved = conflict_policy
                     .resolve(&destination)
                     .await
@@ -1618,9 +1672,9 @@ async fn resolve_expected_destination(
                         TransferError::other("resolving destination conflict", error)
                     })?;
                 ensure_destination_available(out_dir, &resolved).await?;
-                Ok(resolved)
+                Ok((resolved, candidate))
             }
-            ConflictPolicy::Overwrite => Ok(destination),
+            ConflictPolicy::Overwrite => Ok((destination, None)),
         },
         Err(error) => Err(error.into()),
     }
