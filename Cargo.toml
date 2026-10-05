@@ -4,6 +4,7 @@ members = [
     "crates/cli",
     "crates/core",
     "crates/server",
+    "crates/trimui",
     "crates/wire",
     "crates/web-receiver",
 ]
@@ -16,6 +17,7 @@ default-members = [
     "crates/cli",
     "crates/core",
     "crates/server",
+    "crates/trimui",
     "crates/wire",
 ]
 exclude = ["flutter/rust"]
@@ -63,6 +65,9 @@ debug = "full"
 debug = "full"
 
 [profile.dev.package.wisp-server]
+debug = "full"
+
+[profile.dev.package.wisp-trimui]
 debug = "full"
 
 [profile.dev.package.wisp-wire]

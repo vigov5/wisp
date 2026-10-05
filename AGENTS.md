@@ -17,6 +17,7 @@ Instructions for Codex and other coding agents working in this repository.
 - `crates/app/`: application layer for send/receive flows and receiver tests
 - `crates/cli/`: `wisp` CLI binary and supporting library code
 - `crates/server/`: `wisp-server` rendezvous binary and supporting library code
+- `crates/trimui/`: `wisp-trimui` receive-only handheld app for the TrimUI Brick Pro (TG4040); draws to the Linux framebuffer and reads evdev directly, no SDL2
 - `downloads/`: local output directory used in manual testing.
 
 - `flutter/`: Flutter app and Rust-bridge workspace

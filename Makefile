@@ -1,4 +1,4 @@
-.PHONY: help check test fmt fmt-check clippy server send send-file send-dir send-files send-nearby send-multiple send-large receive
+.PHONY: help check test fmt fmt-check clippy server send send-file send-dir send-files send-nearby send-multiple send-large receive trimui-preview trimui-build trimui-pak trimui-install trimui-probe
 
 SERVER_URL ?= https://rendezvous.wisp.mooo.com
 SERVER_ADDR ?= 0.0.0.0:8787
@@ -27,6 +27,18 @@ NEARBY_SIZE_MB ?= 10
 # mDNS scan duration for send-nearby (seconds).
 NEARBY_TIMEOUT_SECS ?= 7
 
+# --- TrimUI Brick Pro (TG4040) port ------------------------------------------
+# Statically linked against musl so one binary runs on stock Tina Linux as well
+# as MinUI/Knulli, with no dependency on the device's libc or on an SDL2 build
+# that TrimUI has not published an SDK for.
+TRIMUI_TARGET ?= aarch64-unknown-linux-musl
+TRIMUI_HOST ?= root@trimui
+TRIMUI_APP_DIR ?= /mnt/SDCARD/Apps/Wisp
+TRIMUI_PAK ?= target/trimui/Wisp
+# Overridable so a binary built elsewhere — an aarch64 Linux box builds it
+# natively, with no cross toolchain — can be packaged straight from here.
+TRIMUI_BIN ?= target/$(TRIMUI_TARGET)/release/wisp-trimui
+
 help:
 	@echo "Wisp Makefile targets"
 	@echo ""
@@ -49,6 +61,14 @@ help:
 	@echo ""
 	@echo "Send via LAN (mDNS; receiver must run receive on same network):"
 	@echo "  send-nearby     — generates a fresh $(NEARBY_SIZE_MB)MB random file; NEARBY_TIMEOUT_SECS=$(NEARBY_TIMEOUT_SECS)"
+	@echo ""
+	@echo ""
+	@echo "TrimUI Brick Pro (TG4040) receiver:"
+	@echo "  trimui-preview  — render every screen to target/preview/*.png"
+	@echo "  trimui-build    — cross-build a static $(TRIMUI_TARGET) binary (needs 'cross' + Docker)"
+	@echo "  trimui-pak      — assemble $(TRIMUI_PAK)/ (binary + launch.sh + config.json + icon)"
+	@echo "  trimui-install  — copy the pak to $(TRIMUI_HOST):$(TRIMUI_APP_DIR) (override TRIMUI_HOST)"
+	@echo "  trimui-probe    — run the device probe over SSH and save probe.txt"
 	@echo ""
 	@echo "Env: SERVER_URL=$(if $(SERVER_URL),$(SERVER_URL),<CLI default>)"
 	@echo "     TRACE=$(TRACE) (set TRACE=0 to disable CLI tracing logs)"
@@ -133,3 +153,44 @@ send-large:
 
 receive:
 	$(RENDEZVOUS_ENV) $(TRACE_ENV) cargo run -p wisp -- receive --out "$(OUT)"
+
+# --- TrimUI Brick Pro (TG4040) -----------------------------------------------
+
+trimui-preview:
+	cargo run -p wisp-trimui --example preview -- target/preview
+
+# `cross` runs the build in a container that already carries the aarch64 musl
+# toolchain, which ring/iroh need. A bare `cargo build --target` only works if
+# that toolchain is installed on the host.
+trimui-build:
+	cross build -p wisp-trimui --release --target $(TRIMUI_TARGET)
+
+trimui-pak:
+	@test -f "$(TRIMUI_BIN)" || { \
+		echo "missing $(TRIMUI_BIN)"; \
+		echo "  cross-build here:  make trimui-build      (needs 'cross' + Docker)"; \
+		echo "  or build natively on any aarch64 Linux host and package it with:"; \
+		echo "      make trimui-pak TRIMUI_BIN=/path/to/wisp-trimui"; \
+		exit 1; }
+	@rm -rf "$(TRIMUI_PAK)"
+	@mkdir -p "$(TRIMUI_PAK)"
+	cp "$(TRIMUI_BIN)" "$(TRIMUI_PAK)/wisp-trimui"
+	cp crates/trimui/pak/launch.sh "$(TRIMUI_PAK)/launch.sh"
+	cp crates/trimui/pak/config.json "$(TRIMUI_PAK)/config.json"
+	cp flutter/assets/wisp_rounded_logo.png "$(TRIMUI_PAK)/icon.png"
+	chmod +x "$(TRIMUI_PAK)/launch.sh" "$(TRIMUI_PAK)/wisp-trimui"
+	@echo "pak ready: $(TRIMUI_PAK)"
+	@ls -lh "$(TRIMUI_PAK)"
+
+# MainUI only scans Apps/ at startup, so it is restarted to pick up a new or
+# changed app. It ignores SIGTERM, hence -9.
+trimui-install: trimui-pak
+	ssh $(TRIMUI_HOST) 'mkdir -p $(TRIMUI_APP_DIR)'
+	scp -r "$(TRIMUI_PAK)/." $(TRIMUI_HOST):$(TRIMUI_APP_DIR)/
+	ssh $(TRIMUI_HOST) 'chmod +x $(TRIMUI_APP_DIR)/launch.sh $(TRIMUI_APP_DIR)/wisp-trimui && killall -9 MainUI' || true
+	@echo "installed to $(TRIMUI_HOST):$(TRIMUI_APP_DIR)"
+
+trimui-probe:
+	scp tools/trimui-probe.sh $(TRIMUI_HOST):/tmp/
+	ssh $(TRIMUI_HOST) 'sh /tmp/trimui-probe.sh' > probe.txt
+	@echo "wrote probe.txt"
