@@ -33,7 +33,12 @@ use self::wisp_handler::WispProtocolHandler;
 /// connection-dropped transfers leave their resume state behind so
 /// the user can retry; this TTL bounds how long that state lingers
 /// before we GC it.
-const STALE_TRANSFER_RECORD_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+///
+/// Public because the service only ever sweeps the folder it is pointed at.
+/// A front-end that lets the user change the save folder keeps the list of
+/// earlier ones and sweeps those too, and it should expire them on the same
+/// schedule rather than inventing a second number.
+pub const STALE_TRANSFER_RECORD_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// Maps a core LAN scan hit to the app-facing [`NearbyReceiver`], decoding the
 /// endpoint id from the ticket (best-effort; empty when the ticket won't parse).
