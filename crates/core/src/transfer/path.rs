@@ -298,8 +298,41 @@ impl Drop for RecordDirGuard {
     fn drop(&mut self) {
         if self.delete_on_drop {
             let _ = std::fs::remove_dir_all(&self.path);
+            if let Some(transfers) = self.path.parent() {
+                prune_empty_workspace(transfers);
+            }
         }
     }
+}
+
+/// Removes `transfers/` and then `.wisp/` above a record dir that has just
+/// been deleted, when each is empty.
+///
+/// Without this a save folder keeps an empty `.wisp/transfers/` forever after
+/// its first completed transfer — so every folder a user ever picked as a
+/// destination grows a dotfile directory that never goes away and holds
+/// nothing.
+///
+/// `remove_dir` only succeeds on an empty directory, so a second transfer
+/// running into the same folder keeps both alive. The two names are checked
+/// before removing: a guard pointed somewhere unexpected must never be able to
+/// delete a user's own empty directory.
+fn prune_empty_workspace(transfers: &Path) {
+    use std::ffi::OsStr;
+
+    if transfers.file_name() != Some(OsStr::new("transfers")) {
+        return;
+    }
+    if std::fs::remove_dir(transfers).is_err() {
+        return;
+    }
+    let Some(workspace) = transfers.parent() else {
+        return;
+    };
+    if workspace.file_name() != Some(OsStr::new(".wisp")) {
+        return;
+    }
+    let _ = std::fs::remove_dir(workspace);
 }
 
 /// Total on-disk size of the receiver's `.wisp` workspace under
@@ -402,6 +435,11 @@ pub async fn sweep_stale_transfer_records(out_dir: &Path, max_age: std::time::Du
             }
         }
     }
+    // Unconditional, not just when this sweep removed something: a folder
+    // that finished its last transfer under an older build still has an empty
+    // `.wisp/transfers/` sitting in it, and a sweep that finds nothing to GC
+    // is exactly when that is true.
+    prune_empty_workspace(&transfers);
     removed
 }
 
@@ -444,6 +482,74 @@ mod tests {
         assert!(
             !dir.exists(),
             "guard marked for delete must remove the dir on drop"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_finished_transfer_leaves_no_wisp_folder_behind() -> Result<()> {
+        // Every folder the user ever picked as a destination used to keep an
+        // empty `.wisp/transfers/` forever after its first completed transfer.
+        let temp = tempfile::tempdir()?;
+        let out = temp.path();
+        let dir = out.join(".wisp").join("transfers").join("abc");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("record.json"), b"{}")?;
+
+        {
+            let mut guard = RecordDirGuard::new(dir.clone());
+            guard.mark_for_delete();
+        }
+
+        assert!(
+            !out.join(".wisp").exists(),
+            "a save folder used once and finished must keep no trace of us"
+        );
+        assert!(out.exists(), "the save folder itself must survive");
+        Ok(())
+    }
+
+    #[test]
+    fn a_second_transfer_keeps_the_workspace_alive() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let transfers = temp.path().join(".wisp").join("transfers");
+        let done = transfers.join("done");
+        let running = transfers.join("running");
+        std::fs::create_dir_all(&done)?;
+        std::fs::create_dir_all(&running)?;
+
+        {
+            let mut guard = RecordDirGuard::new(done.clone());
+            guard.mark_for_delete();
+        }
+
+        assert!(!done.exists());
+        assert!(
+            running.exists(),
+            "a transfer still running into the same folder must keep its record"
+        );
+        assert!(transfers.exists(), "...and the workspace around it");
+        Ok(())
+    }
+
+    #[test]
+    fn pruning_leaves_alone_a_directory_that_is_not_our_workspace() -> Result<()> {
+        // The guard is handed a path; if one ever points somewhere unexpected,
+        // emptiness must not be enough to delete a user's own directory.
+        let temp = tempfile::tempdir()?;
+        let parent = temp.path().join("not-ours");
+        let dir = parent.join("abc");
+        std::fs::create_dir_all(&dir)?;
+
+        {
+            let mut guard = RecordDirGuard::new(dir.clone());
+            guard.mark_for_delete();
+        }
+
+        assert!(!dir.exists(), "the record dir itself is still removed");
+        assert!(
+            parent.exists(),
+            "a parent that is not our `transfers` dir must be left alone"
         );
         Ok(())
     }

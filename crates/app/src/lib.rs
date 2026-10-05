@@ -13,7 +13,7 @@ pub use blob_dispatcher::BlobDispatcher;
 pub use error::{AppError, UserFacingError, UserFacingErrorKind, from_anyhow_error};
 pub use receiver::{
     AcceptedDestinations, OfferDecision, ReceiverEvent, ReceiverLifecycle, ReceiverService,
-    ReceiverSnapshot,
+    ReceiverSnapshot, STALE_TRANSFER_RECORD_TTL,
 };
 pub use send::{SendDestination, SendDraft, SendRun, SendSession, SendSessionOutcome};
 pub use types::*;
