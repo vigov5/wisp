@@ -26,7 +26,7 @@ scan.
 The interface is English by default, with Vietnamese one row away in
 *Settings → Language*. Both are compiled in; see `i18n.rs`.
 
-Not included: sending, identity export/import, the connection test, and a
+Not included: identity export/import, the connection test, and a
 background/boot service.
 
 ## Why not SDL2
@@ -258,14 +258,53 @@ codes follow Xbox *positions* while the shell is silkscreened Nintendo-style.
 The button printed "A" therefore sends `BTN_B`. Mapping by kernel name would
 swap confirm and cancel; `input.rs` maps by silkscreen instead.
 
+## Verified on hardware
+
+All of it now runs on a TG4040 on stock firmware, launched from the Apps menu
+like any other app. Numbers below were measured on the device, not estimated.
+
+| | |
+| --- | --- |
+| Receive | 351 MB from a laptop in 4 min 30 s — **1.30 MB/s** |
+| Receive, over the handheld's own hotspot | ~0.95 MB/s |
+| Offer reaching the screen | **6-7 ms** after the sender's offer lands |
+| Re-receiving a file already on the card | 440 MB adopted in **7 s**, nothing fetched |
+| Send | handheld to a desktop, over LAN |
+| Memory during a 1.4 GB receive | 785 MB of 998 MB still available |
+
+The launcher manifest round-trips: MainUI lists the app from `pak/config.json`.
+
+Speed is the radio, not the code. The XR819 is 2.4 GHz only, and a healthy
+link here reads -52 dBm at 54-58 MBit/s — while `dmesg` fills with
+`[TXRX_WRN] drop=…` under a sustained stream. Writes land on a `sync`-mounted
+FAT32 card, so `irq/364-sunxi-m` takes a third of a core during a transfer.
+
 ## Still unverified
 
-Everything above was exercised on hardware, including `fb.rs` opening the real
-framebuffer and its output being read back and inspected. What has *not* run on
-the device yet:
+* the LAN TCP blob path failing *mid-collection*, which should fall back to
+  QUIC rather than end the transfer — the fallback has not yet been provoked on
+  a device
+* QR pairing scanned by a real phone camera, as opposed to the payload being
+  decoded from a screenshot
 
-* the app itself — `ring` needs an aarch64 C compiler, so the full binary has
-  not been cross-compiled (the framebuffer and input modules were, and ran)
-* whether MainUI lists the app from `pak/config.json` (the schema was copied
-  from the stock apps on the device, but not yet round-tripped)
-* a real transfer: throughput, and whether 998 MB of RAM is comfortable
+## Getting files onto the device
+
+Worth writing down, because three obvious routes do not work:
+
+* **SFTP** — the device refuses every open-for-write with `ENOENT`, including
+  to `/tmp`. `scp` inherits this on OpenSSH 9+, which uses the SFTP subsystem;
+  `scp -O` forces the older protocol and avoids it.
+* **An SSH exec channel** (`cat > file`) — fine for small files, but a
+  sustained write kills the channel and the session with it.
+* **The device fetching over HTTP** — works, but only if nothing on the serving
+  machine's side blocks inbound connections.
+
+What does work is the device listening and the other end connecting out:
+
+```sh
+ssh root@<device> "setsid nohup sh -c 'nc -l -p 9099 >> /tmp/x' >/dev/null 2>&1 &"
+# then connect to <device>:9099 and stream
+```
+
+12 MB goes across in one round. The difference is that retransmission stays in
+TCP instead of riding under an SSH channel that dies with the first stall.
