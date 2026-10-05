@@ -1225,6 +1225,12 @@ where
 
     loop {
         tokio::select! {
+            // `biased`: the download speaks for the data, and the data is what
+            // decides the outcome. The sender closes the connection as soon as
+            // it has served the last byte, so an unbiased select hands a
+            // finished transfer to the control-stream arm — which reads the
+            // close as a cancellation — on roughly half the runs.
+            biased;
             item = download.events_mut().next() => match item {
                 Some(BlobDownloadUpdate::Progress { bytes_received: offset }) => {
                     let now = std::time::Instant::now();
@@ -1300,6 +1306,13 @@ where
                 // a cancelled transfer; reporting it as `receive failed` told
                 // the user something broke when nothing did.
                 Err(error) if crate::transfer::error::is_graceful_peer_close(&error) => {
+                    // Every byte may already be here: the sender closes the
+                    // moment it has served the last one, and that close can
+                    // reach us before our own `Done` event does. Ask the
+                    // download before calling a finished transfer cancelled.
+                    if completed_behind_a_closed_control(download).await {
+                        return Ok((TransferOutcome::Completed, tracker));
+                    }
                     download.abort();
                     save_pending_progress_best_effort(&checkpoint, record, record_dir).await;
                     return Ok((
@@ -1376,6 +1389,36 @@ where
         _ => None,
     }
 }
+
+/// Did the download already finish, behind a control stream that just closed?
+///
+/// Mirror of [`cancel_behind_a_failed_download`]: that one asks the control
+/// stream to explain a failed download, this one asks the download to explain a
+/// closed control stream. Both exist because the two channels carry news of the
+/// same event and either can arrive first.
+///
+/// Drains pending progress — those are only accounting — and reports whether
+/// `Done` was among them.
+async fn completed_behind_a_closed_control<D>(download: &mut D) -> bool
+where
+    D: BlobDownloadControl,
+{
+    let deadline = tokio::time::Instant::now() + DOWNLOAD_COMPLETION_GRACE;
+    loop {
+        match tokio::time::timeout_at(deadline, download.events_mut().next()).await {
+            Ok(Some(BlobDownloadUpdate::Done)) => return true,
+            Ok(Some(BlobDownloadUpdate::Progress { .. })) => continue,
+            // Failed, or the stream ended: the close stands for what it is.
+            Ok(_) | Err(_) => return false,
+        }
+    }
+}
+
+/// How long a closed control stream waits for the download to say it finished.
+///
+/// The two are racing events on one machine, not a network round trip, so this
+/// only has to cover the scheduling gap between them.
+const DOWNLOAD_COMPLETION_GRACE: Duration = Duration::from_millis(400);
 
 /// A control message arriving while the offer card is still on screen.
 ///
@@ -1553,10 +1596,13 @@ async fn resolve_expected_destination(
     match ensure_destination_available(out_dir, &destination).await {
         Ok(()) => Ok(destination),
         Err(super::path::TransferPathError::DestinationExists { path })
-            if resume_record
-                .map(|record| record.exported_files.contains(transfer_path))
-                .unwrap_or(false)
-                && path == destination =>
+            if path == destination
+                && match resume_record {
+                    Some(record) => {
+                        already_written_by_this_transfer(record, transfer_path, &destination).await
+                    }
+                    None => false,
+                } =>
         {
             Ok(destination)
         }
@@ -1578,6 +1624,47 @@ async fn resolve_expected_destination(
         },
         Err(error) => Err(error.into()),
     }
+}
+
+/// Is `destination` a file this very transfer already finished writing?
+///
+/// `exported_files` is only persisted once the whole collection has been
+/// verified, so a session that dies partway leaves finished files on disk with
+/// nothing in the record to show for them. The retry then sees an occupied
+/// destination, has no evidence it is ours, and the `Rename` policy writes
+/// `name (1)` beside it — three attempts at one 5-file collection left three
+/// copies of each finished file on the card, and re-fetched 684 MB that was
+/// already there.
+///
+/// Size is the same completeness test the post-stream verification uses, and
+/// this is only consulted when a resume record matched this collection hash,
+/// manifest and output dir, so a file of exactly the manifest's size at exactly
+/// the path we are about to write can only be our own earlier attempt.
+async fn already_written_by_this_transfer(
+    record: &TransferRecord,
+    transfer_path: &str,
+    destination: &Path,
+) -> bool {
+    if record.exported_files.contains(transfer_path) {
+        return true;
+    }
+    let Some(expected) = manifest_file_size(&record.manifest, transfer_path) else {
+        return false;
+    };
+    matches!(
+        fs::metadata(destination).await,
+        Ok(metadata) if metadata.is_file() && metadata.len() == expected
+    )
+}
+
+fn manifest_file_size(
+    manifest: &protocol_message::TransferManifest,
+    transfer_path: &str,
+) -> Option<u64> {
+    manifest.items.iter().find_map(|item| match item {
+        protocol_message::ManifestItem::File { path, size } if path == transfer_path => Some(*size),
+        _ => None,
+    })
 }
 
 fn load_resume_record(
@@ -2117,6 +2204,86 @@ mod tests {
         );
     }
 
+    /// Both channels carry news of the same moment, and the close usually
+    /// arrives first: the sender shuts the connection the instant it has served
+    /// the last byte. Before `biased`, an unbiased select handed that to the
+    /// cancel arm about half the time — so a transfer whose every byte had
+    /// landed reported itself cancelled, and the user watched a finished
+    /// 1.4 GB receive sit at 100% and then fail.
+    #[tokio::test]
+    async fn a_close_racing_the_last_byte_completes_rather_than_cancels() {
+        let plan = transfer_plan();
+        let (mut download, events_tx) = FakeDownload::new();
+        events_tx
+            .send(BlobDownloadUpdate::Done)
+            .expect("stream is open");
+        let (mut progress_send, _progress_peer) = duplex(8192);
+        let mut control_recv = PeerClosedControlStream::session_complete();
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+        let mut record = record_with_exported(&[]);
+
+        let (outcome, _tracker) = do_transfer(
+            "session-1",
+            &plan,
+            &mut download,
+            &mut progress_send,
+            &mut control_recv,
+            &mut cancel_rx,
+            &None,
+            &mut record,
+            &std::env::temp_dir(),
+            0,
+        )
+        .await
+        .expect("every byte arrived; this is a completed transfer");
+
+        assert!(
+            matches!(outcome, TransferOutcome::Completed),
+            "expected Completed, got {outcome:?}"
+        );
+        assert!(
+            !download.was_aborted(),
+            "a download that finished must not be aborted"
+        );
+    }
+
+    /// The same race the other way round: the close is seen in an iteration
+    /// where `Done` has not been queued yet, so `biased` alone cannot help.
+    /// The close arm has to ask the download before believing itself.
+    #[tokio::test]
+    async fn a_close_just_before_the_done_event_still_completes() {
+        let plan = transfer_plan();
+        let (mut download, events_tx) = FakeDownload::new();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let _ = events_tx.send(BlobDownloadUpdate::Done);
+        });
+        let (mut progress_send, _progress_peer) = duplex(8192);
+        let mut control_recv = PeerClosedControlStream::session_complete();
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+        let mut record = record_with_exported(&[]);
+
+        let (outcome, _tracker) = do_transfer(
+            "session-1",
+            &plan,
+            &mut download,
+            &mut progress_send,
+            &mut control_recv,
+            &mut cancel_rx,
+            &None,
+            &mut record,
+            &std::env::temp_dir(),
+            0,
+        )
+        .await
+        .expect("the download finished inside the grace window");
+
+        assert!(
+            matches!(outcome, TransferOutcome::Completed),
+            "expected Completed, got {outcome:?}"
+        );
+    }
+
     /// Control for the test above: the same harness reaches the terminal arms,
     /// so the failure there is the `None` branch and not a broken fake.
     #[tokio::test]
@@ -2218,6 +2385,67 @@ mod tests {
                 .get("remaining.txt")
                 .map(|file| file.destination.as_path()),
             Some(out.path().join("remaining.txt").as_path())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_retry_adopts_a_file_the_previous_attempt_finished() {
+        // The previous attempt streamed this file to its destination and died
+        // before the post-collection verification wrote `exported_files`, so
+        // the record says nothing about it. Renaming here is what left three
+        // copies of each finished game on a handheld's card, and re-fetched
+        // what was already there.
+        let out = tempfile::tempdir().unwrap();
+        std::fs::write(out.path().join("game.chd"), b"12345").unwrap();
+        let manifest = manifest_with(&[("game.chd", 5)]);
+        let mut record = record_with_exported(&[]);
+        record.manifest = TransferManifest {
+            items: vec![ManifestItem::File {
+                path: "game.chd".to_owned(),
+                size: 5,
+            }],
+        };
+
+        let expected =
+            build_expected_files(&manifest, out.path(), ConflictPolicy::Rename, Some(&record))
+                .await
+                .unwrap();
+
+        assert_eq!(
+            expected
+                .get("game.chd")
+                .map(|file| file.destination.as_path()),
+            Some(out.path().join("game.chd").as_path()),
+            "a finished file must be adopted, not renamed to `game (1).chd`"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_retry_still_renames_a_file_whose_size_is_wrong() {
+        // Size is the completeness test; anything else at that path is not
+        // ours to overwrite, resume record or no resume record.
+        let out = tempfile::tempdir().unwrap();
+        std::fs::write(out.path().join("game.chd"), b"short").unwrap();
+        let manifest = manifest_with(&[("game.chd", 4096)]);
+        let mut record = record_with_exported(&[]);
+        record.manifest = TransferManifest {
+            items: vec![ManifestItem::File {
+                path: "game.chd".to_owned(),
+                size: 4096,
+            }],
+        };
+
+        let expected =
+            build_expected_files(&manifest, out.path(), ConflictPolicy::Rename, Some(&record))
+                .await
+                .unwrap();
+
+        assert_ne!(
+            expected
+                .get("game.chd")
+                .map(|file| file.destination.as_path()),
+            Some(out.path().join("game.chd").as_path()),
+            "a file that is not the one the manifest describes must still be renamed around"
         );
     }
 
