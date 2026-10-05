@@ -977,10 +977,20 @@ async fn do_handshake(
     let control_started = Instant::now();
     let offer_phase_result = tokio::select! {
         res = async {
+            info!(
+                target: "wisp_core::handshake::sender",
+                session_id,
+                "handshake step: opening bi-stream"
+            );
             let (mut send, mut recv) = connection
                 .open_bi()
                 .await
                 .map_err(|source| TransferError::other("opening bi-stream", source))?;
+            info!(
+                target: "wisp_core::handshake::sender",
+                session_id,
+                "handshake step: bi-stream open; writing Hello"
+            );
 
             let handler = run_offer_phase(
                 session_id,
@@ -1168,15 +1178,35 @@ where
 {
     let mut handler = protocol_sender::Sender::new(session_id.to_owned(), identity.clone());
     handler.send_hello(send).await?;
+    info!(
+        target: "wisp_core::handshake::sender",
+        session_id,
+        "handshake step: wrote Hello; awaiting receiver Hello"
+    );
     let peer_hello = handler.read_peer_hello(recv).await?;
+    info!(
+        target: "wisp_core::handshake::sender",
+        session_id,
+        "handshake step: read receiver Hello; writing Offer"
+    );
     handler
         .send_offer(send, manifest, collection_hash, inline_text)
         .await?;
+    info!(
+        target: "wisp_core::handshake::sender",
+        session_id,
+        "handshake step: wrote+flushed Offer; awaiting offer ack"
+    );
     // Wait for the receiver to confirm it actually read the offer before we
     // declare "waiting for decision". A large offer that stalls in flight keeps
     // us in the handshake (under the caller's timeout / cancel) instead of
     // falsely reporting the receiver is deciding while it's stuck on connecting.
     handler.read_offer_ack(recv).await?;
+    info!(
+        target: "wisp_core::handshake::sender",
+        session_id,
+        "handshake step: offer ack read; handshake complete"
+    );
     events.emit(SenderEvent::WaitingForDecision {
         session_id: session_id.to_owned(),
         receiver_device_name: peer_hello.identity.device_name,

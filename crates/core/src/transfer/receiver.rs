@@ -991,12 +991,23 @@ async fn do_handshake(
     event_tx: &Option<mpsc::UnboundedSender<ReceiverEvent>>,
     cancel_rx: &mut watch::Receiver<bool>,
 ) -> Result<HandshakeResult> {
+    let remote_id = conn.remote_id();
     tokio::select! {
         res = async {
+            info!(
+                target: "wisp_core::handshake::receiver",
+                %remote_id,
+                "handshake step: awaiting accept_bi"
+            );
             let (mut send, mut recv) = tokio::time::timeout(HANDSHAKE_STEP_TIMEOUT, conn.accept_bi())
                 .await
                 .map_err(|source| TransferError::other("handshake stream timeout", source))?
                 .map_err(|source| TransferError::other("accepting bi-stream", source))?;
+            info!(
+                target: "wisp_core::handshake::receiver",
+                %remote_id,
+                "handshake step: accept_bi ok; awaiting sender Hello"
+            );
             let hello = match tokio::time::timeout(HANDSHAKE_STEP_TIMEOUT, protocol_wire::read_sender_message(&mut recv))
                 .await
                 .map_err(|_| TransferError::timeout("waiting for sender hello"))??
@@ -1014,6 +1025,12 @@ async fn do_handshake(
                     .into())
                 }
             };
+            info!(
+                target: "wisp_core::handshake::receiver",
+                %remote_id,
+                session_id = %hello.session_id,
+                "handshake step: read sender Hello; writing receiver Hello"
+            );
             protocol_wire::write_receiver_message(&mut send, &protocol_message::ReceiverMessage::Hello(protocol_message::Hello {
                 version: protocol_message::PROTOCOL_VERSION,
                 session_id: hello.session_id.clone(),
@@ -1026,6 +1043,11 @@ async fn do_handshake(
                     ephemeral: false,
                 }
             })).await?;
+            info!(
+                target: "wisp_core::handshake::receiver",
+                %remote_id,
+                "handshake step: wrote receiver Hello; awaiting sender Offer"
+            );
             // The sender is now known (Hello carries its identity). Surface it
             // immediately so the receiver UI leaves the idle/QR screen for a
             // "connecting from <X>" screen while the Offer is in flight.
@@ -1044,7 +1066,14 @@ async fn do_handshake(
                 .await
                 .map_err(|_| TransferError::timeout("sender connected but never sent the transfer offer"))??
             {
-                protocol_message::SenderMessage::Offer(o) => o,
+                protocol_message::SenderMessage::Offer(o) => {
+                    info!(
+                        target: "wisp_core::handshake::receiver",
+                        %remote_id,
+                        "handshake step: read sender Offer; handshake complete"
+                    );
+                    o
+                }
                 protocol_message::SenderMessage::Cancel(c) => {
                     return Ok(HandshakeResult::Cancelled(TransferOutcome::from_remote_cancel(c, &hello.session_id)?))
                 }
