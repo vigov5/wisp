@@ -188,10 +188,13 @@ jobs:
             -exec mv {} release-dist/ \;
           ls -lh release-dist
 
+      # The Flutter release owns the body. Both workflows attach to the same
+      # release, and asking for generated notes here appends a second copy of
+      # them to whatever is already there.
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
           files: release-dist/*
-          generate_release_notes: true
+          generate_release_notes: false
           draft: false
           prerelease: false
