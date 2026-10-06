@@ -12,6 +12,11 @@ import '../../theme/wisp_theme.dart';
 /// installed Wisp can find the "other half" they need on their computer.
 const _desktopDownloadUrl = 'https://github.com/vigov5/wisp/releases';
 
+/// The browser build. The other half of the same answer: when the device at
+/// the far end can't install anything — a work laptop, someone else's machine
+/// — it can still receive from a tab.
+const _webAppUrl = 'https://web.wisp.mooo.com';
+
 class AppVersionText extends StatefulWidget {
   const AppVersionText({super.key});
 
@@ -21,7 +26,8 @@ class AppVersionText extends StatefulWidget {
 
 class _AppVersionTextState extends State<AppVersionText> {
   String? _version;
-  TapGestureRecognizer? _tapRecognizer;
+  TapGestureRecognizer? _desktopRecognizer;
+  TapGestureRecognizer? _webRecognizer;
 
   @override
   void initState() {
@@ -35,15 +41,13 @@ class _AppVersionTextState extends State<AppVersionText> {
 
   @override
   void dispose() {
-    _tapRecognizer?.dispose();
+    _desktopRecognizer?.dispose();
+    _webRecognizer?.dispose();
     super.dispose();
   }
 
-  Future<void> _openDesktopDownload() async {
-    await launchUrl(
-      Uri.parse(_desktopDownloadUrl),
-      mode: LaunchMode.externalApplication,
-    );
+  Future<void> _open(String url) async {
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
   @override
@@ -57,14 +61,23 @@ class _AppVersionTextState extends State<AppVersionText> {
       color: context.wc.muted,
     );
 
-    // Desktop users already have the desktop app — only mobile needs the link.
+    // Desktop users already have the desktop app, and the web app is for
+    // devices that can't install one — neither link earns its space here.
     final isMobile = Platform.isAndroid || Platform.isIOS;
     if (!isMobile) {
       return Text(v, style: baseStyle);
     }
 
-    _tapRecognizer ??= TapGestureRecognizer()..onTap = _openDesktopDownload;
+    final linkStyle = baseStyle.copyWith(
+      color: context.wc.accentFg,
+      fontWeight: FontWeight.w600,
+    );
+    _desktopRecognizer ??= TapGestureRecognizer()
+      ..onTap = () => _open(_desktopDownloadUrl);
+    _webRecognizer ??= TapGestureRecognizer()..onTap = () => _open(_webAppUrl);
 
+    // One line: version, then the desktop build, then the browser one. It
+    // wraps on its own if a narrow screen or a large text scale needs it to.
     return Text.rich(
       TextSpan(
         style: baseStyle,
@@ -72,11 +85,25 @@ class _AppVersionTextState extends State<AppVersionText> {
           TextSpan(text: '$v  ·  '),
           TextSpan(
             text: 'Get Wisp for desktop ↗',
-            style: baseStyle.copyWith(
-              color: context.wc.accentFg,
-              fontWeight: FontWeight.w600,
+            style: linkStyle,
+            recognizer: _desktopRecognizer,
+          ),
+          const TextSpan(text: '  ·  '),
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 3),
+              child: Icon(
+                Icons.language_rounded,
+                size: 12,
+                color: context.wc.accentFg,
+              ),
             ),
-            recognizer: _tapRecognizer,
+          ),
+          TextSpan(
+            text: 'Wisp Web ↗',
+            style: linkStyle,
+            recognizer: _webRecognizer,
           ),
         ],
       ),

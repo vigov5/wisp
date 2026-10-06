@@ -4,6 +4,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../theme/wisp_theme.dart';
 import 'widgets/app_version_text.dart';
+import 'widgets/receiver_cache_banner.dart';
 
 class TitleBarShell extends StatelessWidget {
   const TitleBarShell({super.key, required this.child});
@@ -42,9 +43,18 @@ class TitleBarShell extends StatelessWidget {
             top: false,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: const AppVersionText(),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: const [
+                  // Only visible once the cache is actually oversized, so the
+                  // normal footer is still just the one version line.
+                  ReceiverCacheBanner(),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: AppVersionText(),
+                  ),
+                ],
               ),
             ),
           ),

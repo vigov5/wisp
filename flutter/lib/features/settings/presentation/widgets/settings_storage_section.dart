@@ -1,20 +1,20 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../app/app_bootstrap.dart';
 import '../../../../theme/wisp_theme.dart';
+import '../../application/receiver_cache.dart';
 
 /// Settings → Storage section.
 ///
-/// Shows the receiver cache size with a Clear button.
+/// Shows the receiver cache size with a Clear button. The path, the walk and
+/// the delete come from `receiver_cache.dart`, which the startup warning above
+/// the footer also reads.
 ///
-/// On Android, Rust always writes its temporary cache to
-/// `<tmpDir>/Download/Wisp/.wisp/` regardless of the user's download root
-/// or SAF configuration, matching the logic in `app_bootstrap.dart`.
-/// On other platforms the cache lives at `<downloadRoot>/.wisp/`.
+/// The size shown follows the *draft* download root — the folder currently in
+/// the form — so picking a different one updates it before Save. The shared
+/// notifier tracks the saved root instead, and is refreshed after a clear.
 class SettingsStorageSection extends ConsumerStatefulWidget {
   const SettingsStorageSection({super.key, required this.downloadRoot});
 
@@ -50,23 +50,10 @@ class _SettingsStorageSectionState
   }
 
   Future<void> _resolveAndRefresh() async {
-    final dir = await _computeCacheDir();
+    final dir = await resolveReceiverCacheRoot(widget.downloadRoot);
     if (!mounted) return;
     setState(() => _effectiveCacheDir = dir);
     await _refreshCacheSize();
-  }
-
-  /// Returns the directory whose `.wisp/` sub-directory holds the cache,
-  /// or null if it cannot be determined (e.g. non-Android SAF URI).
-  Future<String?> _computeCacheDir() async {
-    // Delegates to the same function used by app_bootstrap.dart so the path
-    // is always in sync — no duplicated '/Download/Wisp' suffix here.
-    final androidDir = await resolveAndroidReceiveCacheDir();
-    if (androidDir != null) return androidDir;
-    // SAF URIs are Android-only; on other platforms fall back to downloadRoot.
-    if (widget.downloadRoot.startsWith('content://')) return null;
-    final root = widget.downloadRoot.trim();
-    return root.isEmpty ? null : root;
   }
 
   Future<void> _refreshCacheSize() async {
@@ -75,9 +62,7 @@ class _SettingsStorageSectionState
       setState(() => _cacheSizeBytes = null);
       return;
     }
-    final size = await _walkDirSize(
-      Directory('$dir${Platform.pathSeparator}.wisp'),
-    );
+    final size = await receiverCacheSizeBytes(dir);
     if (!mounted) return;
     setState(() => _cacheSizeBytes = size);
   }
@@ -87,11 +72,8 @@ class _SettingsStorageSectionState
     final dir = _effectiveCacheDir;
     if (dir == null) return;
     setState(() => _clearing = true);
-    final cacheDir = Directory('$dir${Platform.pathSeparator}.wisp');
     try {
-      if (await cacheDir.exists()) {
-        await cacheDir.delete(recursive: true);
-      }
+      await deleteReceiverCache(dir);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -108,6 +90,10 @@ class _SettingsStorageSectionState
           context,
         ).showSnackBar(const SnackBar(content: Text('Receiver cache cleared')));
       }
+      // The startup warning measures the saved root on its own; tell it the
+      // bytes are gone so it doesn't keep warning about a cache that isn't
+      // there any more.
+      unawaited(ref.read(receiverCacheProvider.notifier).refresh());
     }
   }
 
@@ -117,7 +103,7 @@ class _SettingsStorageSectionState
         _effectiveCacheDir != null && (_cacheSizeBytes ?? 0) > 0 && !_clearing;
     final sizeText = _effectiveCacheDir == null
         ? '—'
-        : (_cacheSizeBytes == null ? '…' : _formatBytes(_cacheSizeBytes!));
+        : (_cacheSizeBytes == null ? '…' : formatCacheBytes(_cacheSizeBytes!));
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -175,38 +161,4 @@ class _SettingsStorageSectionState
       ],
     );
   }
-}
-
-Future<int> _walkDirSize(Directory dir) async {
-  if (!await dir.exists()) return 0;
-  var total = 0;
-  try {
-    await for (final entity in dir.list(recursive: true, followLinks: false)) {
-      if (entity is File) {
-        try {
-          total += await entity.length();
-        } catch (_) {
-          // best-effort: file deleted mid-walk, permission denied
-        }
-      }
-    }
-  } catch (_) {
-    // Best-effort: top-level list error
-  }
-  return total;
-}
-
-String _formatBytes(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  var value = bytes / 1024.0;
-  var idx = 0;
-  while (value >= 1024 && idx < units.length - 1) {
-    value /= 1024;
-    idx++;
-  }
-  final fixed = value < 10
-      ? value.toStringAsFixed(1)
-      : value.toStringAsFixed(0);
-  return '$fixed ${units[idx]}';
 }
