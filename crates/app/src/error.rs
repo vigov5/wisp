@@ -540,6 +540,20 @@ impl From<TransferError> for UserFacingError {
             // all — the actual error was the `#[source]` under the one that
             // got printed. [`format_error_chain`] has been sitting in this
             // file the whole time; this arm just did not call it.
+            // ... and a transport death that happened to be wrapped in
+            // context is still a transport death.  The receiver showed
+            //
+            //   Transfer failed
+            //   running receiver session: reading message length:
+            //   connection lost: connection lost: timed out
+            //
+            // for the same break the sender was calling "Connection lost",
+            // because the wrapper hid a `Protocol(FrameRead)` that maps to
+            // ConnectionLost perfectly well one level down.  One event, two
+            // screens, one description.
+            TransferError::Other { source, .. } if transport_failure_in_chain(source.as_ref()) => {
+                UserFacingError::from_kind(UserFacingErrorKind::ConnectionLost)
+            }
             TransferError::Other { context, source } => UserFacingError::new(
                 UserFacingErrorKind::Other,
                 "Transfer failed",
@@ -590,6 +604,47 @@ fn map_rendezvous_api_status(status: u16) -> UserFacingError {
 /// Checking only the top level (which is what every mapper except
 /// [`map_frame_io_error`] used to do) misses it in almost every real case and
 /// silently degrades to the fallback.
+/// Whether a failure carries the transport dying somewhere under it.
+///
+/// Used for the context-wrapper arm, which otherwise prints the raw chain at
+/// the user: every one of these shapes maps to `ConnectionLost` when it
+/// arrives unwrapped, so being wrapped must not change the answer.
+fn transport_failure_in_chain(error: &(dyn StdError + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(err) = current {
+        if matches!(
+            err.downcast_ref::<TransferError>(),
+            Some(TransferError::ConnectionClosed { .. } | TransferError::Timeout { .. })
+        ) {
+            return true;
+        }
+        // A frame read or write that failed means the stream broke under it —
+        // the same reasoning `map_frame_io_error` applies to an unwrapped one.
+        if matches!(
+            err.downcast_ref::<ProtocolError>(),
+            Some(ProtocolError::FrameRead { .. } | ProtocolError::FrameWrite { .. })
+        ) {
+            return true;
+        }
+        if let Some(io_error) = err.downcast_ref::<io::Error>()
+            && matches!(
+                io_error.kind(),
+                io::ErrorKind::ConnectionAborted
+                    | io::ErrorKind::ConnectionRefused
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::TimedOut
+                    | io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::NotConnected
+            )
+        {
+            return true;
+        }
+        current = err.source();
+    }
+    false
+}
+
 fn io_error_in_chain<'a>(error: &'a (dyn StdError + 'static)) -> Option<&'a io::Error> {
     let mut current = Some(error);
     while let Some(err) = current {
@@ -671,10 +726,24 @@ fn map_io_kind(kind: io::ErrorKind) -> UserFacingError {
 }
 
 pub fn format_error_chain(error: &(dyn StdError + 'static)) -> String {
-    let mut parts = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
     let mut current: Option<&(dyn StdError + 'static)> = Some(error);
     while let Some(err) = current {
-        parts.push(err.to_string());
+        let text = err.to_string();
+        // Several variants interpolate `{source}` into their own Display, so
+        // walking the chain under one of those prints its child a second
+        // time.  That is where
+        //
+        //   reading message length: connection lost: connection lost: timed out
+        //
+        // came from: `FrameRead` already rendered "connection lost" as part
+        // of itself.  Skip a link the previous one has already said.
+        if !parts
+            .last()
+            .is_some_and(|previous| previous.ends_with(&text))
+        {
+            parts.push(text);
+        }
         current = err.source();
     }
     parts.join(": ")
@@ -1093,6 +1162,78 @@ mod tests {
             .kind(),
             UserFacingErrorKind::Internal
         );
+    }
+
+    /// Rebuilds what the phone actually showed after a 1.3 GB receive died:
+    ///
+    ///   Transfer failed
+    ///   running receiver session: reading message length: connection lost:
+    ///   connection lost: timed out
+    ///
+    /// while the desktop at the other end of the same break said "Connection
+    /// lost". The wrapper is the only difference between them.
+    fn receive_died_mid_session() -> TransferError {
+        use iroh::endpoint::{ConnectionError, ReadError};
+
+        let frame_read = ProtocolError::FrameRead {
+            context: "reading message length",
+            source: Box::new(io::Error::new(
+                io::ErrorKind::NotConnected,
+                ReadError::ConnectionLost(ConnectionError::TimedOut),
+            )),
+        };
+        TransferError::Other {
+            context: "running receiver session",
+            source: Box::new(TransferError::Protocol(frame_read)),
+        }
+    }
+
+    #[test]
+    fn a_wrapped_transport_death_reads_like_an_unwrapped_one() {
+        let wrapped = UserFacingError::from(receive_died_mid_session());
+        let direct = UserFacingError::from(TransferError::ConnectionClosed {
+            context: "reading message length",
+        });
+
+        assert_eq!(wrapped.kind(), UserFacingErrorKind::ConnectionLost);
+        assert_eq!(wrapped.title(), direct.title());
+        assert_eq!(wrapped.message(), direct.message());
+        assert_eq!(wrapped.recovery(), direct.recovery());
+    }
+
+    #[test]
+    fn a_context_wrapper_with_no_transport_failure_still_shows_its_chain() {
+        let error = TransferError::Other {
+            context: "saving record",
+            source: Box::new(io::Error::new(
+                io::ErrorKind::StorageFull,
+                "no space left on device",
+            )),
+        };
+        let user_facing = UserFacingError::from(error);
+
+        assert_eq!(user_facing.title(), "Transfer failed");
+        assert!(
+            user_facing.message().contains("saving record"),
+            "the context is the only clue there is, got {:?}",
+            user_facing.message(),
+        );
+    }
+
+    #[test]
+    fn the_chain_does_not_say_the_same_thing_twice() {
+        let error = receive_died_mid_session();
+        let TransferError::Other { source, .. } = &error else {
+            panic!("expected a context wrapper");
+        };
+        let chain = format_error_chain(source.as_ref());
+
+        assert_eq!(
+            chain.matches("connection lost").count(),
+            1,
+            "a layer that renders its own source must not be walked twice, got {chain:?}",
+        );
+        assert!(chain.ends_with("timed out"), "got {chain:?}");
     }
 
     #[test]
