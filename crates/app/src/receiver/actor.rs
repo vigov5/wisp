@@ -132,7 +132,12 @@ pub(super) async fn run_receiver_actor(
                 };
                 registration_running = false;
                 if runtime
-                    .apply_registration_outcome(outcome, &pairing_tx, &event_tx)
+                    .apply_registration_outcome(
+                        outcome,
+                        registration_failures,
+                        &pairing_tx,
+                        &event_tx,
+                    )
                     .await
                 {
                     registration_failures = 0;

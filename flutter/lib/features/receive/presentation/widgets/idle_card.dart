@@ -404,10 +404,12 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
               ),
             ],
           ),
-          // Stale hint banner — only shown when the rendezvous server has
-          // told us the code is no longer claimable.  Tapping refreshes;
-          // we leave the existing code visible underneath so the user has
-          // context, but the banner makes the failure mode obvious.
+          // Shown when the code can no longer be confirmed: the server
+          // said it was claimed, or it could not be reached at all. Tapping
+          // refreshes; the existing code stays visible underneath so the
+          // user has context, but the banner makes the failure mode obvious.
+          // The copy covers both causes — naming the wrong one is worse
+          // than naming neither.
           if (showStaleHint) ...[
             const SizedBox(height: 10),
             InkWell(
@@ -434,7 +436,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Code may have been used. Tap to refresh.',
+                        'This code cannot be confirmed right now. Tap to refresh.',
                         style: wispSans(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w500,

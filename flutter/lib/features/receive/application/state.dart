@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 enum ReceiverLifecycle { starting, ready, stopped, failed }
 
-enum ReceiverBadgePhase { unavailable, registering, ready }
+enum ReceiverBadgePhase { unavailable, registering, ready, localOnly }
 
 @immutable
 class ReceiverSnapshot {
@@ -110,6 +110,18 @@ class ReceiverBadgeState {
         phase: ReceiverBadgePhase.ready,
         label: 'Ready',
         color: const Color(0xFF49B36C),
+      );
+
+  /// Listening, but the pairing code on screen can no longer be confirmed
+  /// with the discovery server — it was claimed, or the server is out of
+  /// reach. Everything that doesn't need that server still works: the LAN,
+  /// the QR, a saved device. Green "Ready" would be a guess dressed as a
+  /// fact, so this says what is actually known.
+  const ReceiverBadgeState.localOnly()
+    : this._(
+        phase: ReceiverBadgePhase.localOnly,
+        label: 'Local only',
+        color: const Color(0xFFD4A824),
       );
 
   final ReceiverBadgePhase phase;

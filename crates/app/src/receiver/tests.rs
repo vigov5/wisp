@@ -240,6 +240,63 @@ fn the_registration_backoff_doubles_and_settles_at_two_minutes() {
     assert_eq!(registration_backoff_ticks(u32::MAX), 8);
 }
 
+/// One failed poll is a blip and must leave the screen alone. A second in a
+/// row means the code the badge is vouching for can no longer be confirmed,
+/// and saying "Ready" at that point is a guess dressed as a fact.
+#[tokio::test]
+async fn a_second_unreachable_poll_stops_vouching_for_the_code() -> AppResult<()> {
+    let Some(endpoint) = try_bind_endpoint().await? else {
+        return Ok(());
+    };
+    let mut runtime = ReceiverRuntime::new_for_test(test_config(), endpoint);
+
+    let registration = ReceiverRegistration {
+        code: "ABC123".to_owned(),
+        expires_at: "2999-01-01T00:00:00Z".to_owned(),
+    };
+    runtime.set_server_url_for_test(Some(
+        "http://127.0.0.1:1/__unreachable_test_host__".to_owned(),
+    ));
+    runtime.set_registration_for_test(Some(registration.clone()));
+
+    let (pairing_tx, mut pairing_rx) = watch::channel(PairingCodeState::Unavailable);
+    let (event_tx, _event_rx) = broadcast::channel::<ReceiverEvent>(8);
+    pairing_rx.borrow_and_update();
+
+    let first = runtime
+        .registration_job()
+        .expect("a server url is configured")
+        .run()
+        .await;
+    assert!(
+        !runtime
+            .apply_registration_outcome(first, 0, &pairing_tx, &event_tx)
+            .await
+    );
+    assert!(
+        !pairing_rx.has_changed().unwrap(),
+        "one unreachable poll must not move the badge",
+    );
+
+    let second = runtime
+        .registration_job()
+        .expect("a server url is configured")
+        .run()
+        .await;
+    assert!(
+        !runtime
+            .apply_registration_outcome(second, 1, &pairing_tx, &event_tx)
+            .await
+    );
+    assert!(pairing_rx.has_changed().unwrap(), "a run of them must",);
+    assert_eq!(
+        *pairing_rx.borrow_and_update(),
+        PairingCodeState::Stale(registration),
+        "the code stays on screen for context, flagged rather than claimed",
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_fresh_code_survives_a_maintenance_pass() -> AppResult<()> {
     // Regression for the "code rotates while sender still connecting" bug.
@@ -277,13 +334,14 @@ async fn a_fresh_code_survives_a_maintenance_pass() -> AppResult<()> {
         .await;
     assert_eq!(
         outcome,
-        RegistrationOutcome::Unchanged,
-        "an unreachable rendezvous server must not change the visible code"
+        RegistrationOutcome::Unreachable,
+        "a server that cannot be reached is not a server that said yes"
     );
     assert!(
-        runtime
-            .apply_registration_outcome(outcome, &pairing_tx, &event_tx)
-            .await
+        !runtime
+            .apply_registration_outcome(outcome, 0, &pairing_tx, &event_tx)
+            .await,
+        "an unreachable server is a failed attempt, so the backoff applies"
     );
 
     assert_eq!(

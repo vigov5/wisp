@@ -13,12 +13,16 @@ ReceiverIdleViewState receiverIdleViewState(Ref ref) {
   final snapshot = service.snapshot;
   final pairingCode = service.pairingCode;
 
+  // A code that is merely *present* is not a code that works: it can be one
+  // the server has already handed out, or one minted before the network went
+  // away. Only a confirmed code earns the green badge.
   final badge = switch (snapshot.lifecycle) {
     ReceiverLifecycle.starting => const ReceiverBadgeState.registering(),
-    ReceiverLifecycle.ready =>
-      pairingCode.isAvailable
-          ? const ReceiverBadgeState.ready()
-          : const ReceiverBadgeState.unavailable(),
+    ReceiverLifecycle.ready when !pairingCode.isAvailable =>
+      const ReceiverBadgeState.unavailable(),
+    ReceiverLifecycle.ready when pairingCode.isStale =>
+      const ReceiverBadgeState.localOnly(),
+    ReceiverLifecycle.ready => const ReceiverBadgeState.ready(),
     ReceiverLifecycle.stopped => const ReceiverBadgeState.unavailable(),
     ReceiverLifecycle.failed => const ReceiverBadgeState.unavailable(),
   };
