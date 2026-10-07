@@ -39,6 +39,9 @@ class ReceiverCacheBanner extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final cache = ref.watch(receiverCacheProvider);
     if (!cache.shouldWarn) return const SizedBox.shrink();
+    // The receiver is still using the folder; clearing it now would delete
+    // the transfer out from under itself.
+    final busy = ref.watch(receiverCacheBusyProvider);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -68,9 +71,12 @@ class ReceiverCacheBanner extends ConsumerWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  'Leftovers from transfers that already finished. Clearing '
-                  'them frees the space; files you received stay where they '
-                  'were saved.',
+                  busy
+                      ? 'Waiting for the transfer on screen to finish — '
+                            'clearing now would cancel it.'
+                      : 'Leftovers from earlier transfers. Clearing frees the '
+                            'space; files already saved stay where they are, '
+                            'but anything half-received loses its place.',
                   style: wispSans(
                     fontSize: 12,
                     fontWeight: FontWeight.w400,
@@ -80,7 +86,9 @@ class ReceiverCacheBanner extends ConsumerWidget {
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton(
-                  onPressed: cache.clearing ? null : () => _clean(context, ref),
+                  onPressed: cache.clearing || busy
+                      ? null
+                      : () => _clean(context, ref),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: _ink,
                     disabledForegroundColor: _ink.withValues(alpha: 0.4),

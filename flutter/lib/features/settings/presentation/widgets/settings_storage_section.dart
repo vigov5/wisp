@@ -31,9 +31,9 @@ class _SettingsStorageSectionState
   int? _cacheSizeBytes;
   bool _clearing = false;
 
-  /// The resolved directory that actually contains `.wisp/`.
+  /// Where the cache lives for the root currently in the form.
   /// Null means the path cannot be walked (will show '—').
-  String? _effectiveCacheDir;
+  ReceiverCacheLocation? _location;
 
   @override
   void initState() {
@@ -50,30 +50,30 @@ class _SettingsStorageSectionState
   }
 
   Future<void> _resolveAndRefresh() async {
-    final dir = await resolveReceiverCacheRoot(widget.downloadRoot);
+    final location = await resolveReceiverCacheLocation(widget.downloadRoot);
     if (!mounted) return;
-    setState(() => _effectiveCacheDir = dir);
+    setState(() => _location = location);
     await _refreshCacheSize();
   }
 
   Future<void> _refreshCacheSize() async {
-    final dir = _effectiveCacheDir;
-    if (dir == null) {
+    final location = _location;
+    if (location == null) {
       setState(() => _cacheSizeBytes = null);
       return;
     }
-    final size = await receiverCacheSizeBytes(dir);
+    final size = await receiverCacheSizeBytes(location);
     if (!mounted) return;
     setState(() => _cacheSizeBytes = size);
   }
 
   Future<void> _clearCache() async {
     if (_clearing) return;
-    final dir = _effectiveCacheDir;
-    if (dir == null) return;
+    final location = _location;
+    if (location == null) return;
     setState(() => _clearing = true);
     try {
-      await deleteReceiverCache(dir);
+      await deleteReceiverCache(location);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -99,9 +99,12 @@ class _SettingsStorageSectionState
 
   @override
   Widget build(BuildContext context) {
+    // Deleting the cache while the receiver is still using it would take
+    // the running transfer with it — see receiverCacheIsBusy.
+    final busy = ref.watch(receiverCacheBusyProvider);
     final canClear =
-        _effectiveCacheDir != null && (_cacheSizeBytes ?? 0) > 0 && !_clearing;
-    final sizeText = _effectiveCacheDir == null
+        _location != null && (_cacheSizeBytes ?? 0) > 0 && !_clearing && !busy;
+    final sizeText = _location == null
         ? '—'
         : (_cacheSizeBytes == null ? '…' : formatCacheBytes(_cacheSizeBytes!));
 
@@ -149,7 +152,11 @@ class _SettingsStorageSectionState
             onPressed: canClear ? _clearCache : null,
             icon: const Icon(Icons.cleaning_services_rounded, size: 18),
             label: Text(
-              _clearing ? 'Clearing…' : 'Clear',
+              _clearing
+                  ? 'Clearing…'
+                  : busy
+                  ? 'In use'
+                  : 'Clear',
               style: wispSans(fontSize: 13, fontWeight: FontWeight.w500),
             ),
             style: TextButton.styleFrom(

@@ -1,9 +1,19 @@
 import 'dart:io';
 
 import 'package:app/features/settings/application/receiver_cache.dart';
+import 'package:app/features/transfers/application/state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 String _join(String a, String b) => '$a${Platform.pathSeparator}$b';
+
+/// The desktop shape: the root is the user's save folder, so only `.wisp/`
+/// is ours.
+ReceiverCacheLocation _wispOnly(String root) =>
+    ReceiverCacheLocation(root: root, wholeRoot: false);
+
+/// The Android shape: the root is our own staging folder, so all of it is.
+ReceiverCacheLocation _wholeRoot(String root) =>
+    ReceiverCacheLocation(root: root, wholeRoot: true);
 
 void main() {
   late Directory root;
@@ -31,11 +41,27 @@ void main() {
         _join(root.path, 'holiday.jpg'),
       ).writeAsBytes(List.filled(5000, 1));
 
-      expect(await receiverCacheSizeBytes(root.path), 2148);
+      expect(await receiverCacheSizeBytes(_wispOnly(root.path)), 2148);
+    });
+
+    test('counts the whole staging folder where that is the cache', () async {
+      // Android stages received files in the root itself and only moves them
+      // into MediaStore at the end, so a file sitting next to `.wisp` is ours
+      // too — and it is the part that gets big.
+      await Directory(_join(root.path, '.wisp')).create(recursive: true);
+      await File(
+        _join(_join(root.path, '.wisp'), 'record.json'),
+      ).writeAsString('x' * 100);
+      await File(
+        _join(root.path, 'holiday.jpg'),
+      ).writeAsBytes(List.filled(5000, 1));
+
+      expect(await receiverCacheSizeBytes(_wholeRoot(root.path)), 5100);
+      expect(await receiverCacheSizeBytes(_wispOnly(root.path)), 100);
     });
 
     test('a cache that was never created is zero, not an error', () async {
-      expect(await receiverCacheSizeBytes(root.path), 0);
+      expect(await receiverCacheSizeBytes(_wispOnly(root.path)), 0);
     });
   });
 
@@ -47,14 +73,14 @@ void main() {
       final keep = File(_join(root.path, 'holiday.jpg'));
       await keep.writeAsBytes(List.filled(16, 1));
 
-      await deleteReceiverCache(root.path);
+      await deleteReceiverCache(_wispOnly(root.path));
 
       expect(await cache.exists(), isFalse);
       expect(await keep.exists(), isTrue);
     });
 
     test('deleting a cache that is not there is not an error', () async {
-      await deleteReceiverCache(root.path);
+      await deleteReceiverCache(_wispOnly(root.path));
       expect(await Directory(_join(root.path, '.wisp')).exists(), isFalse);
     });
   });
@@ -62,28 +88,50 @@ void main() {
   group('root resolution', () {
     test('a SAF uri cannot be walked', () async {
       expect(
-        await resolveReceiverCacheRoot('content://downloads/tree'),
+        await resolveReceiverCacheLocation('content://downloads/tree'),
         isNull,
       );
     });
 
     test('an empty root cannot be walked', () async {
-      expect(await resolveReceiverCacheRoot('   '), isNull);
+      expect(await resolveReceiverCacheLocation('   '), isNull);
     });
 
     test('a plain path is used as given, trimmed', () async {
-      expect(await resolveReceiverCacheRoot('  /srv/wisp '), '/srv/wisp');
+      final location = await resolveReceiverCacheLocation('  /srv/wisp ');
+      expect(location?.root, '/srv/wisp');
+      expect(location?.wholeRoot, isFalse);
+    });
+  });
+
+  group('busy', () {
+    test('idle and finished transfers leave the cache free to clear', () {
+      expect(receiverCacheIsBusy(TransferSessionPhase.idle), isFalse);
+      expect(receiverCacheIsBusy(TransferSessionPhase.cancelled), isFalse);
+      expect(receiverCacheIsBusy(TransferSessionPhase.failed), isFalse);
+    });
+
+    test('a live transfer holds it, and so does the finished screen', () {
+      // `completed` counts as busy: on Android the background save is still
+      // moving files out of the cache while that screen is up.
+      expect(receiverCacheIsBusy(TransferSessionPhase.connecting), isTrue);
+      expect(receiverCacheIsBusy(TransferSessionPhase.offerPending), isTrue);
+      expect(receiverCacheIsBusy(TransferSessionPhase.receiving), isTrue);
+      expect(receiverCacheIsBusy(TransferSessionPhase.completed), isTrue);
     });
   });
 
   group('warning threshold', () {
-    ReceiverCacheState sized(int bytes) =>
-        ReceiverCacheState(cacheRoot: '/x', sizeBytes: bytes, measured: true);
+    ReceiverCacheState sized(int bytes) => ReceiverCacheState(
+      location: _wispOnly('/x'),
+      sizeBytes: bytes,
+      measured: true,
+    );
 
     test('stays quiet until the cache is actually measured', () {
       expect(
-        const ReceiverCacheState(
-          cacheRoot: '/x',
+        ReceiverCacheState(
+          location: _wispOnly('/x'),
           sizeBytes: kReceiverCacheWarningBytes * 2,
         ).shouldWarn,
         isFalse,
