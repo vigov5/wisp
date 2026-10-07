@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use iroh::SecretKey;
 use tokio::sync::{broadcast, oneshot, watch};
@@ -81,6 +82,58 @@ async fn respond_to_offer_fails_without_pending_offer() -> AppResult<()> {
         .await
         .unwrap_err();
     assert!(matches!(error, AppError::NoPendingOffer));
+    service.shutdown().await?;
+    Ok(())
+}
+
+/// The actor is the only task that can put an incoming offer on screen, so a
+/// registration that stalls must not take it down with it.
+///
+/// A phone that switches Wi-Fi to mobile data mid-POST orphans the socket
+/// without failing it. While that ran on the actor, every other request
+/// queued behind it: the core still accepted an incoming offer and
+/// acknowledged it, so the sender sat in "waiting for confirmation" while the
+/// receiver showed nothing at all.
+#[tokio::test]
+async fn a_stalled_registration_leaves_the_actor_answering() -> AppResult<()> {
+    let Some(service) = try_start_service().await? else {
+        return Ok(());
+    };
+
+    // Accepts the connection and then says nothing for as long as the test
+    // holds it — the shape a half-dead network leaves behind.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind the black hole");
+    let addr = listener.local_addr().expect("black hole address");
+    let _black_hole = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+        }
+    });
+
+    let registration = service.ensure_registered(Some(format!("http://{addr}")));
+    tokio::pin!(registration);
+    tokio::select! {
+        result = &mut registration => panic!("the black hole answered: {result:?}"),
+        _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+    }
+
+    let answered = tokio::time::timeout(
+        Duration::from_secs(2),
+        service.respond_to_offer(OfferDecision::Decline),
+    )
+    .await;
+    assert!(
+        answered.is_ok(),
+        "the actor queued other work behind a stalled registration",
+    );
+    assert!(matches!(
+        answered.expect("answered in time").unwrap_err(),
+        AppError::NoPendingOffer
+    ));
+
     service.shutdown().await?;
     Ok(())
 }

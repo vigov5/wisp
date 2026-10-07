@@ -1,6 +1,7 @@
 use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use thiserror::Error;
 
 pub const DEFAULT_RENDEZVOUS_URL: &str = "https://rendezvous.wisp.mooo.com";
@@ -85,11 +86,27 @@ pub enum RendezvousError {
     },
 }
 
+/// Bounds on every rendezvous call.
+///
+/// `reqwest` applies neither by default, and the receiver registers from a
+/// phone that changes networks underneath it: a POST started on Wi-Fi and
+/// orphaned by a switch to mobile data never fails, it just stops. The actor
+/// waiting on it was then stuck for the rest of the session.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+
 impl RendezvousClient {
     pub fn new(base_url: String) -> Self {
+        let http = reqwest::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            // Only fails when the TLS backend cannot be initialised, which is
+            // not a reason to lose the client entirely.
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             base_url: base_url.trim_end_matches('/').to_owned(),
-            http: reqwest::Client::new(),
+            http,
         }
     }
 

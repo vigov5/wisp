@@ -103,8 +103,8 @@ impl ReceiverRuntime {
     }
 
     /// Test-only setters that bypass the rendezvous server.  Production
-    /// callers must go through `handle_setup` / `ensure_registered`, which
-    /// register via HTTP — those paths can't be hit in a unit test without a
+    /// callers must go through the registration command path, which
+    /// registers via HTTP — that can't be hit in a unit test without a
     /// running server.  These helpers let the unit tests build a runtime
     /// already in the "registered" state so they can exercise downstream
     /// logic (e.g. a [`RegistrationJob`]) in isolation.
@@ -163,19 +163,59 @@ impl ReceiverRuntime {
         }
     }
 
-    pub(super) async fn handle_setup(
+    /// Captures everything a Setup / EnsureRegistered needs, so the network
+    /// call itself can run off the actor task.
+    ///
+    /// The actor is single-threaded and is also the only thing that turns an
+    /// incoming connection into a card on screen. Registering inline meant a
+    /// POST that stalled — a phone switching Wi-Fi to mobile data orphans the
+    /// socket without failing it — took the whole receiver with it: the core
+    /// still accepted the offer and acknowledged it, so the sender sat in
+    /// "waiting for confirmation" while the receiver showed nothing at all,
+    /// not even "connecting from".
+    pub(super) fn begin_registration_command(
         &mut self,
         server_url: Option<String>,
+        kind: RegistrationCommandKind,
+    ) -> RegistrationCommand {
+        self.server_url = Some(resolve_server_url(server_url.as_deref()));
+        RegistrationCommand {
+            endpoint: self.endpoint.clone(),
+            server_url: self
+                .server_url
+                .clone()
+                .expect("server url was just resolved"),
+            was_active: self.advertising_active(),
+            kind,
+        }
+    }
+
+    /// The other half: publishes what the off-task attempt came back with.
+    ///
+    /// Everything here is local — the same tail both handlers always ran once
+    /// the network part was done.
+    pub(super) async fn finish_registration_command(
+        &mut self,
+        kind: RegistrationCommandKind,
+        was_active: bool,
+        result: AppResult<ReceiverRegistration>,
         pairing_tx: &watch::Sender<PairingCodeState>,
         event_tx: &broadcast::Sender<ReceiverEvent>,
     ) -> AppResult<ReceiverRegistration> {
-        self.server_url = Some(resolve_server_url(server_url.as_deref()));
-        let was_active = self.advertising_active();
-        let result = self.ensure_registered_with_current_server().await;
         match &result {
             Ok(registration) => {
+                self.registration = Some(registration.clone());
+                self.reconcile_advertising().await;
                 let _ = pairing_tx.send(PairingCodeState::Active(registration.clone()));
-                let _ = event_tx.send(ReceiverEvent::SetupCompleted(registration.clone()));
+                let event = match kind {
+                    RegistrationCommandKind::Setup => {
+                        ReceiverEvent::SetupCompleted(registration.clone())
+                    }
+                    RegistrationCommandKind::EnsureRegistered => {
+                        ReceiverEvent::RegistrationUpdated(registration.clone())
+                    }
+                };
+                let _ = event_tx.send(event);
             }
             Err(_) => {
                 self.reconcile_advertising().await;
@@ -184,47 +224,6 @@ impl ReceiverRuntime {
         }
         self.publish_discoverability_change_if_needed(was_active, event_tx);
         result
-    }
-
-    pub(super) async fn handle_ensure_registered(
-        &mut self,
-        server_url: Option<String>,
-        pairing_tx: &watch::Sender<PairingCodeState>,
-        event_tx: &broadcast::Sender<ReceiverEvent>,
-    ) -> AppResult<ReceiverRegistration> {
-        let was_active = self.advertising_active();
-        let result = self.ensure_registered(server_url).await;
-        match &result {
-            Ok(registration) => {
-                let _ = pairing_tx.send(PairingCodeState::Active(registration.clone()));
-                let _ = event_tx.send(ReceiverEvent::RegistrationUpdated(registration.clone()));
-            }
-            Err(_) => {
-                self.reconcile_advertising().await;
-                let _ = pairing_tx.send(PairingCodeState::Unavailable);
-            }
-        }
-        self.publish_discoverability_change_if_needed(was_active, event_tx);
-        result
-    }
-
-    pub(super) async fn ensure_registered(
-        &mut self,
-        server_url: Option<String>,
-    ) -> AppResult<ReceiverRegistration> {
-        self.server_url = Some(resolve_server_url(server_url.as_deref()));
-        self.ensure_registered_with_current_server().await
-    }
-
-    async fn ensure_registered_with_current_server(&mut self) -> AppResult<ReceiverRegistration> {
-        let resolved_url = self
-            .server_url
-            .clone()
-            .ok_or(AppError::ReceiverSetupIncomplete)?;
-        let registration = mint_registration(&self.endpoint, &resolved_url).await?;
-        self.registration = Some(registration.clone());
-        self.reconcile_advertising().await;
-        Ok(registration)
     }
 
     /// Packages a registration attempt so it can run *off* the actor task.
@@ -541,6 +540,39 @@ pub(super) enum RegistrationOutcome {
 /// actor is also what drives the UI, so an inbound offer cannot reach the
 /// screen while it is parked in here — on a handheld sharing its own hotspot
 /// that measured 13.4 s between the offer landing and the screen showing it.
+/// Which command asked for a registration. They differ only in the event the
+/// UI is told about afterwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RegistrationCommandKind {
+    Setup,
+    EnsureRegistered,
+}
+
+/// A Setup / EnsureRegistered attempt, detached from [`ReceiverRuntime`] so
+/// the HTTP call runs on its own task. See
+/// [`ReceiverRuntime::begin_registration_command`].
+#[derive(Debug)]
+pub(super) struct RegistrationCommand {
+    endpoint: Endpoint,
+    server_url: String,
+    was_active: bool,
+    kind: RegistrationCommandKind,
+}
+
+impl RegistrationCommand {
+    pub(super) fn kind(&self) -> RegistrationCommandKind {
+        self.kind
+    }
+
+    pub(super) fn was_active(&self) -> bool {
+        self.was_active
+    }
+
+    pub(super) async fn run(self) -> AppResult<ReceiverRegistration> {
+        mint_registration(&self.endpoint, &self.server_url).await
+    }
+}
+
 pub(super) struct RegistrationJob {
     endpoint: Endpoint,
     server_url: String,

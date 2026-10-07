@@ -8,7 +8,10 @@ use crate::types::{
     ConnectionPath, PairingCodeState, ReceiverOfferEvent, ReceiverOfferPhase, ReceiverRegistration,
 };
 
-use super::runtime::{ReceiverRuntime, RegistrationJob, RegistrationOutcome};
+use super::runtime::{
+    ReceiverRuntime, RegistrationCommand, RegistrationCommandKind, RegistrationJob,
+    RegistrationOutcome,
+};
 use super::{OfferDecision, ReceiverEvent, ReceiverLifecycle, ReceiverSnapshot};
 
 #[derive(Debug)]
@@ -87,7 +90,7 @@ pub(super) async fn run_receiver_actor(
     // Registration maintenance runs on its own task and reports back here,
     // because only this loop may touch `runtime` — see [`RegistrationJob`] for
     // why it must not be awaited inline.
-    let (job_tx, mut job_rx) = mpsc::channel::<RegistrationOutcome>(4);
+    let (job_tx, mut job_rx) = mpsc::channel::<RegistrationDone>(4);
     let mut registration_running = false;
     let mut registration_failures = 0u32;
     let mut registration_cooldown = 0u32;
@@ -108,7 +111,25 @@ pub(super) async fn run_receiver_actor(
                 }
                 let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
             }
-            Some(outcome) = job_rx.recv() => {
+            Some(done) = job_rx.recv() => {
+                let outcome = match done {
+                    RegistrationDone::Maintenance(outcome) => outcome,
+                    RegistrationDone::Command { kind, was_active, result, reply } => {
+                        registration_running = false;
+                        let result = runtime
+                            .finish_registration_command(
+                                kind,
+                                was_active,
+                                result,
+                                &pairing_tx,
+                                &event_tx,
+                            )
+                            .await;
+                        let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
+                        let _ = reply.send(result);
+                        continue;
+                    }
+                };
                 registration_running = false;
                 if runtime
                     .apply_registration_outcome(outcome, &pairing_tx, &event_tx)
@@ -132,15 +153,25 @@ pub(super) async fn run_receiver_actor(
                     break;
                 };
                 match command {
+                    // Both of these reach the network, and this task is the
+                    // only one that can put an incoming offer on screen, so
+                    // neither waits here. `registration_running` is taken so a
+                    // maintenance tick doesn't mint a second code alongside.
                     ReceiverCommand::Setup { server_url, reply } => {
-                        let result = runtime.handle_setup(server_url, &pairing_tx, &event_tx).await;
+                        let command = runtime
+                            .begin_registration_command(server_url, RegistrationCommandKind::Setup);
+                        registration_running = true;
+                        spawn_registration_command(command, &job_tx, reply);
                         let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
-                        let _ = reply.send(result);
                     }
                     ReceiverCommand::EnsureRegistered { server_url, reply } => {
-                        let result = runtime.handle_ensure_registered(server_url, &pairing_tx, &event_tx).await;
+                        let command = runtime.begin_registration_command(
+                            server_url,
+                            RegistrationCommandKind::EnsureRegistered,
+                        );
+                        registration_running = true;
+                        spawn_registration_command(command, &job_tx, reply);
                         let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
-                        let _ = reply.send(result);
                     }
                     ReceiverCommand::SetDiscoverable { enabled, reply } => {
                         let was_active = runtime.advertising_active();
@@ -280,13 +311,59 @@ fn publish_snapshot(
 /// session.
 const REGISTRATION_JOB_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn spawn_registration_job(job: RegistrationJob, job_tx: &mpsc::Sender<RegistrationOutcome>) {
+/// What a finished off-task registration attempt hands back to the actor.
+#[derive(Debug)]
+pub(super) enum RegistrationDone {
+    /// The periodic maintenance attempt.
+    Maintenance(RegistrationOutcome),
+    /// A Setup / EnsureRegistered the caller is still waiting on.
+    Command {
+        kind: RegistrationCommandKind,
+        was_active: bool,
+        result: AppResult<ReceiverRegistration>,
+        reply: oneshot::Sender<AppResult<ReceiverRegistration>>,
+    },
+}
+
+fn spawn_registration_job(job: RegistrationJob, job_tx: &mpsc::Sender<RegistrationDone>) {
     let job_tx = job_tx.clone();
     tokio::spawn(async move {
         let outcome = tokio::time::timeout(REGISTRATION_JOB_TIMEOUT, job.run())
             .await
             .unwrap_or(RegistrationOutcome::Failed);
-        let _ = job_tx.send(outcome).await;
+        let _ = job_tx.send(RegistrationDone::Maintenance(outcome)).await;
+    });
+}
+
+/// Runs a Setup / EnsureRegistered off the actor task.
+///
+/// The reply travels with it so the caller is answered either way: a request
+/// that outlives [`REGISTRATION_JOB_TIMEOUT`] gets an error rather than
+/// nothing, which is what a caller awaiting a oneshot would otherwise get.
+fn spawn_registration_command(
+    command: RegistrationCommand,
+    job_tx: &mpsc::Sender<RegistrationDone>,
+    reply: oneshot::Sender<AppResult<ReceiverRegistration>>,
+) {
+    let job_tx = job_tx.clone();
+    let kind = command.kind();
+    let was_active = command.was_active();
+    tokio::spawn(async move {
+        let result = tokio::time::timeout(REGISTRATION_JOB_TIMEOUT, command.run())
+            .await
+            .unwrap_or_else(|_| {
+                Err(AppError::ReceiverUnavailable {
+                    action: "registering with the discovery server",
+                })
+            });
+        let _ = job_tx
+            .send(RegistrationDone::Command {
+                kind,
+                was_active,
+                result,
+                reply,
+            })
+            .await;
     });
 }
 
