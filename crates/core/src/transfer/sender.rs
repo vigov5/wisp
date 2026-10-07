@@ -1299,14 +1299,34 @@ where
                 reload_progress = true;
                 match msg {
                     Ok(protocol_message::ReceiverMessage::TransferProgress(p)) => {
+                        let snapshot = from_wire_snapshot(
+                            p.snapshot,
+                            session_id,
+                            plan.total_bytes,
+                            &mut speed,
+                        );
+                        // Phase 5 on the receiver: every byte has arrived and
+                        // been verified, and it is writing the files out on
+                        // its own disk.  Nothing this side holds is needed for
+                        // that — the blobs are served and the link is only
+                        // carrying a verdict — while on Android that export is
+                        // a second full copy of the payload into MediaStore,
+                        // tens of seconds for a large transfer.  So the send
+                        // ends here instead of idling on a connection with
+                        // nothing left to carry, which also lets the radio and
+                        // the foreground keepalive go.  An export that fails
+                        // after this point is the receiver's to report, to its
+                        // own user, who is the one who can act on it.
+                        if snapshot.phase == TransferPhase::Finalizing {
+                            events.emit(SenderEvent::TransferCompleted {
+                                session_id: session_id.to_owned(),
+                                snapshot: completed_snapshot(snapshot, plan),
+                            });
+                            return Ok(TransferOutcome::Completed);
+                        }
                         events.emit(SenderEvent::TransferProgress {
                             session_id: session_id.to_owned(),
-                            snapshot: from_wire_snapshot(
-                                p.snapshot,
-                                session_id,
-                                plan.total_bytes,
-                                &mut speed,
-                            ),
+                            snapshot,
                         });
                     }
                     Ok(protocol_message::ReceiverMessage::TransferCompleted(c)) => {
@@ -1379,6 +1399,22 @@ fn build_prepared_plan(
         session_id.to_owned(),
         &prepared.manifest(),
     )?)
+}
+
+/// The sender's closing snapshot, built from the receiver's own last report
+/// so the UI finishes on the numbers it was already showing rather than on
+/// numbers this side invented.
+fn completed_snapshot(mut snapshot: TransferSnapshot, plan: &TransferPlan) -> TransferSnapshot {
+    snapshot.phase = TransferPhase::Completed;
+    snapshot.total_bytes = snapshot.total_bytes.max(plan.total_bytes);
+    snapshot.bytes_transferred = snapshot.total_bytes;
+    snapshot.total_files = snapshot.total_files.max(plan.total_files);
+    snapshot.completed_files = snapshot.total_files;
+    snapshot.active_file_id = None;
+    snapshot.active_file_bytes = None;
+    snapshot.bytes_per_sec = None;
+    snapshot.eta_seconds = None;
+    snapshot
 }
 
 fn from_wire_snapshot(
@@ -1737,6 +1773,70 @@ mod tests {
             result.is_err(),
             "expected Err when control closes before TransferCompleted, got {result:?}",
         );
+        receiver_task.await??;
+        Ok(())
+    }
+
+    /// The receiver reached Phase 5 — every byte arrived and was verified,
+    /// and it is writing the files out on its own disk.  The send is over at
+    /// that point: this asserts the sender finishes on the finalizing frame
+    /// alone, with both streams still open and no TransferCompleted or
+    /// TransferResult ever sent.
+    #[tokio::test]
+    async fn finalizing_ends_the_send_without_waiting_for_the_verdict() -> TestResult<()> {
+        let (mut progress_write, mut progress_read) = duplex(4096);
+        let (control_write, mut control_read) = duplex(4096);
+        let plan = TransferPlan::from_manifest("session-1", &manifest())?;
+
+        let receiver_task = tokio::spawn(async move {
+            write_receiver_message(
+                &mut progress_write,
+                &ReceiverMessage::TransferProgress(TransferProgress {
+                    session_id: "session-1".to_owned(),
+                    snapshot: TransferProgressPayload {
+                        phase: TransferPhase::Finalizing,
+                        completed_files: 2,
+                        total_files: 2,
+                        bytes_transferred: 11,
+                        total_bytes: 11,
+                        active_file_id: None,
+                        active_file_bytes: None,
+                    },
+                }),
+            )
+            .await?;
+            // Deliberately kept open: the sender must not need anything more.
+            sleep(Duration::from_millis(50)).await;
+            drop(progress_write);
+            drop(control_write);
+            TestResult::Ok(())
+        });
+
+        let events = event_sink("session-1");
+        let outcome = do_transfer(
+            "session-1",
+            &plan,
+            &mut progress_read,
+            &mut control_read,
+            &events.sink,
+        )
+        .await?;
+
+        assert!(
+            matches!(outcome, TransferOutcome::Completed),
+            "a receiver that reached finalizing has the bytes, got {outcome:?}",
+        );
+        let observed = events.collect();
+        let snapshot = observed
+            .iter()
+            .find_map(|event| match event {
+                SenderEvent::TransferCompleted { snapshot, .. } => Some(snapshot),
+                _ => None,
+            })
+            .expect("the sender must finish its own UI, got {observed:?}");
+        assert_eq!(snapshot.phase, TransferPhase::Completed);
+        assert_eq!(snapshot.bytes_transferred, snapshot.total_bytes);
+        assert_eq!(snapshot.completed_files, snapshot.total_files);
         receiver_task.await??;
         Ok(())
     }

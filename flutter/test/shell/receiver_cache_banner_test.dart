@@ -23,10 +23,19 @@ class _FakeReceiverCache extends ReceiverCacheNotifier {
   }
 }
 
-Future<void> _pump(WidgetTester tester, _FakeReceiverCache fake) {
+Future<void> _pump(
+  WidgetTester tester,
+  _FakeReceiverCache fake, {
+  bool busy = false,
+}) {
   return tester.pumpWidget(
     ProviderScope(
-      overrides: [receiverCacheProvider.overrideWith(() => fake)],
+      overrides: [
+        receiverCacheProvider.overrideWith(() => fake),
+        // Overridden rather than driven through the transfers service: the
+        // banner only cares about the one bit.
+        receiverCacheBusyProvider.overrideWithValue(busy),
+      ],
       child: const MaterialApp(
         home: Scaffold(body: Align(child: ReceiverCacheBanner())),
       ),
@@ -34,8 +43,11 @@ Future<void> _pump(WidgetTester tester, _FakeReceiverCache fake) {
   );
 }
 
-ReceiverCacheState _measured(int bytes) =>
-    ReceiverCacheState(cacheRoot: '/wisp', sizeBytes: bytes, measured: true);
+ReceiverCacheState _measured(int bytes) => ReceiverCacheState(
+  location: const ReceiverCacheLocation(root: '/wisp', wholeRoot: false),
+  sizeBytes: bytes,
+  measured: true,
+);
 
 void main() {
   testWidgets('says how big the cache is and offers to clean it', (
@@ -58,6 +70,20 @@ void main() {
 
     expect(find.text('Clean now'), findsNothing);
     expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
+  });
+
+  testWidgets('will not clean while the receiver is still using it', (
+    tester,
+  ) async {
+    final fake = _FakeReceiverCache(_measured(900 * 1024 * 1024));
+    await _pump(tester, fake, busy: true);
+
+    // Still says how big it is — it just won't delete a running transfer.
+    expect(find.text('Receiver cache is using 900 MB'), findsOneWidget);
+    await tester.tap(find.text('Clean now'), warnIfMissed: false);
+    await tester.pump();
+
+    expect(fake.clears, 0);
   });
 
   testWidgets('dismissing it is final for the session', (tester) async {

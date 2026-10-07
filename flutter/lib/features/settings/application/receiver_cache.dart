@@ -1,13 +1,9 @@
-/// The receiver's scratch directory: where it is, how big it is, how to empty
-/// it.
+/// The receiver's scratch space: where it is, how big it is, how to empty it,
+/// and when emptying it is safe.
 ///
 /// Two places ask — the Settings → Storage row and the startup warning above
-/// the footer — and they must not disagree about the path or the size, so the
-/// walking and the deleting live here once.
-///
-/// On Android, Rust always writes to `<tmpDir>/Download/Wisp/.wisp/` whatever
-/// the user's download root or SAF configuration says, matching the logic in
-/// `app_bootstrap.dart`. Everywhere else the cache is `<downloadRoot>/.wisp/`.
+/// the footer — and they must not disagree about the folder, the number, or
+/// the answer to "can I delete this right now", so all of it lives here once.
 library;
 
 import 'dart:async';
@@ -16,54 +12,92 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/app_bootstrap.dart';
+import '../../transfers/application/controller.dart';
+import '../../transfers/application/state.dart';
 import 'controller.dart';
 
 /// Big enough to be worth mentioning unprompted at startup.
-///
-/// What is in there is leftovers — records and partial blobs from transfers
-/// that already finished — so the only thing clearing it costs is the resume
-/// state of a transfer still in flight.
 const int kReceiverCacheWarningBytes = 500 * 1024 * 1024;
 
-/// Returns the directory whose `.wisp/` sub-directory holds the cache, or null
-/// when it cannot be determined (a SAF `content://` root off Android).
-Future<String?> resolveReceiverCacheRoot(String downloadRoot) async {
+/// Where the receiver's scratch space is, and how much of it is ours.
+class ReceiverCacheLocation {
+  const ReceiverCacheLocation({required this.root, required this.wholeRoot});
+
+  /// On Android, the fixed `<tmpDir>/Download/Wisp` the Rust receiver is
+  /// always pointed at, whatever the user's download root or SAF choice says.
+  /// Elsewhere, the user's own download root.
+  final String root;
+
+  /// Android stages whole received files in [root] itself and only moves them
+  /// into MediaStore once the transfer finishes, so everything under it is
+  /// ours — including the gigabytes a failed save leaves behind, which is
+  /// exactly the part worth reporting. Everywhere else [root] is the folder
+  /// the user keeps their files in, and only `.wisp/` is ours to touch.
+  final bool wholeRoot;
+
+  Directory get directory => wholeRoot
+      ? Directory(root)
+      : Directory('$root${Platform.pathSeparator}.wisp');
+}
+
+/// Returns where the cache lives, or null when it cannot be walked (a SAF
+/// `content://` root off Android).
+Future<ReceiverCacheLocation?> resolveReceiverCacheLocation(
+  String downloadRoot,
+) async {
   // Delegates to the function app_bootstrap uses, so the '/Download/Wisp'
   // suffix is never spelled out twice.
   final androidDir = await resolveAndroidReceiveCacheDir();
-  if (androidDir != null) return androidDir;
+  if (androidDir != null) {
+    return ReceiverCacheLocation(root: androidDir, wholeRoot: true);
+  }
   if (downloadRoot.startsWith('content://')) return null;
   final root = downloadRoot.trim();
-  return root.isEmpty ? null : root;
+  if (root.isEmpty) return null;
+  return ReceiverCacheLocation(root: root, wholeRoot: false);
 }
 
-Directory receiverCacheDirectory(String cacheRoot) =>
-    Directory('$cacheRoot${Platform.pathSeparator}.wisp');
+Future<int> receiverCacheSizeBytes(ReceiverCacheLocation location) =>
+    _walkDirSize(location.directory);
 
-Future<int> receiverCacheSizeBytes(String cacheRoot) =>
-    _walkDirSize(receiverCacheDirectory(cacheRoot));
-
-Future<void> deleteReceiverCache(String cacheRoot) async {
-  final dir = receiverCacheDirectory(cacheRoot);
+Future<void> deleteReceiverCache(ReceiverCacheLocation location) async {
+  final dir = location.directory;
   if (await dir.exists()) {
     await dir.delete(recursive: true);
   }
 }
 
+/// Whether the receiver is still using the cache.
+///
+/// Clearing it mid-transfer deletes the transfer out from under itself: the
+/// resume state always lives there, and on Android so do the received files
+/// themselves, until the background save has moved them into MediaStore —
+/// which is still running while the finished screen is up.
+bool receiverCacheIsBusy(TransferSessionPhase phase) => switch (phase) {
+  TransferSessionPhase.idle ||
+  TransferSessionPhase.cancelled ||
+  TransferSessionPhase.failed => false,
+  _ => true,
+};
+
+final receiverCacheBusyProvider = Provider<bool>((ref) {
+  return receiverCacheIsBusy(ref.watch(transfersViewStateProvider).phase);
+});
+
 class ReceiverCacheState {
   const ReceiverCacheState({
-    this.cacheRoot,
+    this.location,
     this.sizeBytes,
     this.measured = false,
     this.clearing = false,
     this.dismissed = false,
   });
 
-  /// Directory containing `.wisp/`, or null when it cannot be determined.
-  final String? cacheRoot;
+  /// Null when the cache cannot be located.
+  final ReceiverCacheLocation? location;
 
-  /// Bytes under `<cacheRoot>/.wisp/`. Null until measured, and whenever the
-  /// path cannot be walked.
+  /// Bytes under [ReceiverCacheLocation.directory]. Null until measured, and
+  /// whenever the path cannot be walked.
   final int? sizeBytes;
 
   /// False until the first walk finishes, so an unmeasured cache never looks
@@ -87,7 +121,7 @@ class ReceiverCacheState {
     bool? dismissed,
   }) {
     return ReceiverCacheState(
-      cacheRoot: cacheRoot,
+      location: location,
       sizeBytes: sizeBytes ?? this.sizeBytes,
       measured: measured ?? this.measured,
       clearing: clearing ?? this.clearing,
@@ -119,11 +153,13 @@ class ReceiverCacheNotifier extends Notifier<ReceiverCacheState> {
   }
 
   Future<void> _measure(String downloadRoot, int generation) async {
-    final root = await resolveReceiverCacheRoot(downloadRoot);
-    final bytes = root == null ? null : await receiverCacheSizeBytes(root);
+    final location = await resolveReceiverCacheLocation(downloadRoot);
+    final bytes = location == null
+        ? null
+        : await receiverCacheSizeBytes(location);
     if (generation != _generation) return;
     state = ReceiverCacheState(
-      cacheRoot: root,
+      location: location,
       sizeBytes: bytes,
       measured: true,
       dismissed: state.dismissed,
@@ -141,17 +177,20 @@ class ReceiverCacheNotifier extends Notifier<ReceiverCacheState> {
     state = state.copyWith(dismissed: true);
   }
 
-  /// Deletes `<cacheRoot>/.wisp/` and re-measures. Returns the failure text,
-  /// or null when it worked.
+  /// Deletes the cache and re-measures. Returns the failure text, or null
+  /// when it worked.
   Future<String?> clear() async {
-    final root = state.cacheRoot;
-    if (root == null || state.clearing) return null;
+    final location = state.location;
+    if (location == null || state.clearing) return null;
+    if (ref.read(receiverCacheBusyProvider)) {
+      return 'a transfer is still using it';
+    }
     final generation = _generation;
     state = state.copyWith(clearing: true);
 
     String? failure;
     try {
-      await deleteReceiverCache(root);
+      await deleteReceiverCache(location);
     } catch (error) {
       failure = '$error';
     }
