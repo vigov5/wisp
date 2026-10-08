@@ -17,10 +17,6 @@ import '../../theme/wisp_theme.dart';
 class ReceiverCacheBanner extends ConsumerWidget {
   const ReceiverCacheBanner({super.key});
 
-  static const _bg = Color(0xFFFBF1DC);
-  static const _border = Color(0xFFE6C98E);
-  static const _ink = Color(0xFF7A5511);
-
   Future<void> _clean(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
     final failure = await ref.read(receiverCacheProvider.notifier).clear();
@@ -47,14 +43,14 @@ class ReceiverCacheBanner extends ConsumerWidget {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
       decoration: BoxDecoration(
-        color: _bg,
-        border: Border.all(color: _border, width: 0.8),
+        color: context.wc.warnBg,
+        border: Border.all(color: context.wc.warnBorder, width: 0.8),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.warning_amber_rounded, size: 18, color: _ink),
+          Icon(Icons.warning_amber_rounded, size: 18, color: context.wc.warnFg),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -66,7 +62,7 @@ class ReceiverCacheBanner extends ConsumerWidget {
                   style: wispSans(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: _ink,
+                    color: context.wc.warnInk,
                   ),
                 ),
                 const SizedBox(height: 3),
@@ -80,7 +76,7 @@ class ReceiverCacheBanner extends ConsumerWidget {
                   style: wispSans(
                     fontSize: 12,
                     fontWeight: FontWeight.w400,
-                    color: _ink,
+                    color: context.wc.warnInk,
                     height: 1.35,
                   ),
                 ),
@@ -90,9 +86,11 @@ class ReceiverCacheBanner extends ConsumerWidget {
                       ? null
                       : () => _clean(context, ref),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: _ink,
-                    disabledForegroundColor: _ink.withValues(alpha: 0.4),
-                    side: const BorderSide(color: _border),
+                    foregroundColor: context.wc.warnInk,
+                    disabledForegroundColor: context.wc.warnInk.withValues(
+                      alpha: 0.4,
+                    ),
+                    side: BorderSide(color: context.wc.warnBorder),
                     visualDensity: VisualDensity.compact,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
@@ -106,7 +104,7 @@ class ReceiverCacheBanner extends ConsumerWidget {
           ),
           IconButton(
             icon: const Icon(Icons.close_rounded, size: 18),
-            color: _ink,
+            color: context.wc.warnInk,
             tooltip: 'Dismiss',
             visualDensity: VisualDensity.compact,
             onPressed: () => ref.read(receiverCacheProvider.notifier).dismiss(),

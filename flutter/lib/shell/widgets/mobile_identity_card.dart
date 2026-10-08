@@ -229,12 +229,12 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                       height: 44,
                       decoration: BoxDecoration(
                         color: widget.state.isStale
-                            ? const Color(0xFFFFF6E5)
+                            ? context.wc.warnBg
                             : context.wc.surface,
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
                           color: widget.state.isStale
-                              ? const Color(0xFFE0B96A)
+                              ? context.wc.warnBorder
                               : context.wc.border,
                         ),
                       ),
@@ -254,7 +254,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                                 Icons.refresh_rounded,
                                 size: 22,
                                 color: widget.state.isStale
-                                    ? const Color(0xFFC0912C)
+                                    ? context.wc.warnFg
                                     : context.wc.muted.withValues(
                                         alpha: canRefresh ? 0.9 : 0.35,
                                       ),
@@ -275,7 +275,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                   minHeight: 4,
                   backgroundColor: context.wc.fill,
                   color: widget.state.isStale
-                      ? const Color(0xFFC0912C)
+                      ? context.wc.warnFg
                       : widget.state.badge.color.withValues(alpha: 0.55),
                 ),
               ),
@@ -292,16 +292,16 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                     vertical: 10,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFF6E5),
+                    color: context.wc.warnBg,
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFE0B96A)),
+                    border: Border.all(color: context.wc.warnBorder),
                   ),
                   child: Row(
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.info_outline_rounded,
                         size: 16,
-                        color: Color(0xFFC0912C),
+                        color: context.wc.warnFg,
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -310,7 +310,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                           style: wispSans(
                             fontSize: 13,
                             fontWeight: FontWeight.w500,
-                            color: const Color(0xFF6B4D14),
+                            color: context.wc.warnInk,
                           ),
                         ),
                       ),
