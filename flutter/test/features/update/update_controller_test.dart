@@ -47,8 +47,10 @@ class _FakeInstaller extends UpdateInstaller {
     void Function(double? progress)? onProgress,
   }) async {
     onProgress?.call(1.0);
-    return File('${Directory.systemTemp.path}${Platform.pathSeparator}'
-        '${asset.name}');
+    return File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}'
+      '${asset.name}',
+    );
   }
 
   @override

@@ -218,9 +218,7 @@ class SendController extends _$SendController {
 
     final settings = ref.read(settingsControllerProvider).settings;
     final sources =
-        items
-            ?.expand((item) => item.resolvedSources)
-            .toList(growable: false) ??
+        items?.expand((item) => item.resolvedSources).toList(growable: false) ??
         const <SendSource>[];
 
     switch (destination.mode) {

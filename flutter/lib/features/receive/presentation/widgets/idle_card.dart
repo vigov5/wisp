@@ -22,7 +22,7 @@ class ReceiveIdleCard extends StatefulWidget {
   final VoidCallback? onOpenQr;
 
   /// Tapped when the user explicitly asks for a fresh pairing code (refresh
-  /// icon or the "may have been used" hint).  Wired to the receiver
+  /// icon or the "cannot be confirmed" hint).  Wired to the receiver
   /// service's `ensureRegistered` from the shell.
   final VoidCallback? onRefreshCode;
 
@@ -320,7 +320,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                         ? _handleRefresh
                         : null,
                     tooltip: widget.state.isStale
-                        ? 'Code may have been used — tap to refresh'
+                        ? 'This code cannot be confirmed right now — tap to refresh'
                         : 'Refresh code',
                     style: IconButton.styleFrom(
                       fixedSize: const Size(38, 38),
@@ -328,13 +328,13 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                       padding: EdgeInsets.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       backgroundColor: widget.state.isStale
-                          ? const Color(0xFFFFF6E5)
+                          ? context.wc.warnBg
                           : context.wc.surface,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                         side: BorderSide(
                           color: widget.state.isStale
-                              ? const Color(0xFFE0B96A)
+                              ? context.wc.warnBorder
                               : context.wc.border,
                         ),
                       ),
@@ -352,7 +352,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                             Icons.refresh_rounded,
                             size: 18,
                             color: widget.state.isStale
-                                ? const Color(0xFFC0912C)
+                                ? context.wc.warnFg
                                 : context.wc.muted.withValues(alpha: 0.9),
                           ),
                   ),
@@ -422,16 +422,16 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                   vertical: 8,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFF6E5),
+                  color: context.wc.warnBg,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFE0B96A)),
+                  border: Border.all(color: context.wc.warnBorder),
                 ),
                 child: Row(
                   children: [
                     Icon(
                       Icons.info_outline_rounded,
                       size: 14,
-                      color: const Color(0xFFC0912C),
+                      color: context.wc.warnFg,
                     ),
                     const SizedBox(width: 8),
                     Expanded(
@@ -440,7 +440,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                         style: wispSans(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w500,
-                          color: const Color(0xFF6B4D14),
+                          color: context.wc.warnInk,
                         ),
                       ),
                     ),
@@ -463,7 +463,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                 minHeight: 3,
                 backgroundColor: context.wc.fill,
                 color: widget.state.isStale
-                    ? const Color(0xFFC0912C)
+                    ? context.wc.warnFg
                     : widget.state.badge.color.withValues(alpha: 0.55),
               ),
             ),

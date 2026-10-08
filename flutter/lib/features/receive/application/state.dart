@@ -162,7 +162,7 @@ class ReceiverIdleViewState {
 
   /// `true` when the rendezvous server reports the code is no longer
   /// claimable but background re-registration hasn't succeeded yet.  UI
-  /// surfaces a "Code may have been used. Tap to refresh" hint and styles
+  /// surfaces a "this code cannot be confirmed right now" hint and styles
   /// the code area as muted.
   final bool isStale;
 }
@@ -220,7 +220,7 @@ class ReceiverServiceState {
   }
 
   /// Same as [ready] but flags the pairing code as stale — UI uses this to
-  /// show a "may have been used, tap Refresh" hint.  The code itself stays
+  /// show a "cannot be confirmed, tap Refresh" hint.  The code itself stays
   /// visible so the user has context for the warning.
   factory ReceiverServiceState.stale({
     required String code,

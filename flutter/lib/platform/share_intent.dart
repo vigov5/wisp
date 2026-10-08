@@ -11,16 +11,16 @@ import 'native_source.dart';
 class SharedFiles {
   const SharedFiles({required this.sources, required this.rejected});
 
-  static const SharedFiles empty = SharedFiles(
-    sources: [],
-    rejected: [],
-  );
+  static const SharedFiles empty = SharedFiles(sources: [], rejected: []);
 
   /// Parses either shape the platforms send: iOS hands over a bare list of
   /// paths, Android a map that also carries the files it could not prepare.
   factory SharedFiles.parse(Object? raw) {
     if (raw is List) {
-      return SharedFiles(sources: NativeSource.parseAll(raw), rejected: const []);
+      return SharedFiles(
+        sources: NativeSource.parseAll(raw),
+        rejected: const [],
+      );
     }
     if (raw is! Map) return empty;
     final sources = raw['sources'];

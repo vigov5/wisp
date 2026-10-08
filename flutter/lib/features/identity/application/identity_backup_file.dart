@@ -99,7 +99,9 @@ class IdentityBackupFile {
       // directory in the Files app as the "Wisp" folder. Write the backup
       // there so the user can retrieve it from Files → On My iPhone → Wisp.
       final docs = await getApplicationDocumentsDirectory();
-      final file = File('${docs.path}${Platform.pathSeparator}$kBackupFileName');
+      final file = File(
+        '${docs.path}${Platform.pathSeparator}$kBackupFileName',
+      );
       await file.writeAsString(payload, flush: true);
       return 'On My iPhone → Wisp/$kBackupFileName';
     }

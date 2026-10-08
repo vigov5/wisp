@@ -399,29 +399,32 @@ void main() {
     expect(source.respondToOfferCalls, 0);
   });
 
-  test('master switch off suppresses auto-accept for a trusted device', () async {
-    final source = FakeReceiverServiceSource();
-    final container = await _containerWithTrust(
-      source: source,
-      masterOn: false,
-      trusted: const ['endpoint-trusted'],
-    );
-    addTearDown(container.dispose);
-    container.read(transfersServiceProvider);
+  test(
+    'master switch off suppresses auto-accept for a trusted device',
+    () async {
+      final source = FakeReceiverServiceSource();
+      final container = await _containerWithTrust(
+        source: source,
+        masterOn: false,
+        trusted: const ['endpoint-trusted'],
+      );
+      addTearDown(container.dispose);
+      container.read(transfersServiceProvider);
 
-    source.emitIncomingOffer(
-      senderName: 'Maya',
-      senderEndpointId: 'endpoint-trusted',
-    );
-    await Future<void>.delayed(Duration.zero);
+      source.emitIncomingOffer(
+        senderName: 'Maya',
+        senderEndpointId: 'endpoint-trusted',
+      );
+      await Future<void>.delayed(Duration.zero);
 
-    expect(
-      container.read(transfersServiceProvider).phase,
-      TransferSessionPhase.offerPending,
-      reason: 'the kill-switch overrides per-device trust',
-    );
-    expect(source.respondToOfferCalls, 0);
-  });
+      expect(
+        container.read(transfersServiceProvider).phase,
+        TransferSessionPhase.offerPending,
+        reason: 'the kill-switch overrides per-device trust',
+      );
+      expect(source.respondToOfferCalls, 0);
+    },
+  );
 
   test('never auto-accepts a web/ephemeral sender even if its key is '
       'in the trusted set', () async {

@@ -101,6 +101,10 @@ class WispColors extends ThemeExtension<WispColors> {
     required this.subtle,
     required this.codeBg,
     required this.accentFg,
+    required this.warnBg,
+    required this.warnBorder,
+    required this.warnInk,
+    required this.warnFg,
   });
 
   /// App/scaffold background.
@@ -136,6 +140,26 @@ class WispColors extends ThemeExtension<WispColors> {
   /// [kAccentCyanStrong] directly — it reads fine on both themes.)
   final Color accentFg;
 
+  /// Panel behind a warning: the stale-code hint, the firewall notice, the
+  /// oversized-cache banner.
+  ///
+  /// These were four hand-written amber constants, written for the light
+  /// theme and left there, so on dark a cream block sat in the middle of a
+  /// near-black card — the one element on the screen that did not belong to
+  /// it. A warning has to be noticeable without shouting over the app it
+  /// interrupts, and that is a per-theme judgement like every other surface.
+  final Color warnBg;
+
+  /// Hairline around [warnBg].
+  final Color warnBorder;
+
+  /// Text on [warnBg].
+  final Color warnInk;
+
+  /// Icon / accent on [warnBg], and the amber a control takes on while it is
+  /// the thing to tap. Brighter on dark for the same reason [accentFg] is.
+  final Color warnFg;
+
   @override
   WispColors copyWith({
     Color? bg,
@@ -148,6 +172,10 @@ class WispColors extends ThemeExtension<WispColors> {
     Color? subtle,
     Color? codeBg,
     Color? accentFg,
+    Color? warnBg,
+    Color? warnBorder,
+    Color? warnInk,
+    Color? warnFg,
   }) {
     return WispColors(
       bg: bg ?? this.bg,
@@ -160,6 +188,10 @@ class WispColors extends ThemeExtension<WispColors> {
       subtle: subtle ?? this.subtle,
       codeBg: codeBg ?? this.codeBg,
       accentFg: accentFg ?? this.accentFg,
+      warnBg: warnBg ?? this.warnBg,
+      warnBorder: warnBorder ?? this.warnBorder,
+      warnInk: warnInk ?? this.warnInk,
+      warnFg: warnFg ?? this.warnFg,
     );
   }
 
@@ -177,6 +209,10 @@ class WispColors extends ThemeExtension<WispColors> {
       subtle: Color.lerp(subtle, other.subtle, t)!,
       codeBg: Color.lerp(codeBg, other.codeBg, t)!,
       accentFg: Color.lerp(accentFg, other.accentFg, t)!,
+      warnBg: Color.lerp(warnBg, other.warnBg, t)!,
+      warnBorder: Color.lerp(warnBorder, other.warnBorder, t)!,
+      warnInk: Color.lerp(warnInk, other.warnInk, t)!,
+      warnFg: Color.lerp(warnFg, other.warnFg, t)!,
     );
   }
 }
@@ -192,6 +228,10 @@ const WispColors _lightColors = WispColors(
   subtle: kSubtle,
   codeBg: kCodeBg,
   accentFg: kAccentCyanStrong,
+  warnBg: Color(0xFFFFF6E5),
+  warnBorder: Color(0xFFE0B96A),
+  warnInk: Color(0xFF6B4D14),
+  warnFg: Color(0xFFC0912C),
 );
 
 const WispColors _darkColors = WispColors(
@@ -205,6 +245,13 @@ const WispColors _darkColors = WispColors(
   subtle: Color(0xFF64696B),
   codeBg: Color(0xFF0A0C0D),
   accentFg: kAccentCyan,
+  // A warm panel one step above `surface`, not a light one dropped onto it.
+  warnBg: Color(0xFF2A2214),
+  warnBorder: Color(0xFF4D3F1E),
+  warnInk: Color(0xFFEBD9AE),
+  // The amber the "Local only" badge already uses, so the badge and the
+  // banner explaining it are the same colour.
+  warnFg: Color(0xFFD4A824),
 );
 
 /// Reads the active [WispColors] for the current theme. Use `context.wc.ink`,
