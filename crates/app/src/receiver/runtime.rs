@@ -219,7 +219,20 @@ impl ReceiverRuntime {
             }
             Err(_) => {
                 self.reconcile_advertising().await;
-                let _ = pairing_tx.send(PairingCodeState::Unavailable);
+                // A command that failed says exactly what an unreachable
+                // maintenance poll says: the code on screen was not
+                // confirmed.  So it is published the same way — Stale, which
+                // carries that code — and not as Unavailable, which claims
+                // there is no code at all.  The UI refuses to believe that
+                // claim while a code is on screen, and rightly: it is how a
+                // tap on Refresh with no network left the badge green, having
+                // reached nothing and proved nothing.  Unavailable is kept for
+                // the case where it is true, a receiver that never registered.
+                let next = match self.registration.clone() {
+                    Some(existing) => PairingCodeState::Stale(existing),
+                    None => PairingCodeState::Unavailable,
+                };
+                let _ = pairing_tx.send(next);
             }
         }
         self.publish_discoverability_change_if_needed(was_active, event_tx);

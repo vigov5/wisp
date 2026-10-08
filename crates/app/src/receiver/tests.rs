@@ -8,8 +8,8 @@ use crate::error::{AppError, AppResult};
 
 use super::actor::registration_backoff_ticks;
 use super::runtime::{
-    OfferResolution, ReceiverRuntime, RegistrationOutcome, registration_needs_refresh,
-    should_advertise,
+    OfferResolution, ReceiverRuntime, RegistrationCommandKind, RegistrationOutcome,
+    registration_needs_refresh, should_advertise,
 };
 use super::session::ReceiverRun;
 use super::{
@@ -293,6 +293,87 @@ async fn a_second_unreachable_poll_stops_vouching_for_the_code() -> AppResult<()
         *pairing_rx.borrow_and_update(),
         PairingCodeState::Stale(registration),
         "the code stays on screen for context, flagged rather than claimed",
+    );
+    Ok(())
+}
+
+/// A tap on Refresh that reached nothing has proved nothing, so it must not
+/// hand the badge back its green light.
+///
+/// Nor may it answer "Unavailable": the code is still on screen, and the UI
+/// keeps a code it can see over an event that claims there is none — which is
+/// how three taps in airplane mode each came back Ready.
+#[tokio::test]
+async fn a_refresh_that_reached_nothing_stops_vouching_for_the_code() -> AppResult<()> {
+    let Some(endpoint) = try_bind_endpoint().await? else {
+        return Ok(());
+    };
+    let mut runtime = ReceiverRuntime::new_for_test(test_config(), endpoint);
+
+    let registration = ReceiverRegistration {
+        code: "ABC123".to_owned(),
+        expires_at: "2999-01-01T00:00:00Z".to_owned(),
+    };
+    runtime.set_registration_for_test(Some(registration.clone()));
+
+    let (pairing_tx, mut pairing_rx) =
+        watch::channel(PairingCodeState::Active(registration.clone()));
+    let (event_tx, _event_rx) = broadcast::channel::<ReceiverEvent>(8);
+    pairing_rx.borrow_and_update();
+
+    let result = runtime
+        .finish_registration_command(
+            RegistrationCommandKind::EnsureRegistered,
+            false,
+            Err(AppError::Internal {
+                message: "registration ticket timed out (offline / no relay)".to_owned(),
+            }),
+            &pairing_tx,
+            &event_tx,
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "the caller still learns the refresh failed"
+    );
+    assert_eq!(
+        *pairing_rx.borrow_and_update(),
+        PairingCodeState::Stale(registration),
+        "the code stays on screen, flagged rather than claimed",
+    );
+    Ok(())
+}
+
+/// With nothing registered there is no code to flag, and an empty slot is
+/// exactly what Unavailable is for.
+#[tokio::test]
+async fn a_first_setup_that_fails_has_no_code_to_flag() -> AppResult<()> {
+    let Some(endpoint) = try_bind_endpoint().await? else {
+        return Ok(());
+    };
+    let mut runtime = ReceiverRuntime::new_for_test(test_config(), endpoint);
+
+    let (pairing_tx, mut pairing_rx) = watch::channel(PairingCodeState::Unavailable);
+    let (event_tx, _event_rx) = broadcast::channel::<ReceiverEvent>(8);
+    pairing_rx.borrow_and_update();
+
+    let result = runtime
+        .finish_registration_command(
+            RegistrationCommandKind::Setup,
+            false,
+            Err(AppError::Internal {
+                message: "registration ticket timed out (offline / no relay)".to_owned(),
+            }),
+            &pairing_tx,
+            &event_tx,
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert_eq!(
+        *pairing_rx.borrow_and_update(),
+        PairingCodeState::Unavailable,
     );
     Ok(())
 }
