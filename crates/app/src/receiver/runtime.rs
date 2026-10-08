@@ -253,14 +253,36 @@ impl ReceiverRuntime {
     ///
     /// Returns whether the registration is usable, mirroring the error
     /// signalling the actor used when it still ran this inline.
+    /// Publishes what a finished registration attempt means for the UI.
+    ///
+    /// `consecutive_failures` is how many attempts in a row have already
+    /// failed before this one, so a single unreachable poll — a blip, a
+    /// handover between networks — doesn't flicker the badge, but a run of
+    /// them stops the screen claiming a code it can no longer vouch for.
     pub(super) async fn apply_registration_outcome(
         &mut self,
         outcome: RegistrationOutcome,
+        consecutive_failures: u32,
         pairing_tx: &watch::Sender<PairingCodeState>,
         event_tx: &broadcast::Sender<ReceiverEvent>,
     ) -> bool {
         match outcome {
-            RegistrationOutcome::Unchanged => true,
+            RegistrationOutcome::Unchanged => {
+                // The server just confirmed the code. Say so again in case an
+                // earlier unreachable run left the badge saying otherwise.
+                if let Some(existing) = self.registration.clone() {
+                    let _ = pairing_tx.send(PairingCodeState::Active(existing));
+                }
+                true
+            }
+            RegistrationOutcome::Unreachable => {
+                if consecutive_failures >= 1
+                    && let Some(existing) = self.registration.clone()
+                {
+                    let _ = pairing_tx.send(PairingCodeState::Stale(existing));
+                }
+                false
+            }
             RegistrationOutcome::Registered(registration) => {
                 let was_active = self.advertising_active();
                 self.registration = Some(registration.clone());
@@ -527,6 +549,10 @@ pub(super) enum RegistrationOutcome {
     /// The visible code is dead and minting a replacement failed, so the user
     /// has to tap Refresh.
     Stale,
+    /// The rendezvous server could not be reached at all, so the visible code
+    /// could be neither confirmed nor replaced. Whether it still works is now
+    /// unknown — which is different from knowing it works.
+    Unreachable,
     /// The attempt failed outright — offline, or the server is down.
     Failed,
 }
@@ -630,16 +656,17 @@ impl RegistrationJob {
                     RegistrationOutcome::Stale
                 }
             },
-            // Network/transport error talking to the rendezvous server.
-            // Don't downgrade visible state on a single failure — that would
-            // flicker the UI on flaky connections.  Just log and try again.
+            // Network/transport error talking to the rendezvous server. The
+            // caller decides what to do about it: one failure is a blip and
+            // must not flicker the UI, but a run of them means the code on
+            // screen can no longer be vouched for.
             Err(err) => {
                 tracing::debug!(
                     target: "wisp_app::receiver::runtime",
                     %err,
                     "pair_status request failed; will retry on the next maintenance tick"
                 );
-                RegistrationOutcome::Unchanged
+                RegistrationOutcome::Unreachable
             }
         }
     }

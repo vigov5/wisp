@@ -27,6 +27,53 @@ void main() {
     expect(state.code, '......');
   });
 
+  test('a confirmed code earns the green Ready badge', () {
+    final container = ProviderContainer(
+      overrides: [
+        initialAppSettingsProvider.overrideWithValue(testAppSettings),
+        receiverServiceSourceProvider.overrideWithValue(
+          FakeReceiverServiceSource(
+            initialState: ReceiverServiceState.ready(code: 'ABC123'),
+          ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final state = container.read(receiverIdleViewStateProvider);
+
+    expect(state.badge.label, 'Ready');
+    expect(state.badge.phase, ReceiverBadgePhase.ready);
+  });
+
+  test('a code the server has not confirmed does not read as Ready', () {
+    // The receiver is still listening — LAN, QR and saved devices all work —
+    // but nothing can vouch for the six digits on screen, so the badge must
+    // not claim they work.
+    final container = ProviderContainer(
+      overrides: [
+        initialAppSettingsProvider.overrideWithValue(testAppSettings),
+        receiverServiceSourceProvider.overrideWithValue(
+          FakeReceiverServiceSource(
+            initialState: ReceiverServiceState.stale(code: 'ABC123'),
+          ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final state = container.read(receiverIdleViewStateProvider);
+
+    expect(state.badge.phase, ReceiverBadgePhase.localOnly);
+    expect(state.badge.label, 'Local only');
+    expect(
+      state.code,
+      'ABC 123',
+      reason:
+          'the code stays on screen for context, it just stops being a promise',
+    );
+  });
+
   test('maps unavailable receiver to unavailable lifecycle', () {
     final container = ProviderContainer(
       overrides: [
