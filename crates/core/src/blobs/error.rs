@@ -69,31 +69,29 @@ impl fmt::Display for BlobTextError {
 
 impl StdError for BlobTextError {}
 
-/// Every level of an error's Display, joined — for the places that have to
-/// flatten an error into a string.
+// One implementation, in `crate::util`, because the app layer formats the same
+// chains for the same screens.
+pub(crate) use crate::util::error_chain;
+
+/// Flattens `error` into text that keeps the one typed fact above it classifies
+/// on: whether the transport died.
 ///
-/// `to_string()` and `{:#}` both render one level, and one level is almost
-/// never the cause. Flattening a `BlobError` with either drops its `#[source]`,
-/// and a device log showed exactly what that costs: a failed 1911-file receive
-/// arrived as
-///
-/// ```text
-/// Other { context: "running receiver session", source: Blob(Fetch {
-///   context: "collection 68bdc1b3a8 from 76b77179bf",
-///   source: BlobTextError("fetching blob content for dicts/EDICT... (a9e...)") }) }
-/// ```
-///
-/// — three layers of context whose innermost entry is a *stringified* error,
-/// so the reason the fetch failed was gone before it left the crate. Anywhere
-/// an error has to become text, it should become all of it.
-pub(crate) fn error_chain(error: &(dyn StdError + 'static)) -> String {
-    let mut parts = Vec::new();
-    let mut current = Some(error);
-    while let Some(err) = current {
-        parts.push(err.to_string());
-        current = err.source();
-    }
-    parts.join(": ")
+/// Some hops have to flatten — `BlobError` boxes its source and so is not
+/// Clone, and an update sent over a channel cannot carry it. Flattening used to
+/// hand the layers above a bare string, and a string classifies as nothing, so
+/// a receive killed by a reset connection showed the user three lines of
+/// context instead of "Connection lost". The chain still becomes text; the io
+/// kind rides along in a real [`io::Error`], which is exactly what the mappers
+/// look for. Without one, `Other` leaves the behaviour as it was: the text is
+/// all there is to show.
+pub(crate) fn flatten_keeping_io_kind(
+    error: &(dyn StdError + 'static),
+    text: impl Into<String>,
+) -> std::io::Error {
+    std::io::Error::new(
+        crate::util::io_kind_in_chain(error).unwrap_or(std::io::ErrorKind::Other),
+        text.into(),
+    )
 }
 
 impl BlobError {

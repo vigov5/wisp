@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, trace, warn};
 
-use super::error::{BlobError, BlobTextError, Result, error_chain};
+use super::error::{BlobError, Result, error_chain, flatten_keeping_io_kind};
 use super::source::{BlobSource, LanTarget};
 use super::stream::{StreamTarget, stream_collection};
 use super::telemetry::{BlobTransferTelemetry, TransferEnd, is_enabled as telemetry_enabled};
@@ -540,8 +540,13 @@ impl BlobReceiver {
                 // content for collection X from Y: fetching blob content for
                 // collection X from Y: <reason>".
                 let reason = fetch_reason(&error_chain(error), &ticket_context);
+                // ...and keep the io kind while flattening, or the layers
+                // above have a paragraph of context and nothing to classify
+                // it by. A transfer killed by a reset link reached the user
+                // as "Transfer failed" over the raw chain, where the sender
+                // watching the same break said "Connection lost".
                 let _ = update_tx.send(BlobDownloadUpdate::Failed {
-                    error: BlobError::fetch(ticket_context, BlobTextError::new(reason)),
+                    error: BlobError::fetch(ticket_context, flatten_keeping_io_kind(error, reason)),
                 });
             }
             result
