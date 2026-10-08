@@ -348,6 +348,30 @@ void main() {
     expect(saved.single.endpointId, 'endpoint-maya');
   });
 
+  test('accepting an offer forwards the collection it is for', () async {
+    // Android uses this to find the half-written files its last attempt at the
+    // same collection left behind. Without it every retry starts from zero,
+    // and matching on names instead would eventually resume the wrong file.
+    final source = FakeReceiverServiceSource();
+    final container = await _containerWithTrust(
+      source: source,
+      masterOn: true,
+      trusted: const ['endpoint-trusted'],
+    );
+    addTearDown(container.dispose);
+    container.read(transfersServiceProvider);
+
+    source.emitIncomingOffer(
+      senderName: 'Maya',
+      senderEndpointId: 'endpoint-trusted',
+      collectionHash: 'da2c3fca27b73d3e',
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(source.lastRespondToOfferAccept, isTrue);
+    expect(source.lastRespondToOfferCollectionHash, 'da2c3fca27b73d3e');
+  });
+
   test('auto-accepts an offer from a trusted device', () async {
     final source = FakeReceiverServiceSource();
     final container = await _containerWithTrust(
@@ -539,6 +563,7 @@ class _SlowAcceptSource extends FakeReceiverServiceSource {
   Future<void> respondToOffer({
     required bool accept,
     List<String> transferPaths = const [],
+    String? collectionHash,
   }) async {
     if (accept) acceptCount++;
     await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -564,6 +589,7 @@ class _FailingOfferResponseSource extends FakeReceiverServiceSource {
   Future<void> respondToOffer({
     required bool accept,
     List<String> transferPaths = const [],
+    String? collectionHash,
   }) async {
     await super.respondToOffer(accept: accept);
     if (accept && throwOnAccept) {

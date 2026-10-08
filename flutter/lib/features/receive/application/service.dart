@@ -48,10 +48,15 @@ class ReceiverServiceController extends Notifier<ReceiverServiceState> {
   Future<void> respondToOffer({
     required bool accept,
     List<String> transferPaths = const [],
+    String? collectionHash,
   }) {
     return ref
         .read(receiverServiceSourceProvider)
-        .respondToOffer(accept: accept);
+        .respondToOffer(
+          accept: accept,
+          transferPaths: transferPaths,
+          collectionHash: collectionHash,
+        );
   }
 
   Future<void> cancelTransfer() {

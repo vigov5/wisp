@@ -237,6 +237,24 @@ class AndroidMediaStore {
   };
 }
 
+/// What becomes of the pending entries when a transfer stops.
+enum ReceiveDestinationOutcome {
+  /// It finished: clear the pending flag so the files appear.
+  publish,
+
+  /// It broke. The entries stay pending — invisible to other apps, holding
+  /// the bytes that did arrive — so the next attempt at the same collection
+  /// writes on from where this one stopped instead of starting over. This is
+  /// the only place a half-received file can live on Android: there is nowhere
+  /// else the app may write that the finished file can then be moved from
+  /// without copying it a second time.
+  keepForResume,
+
+  /// The user said no, or nothing was ever written. Delete the entries, so
+  /// declining leaves no trace.
+  discard,
+}
+
 /// One destination the platform opened for an incoming file.
 @immutable
 class AndroidReceiveDestination {
@@ -309,14 +327,16 @@ extension AndroidReceiveDestinations on AndroidMediaStore {
     });
   }
 
-  /// Creates one pending destination per [transferPaths] entry.
+  /// Creates one pending destination per [transferPaths] entry, reusing the
+  /// ones a previous attempt at the same [collectionHash] left half-written.
   ///
   /// An empty result means the platform could not provide them and the receiver
   /// should fall back to writing into its own directory. That happens below
   /// Android 10, and for any error along the way.
   static Future<List<AndroidReceiveDestination>> create(
-    List<String> transferPaths,
-  ) async {
+    List<String> transferPaths, {
+    String? collectionHash,
+  }) async {
     if (!Platform.isAndroid || transferPaths.isEmpty) return const [];
     _wireProgress();
     // Set before the call so the first frame after Accept already says what is
@@ -328,7 +348,7 @@ extension AndroidReceiveDestinations on AndroidMediaStore {
     try {
       final raw = await _channel.invokeMethod<List<dynamic>>(
         'createReceiveDestinations',
-        {'paths': transferPaths},
+        {'paths': transferPaths, 'collectionHash': collectionHash},
       );
       return (raw ?? const [])
           .whereType<Map<dynamic, dynamic>>()
@@ -353,15 +373,16 @@ extension AndroidReceiveDestinations on AndroidMediaStore {
     }
   }
 
-  /// Closes the descriptors. Publishing makes the files visible; otherwise the
-  /// pending entries are deleted, so an abandoned transfer leaves nothing.
-  /// Returns transfer path → final `content://` URI for published files.
-  static Future<Map<String, String>> finish({required bool publish}) async {
+  /// Closes the descriptors and decides what becomes of the entries behind
+  /// them. Returns transfer path → final `content://` URI for published files.
+  static Future<Map<String, String>> finish({
+    required ReceiveDestinationOutcome outcome,
+  }) async {
     if (!Platform.isAndroid) return const {};
     try {
       final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'finishReceiveDestinations',
-        {'publish': publish},
+        {'outcome': outcome.name},
       );
       return (raw ?? const {}).map(
         (key, value) => MapEntry(key as String, value as String),

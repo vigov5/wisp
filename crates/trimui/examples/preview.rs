@@ -125,6 +125,7 @@ fn offer(phase: ReceiverOfferPhase) -> ReceiverOfferEvent {
         ],
         inline_text: None,
         error: None,
+        collection_hash: None,
     }
 }
 

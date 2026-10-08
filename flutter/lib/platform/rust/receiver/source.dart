@@ -29,6 +29,7 @@ abstract class ReceiverServiceSource {
   Future<void> respondToOffer({
     required bool accept,
     List<String> transferPaths = const [],
+    String? collectionHash,
   });
 
   /// Saves received inline text as a `.txt` to the user-visible destination and

@@ -2678,6 +2678,7 @@ mod tests {
             files: Vec::new(),
             inline_text: None,
             error: None,
+            collection_hash: None,
         }
     }
 

@@ -327,6 +327,7 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
                 .map((item) => item.path)
                 .toList(growable: false) ??
             const <String>[],
+        collectionHash: offer?.collectionHash,
       );
     } catch (error) {
       _textDelivery = null;
@@ -446,6 +447,7 @@ class TransfersServiceController extends Notifier<TransferSessionState> {
       connectionPath: ConnectionPathInfo.fromReceiver(event.connectionPath),
       senderEndpointId: event.senderEndpointId,
       inlineText: event.inlineText,
+      collectionHash: event.collectionHash,
     );
   }
 

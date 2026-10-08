@@ -1560,6 +1560,7 @@ impl SseDecode for crate::api::receiver::ReceiverTransferEvent {
         let mut var_senderTicket = <Option<String>>::sse_decode(deserializer);
         let mut var_error =
             <Option<crate::api::error::UserFacingErrorData>>::sse_decode(deserializer);
+        let mut var_collectionHash = <Option<String>>::sse_decode(deserializer);
         return crate::api::receiver::ReceiverTransferEvent {
             phase: var_phase,
             sender_name: var_senderName,
@@ -1581,6 +1582,7 @@ impl SseDecode for crate::api::receiver::ReceiverTransferEvent {
             sender_endpoint_id: var_senderEndpointId,
             sender_ticket: var_senderTicket,
             error: var_error,
+            collection_hash: var_collectionHash,
         };
     }
 }
@@ -2350,6 +2352,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::receiver::ReceiverTransferEve
             self.sender_endpoint_id.into_into_dart().into_dart(),
             self.sender_ticket.into_into_dart().into_dart(),
             self.error.into_into_dart().into_dart(),
+            self.collection_hash.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -3248,6 +3251,7 @@ impl SseEncode for crate::api::receiver::ReceiverTransferEvent {
         <Option<String>>::sse_encode(self.sender_endpoint_id, serializer);
         <Option<String>>::sse_encode(self.sender_ticket, serializer);
         <Option<crate::api::error::UserFacingErrorData>>::sse_encode(self.error, serializer);
+        <Option<String>>::sse_encode(self.collection_hash, serializer);
     }
 }
 

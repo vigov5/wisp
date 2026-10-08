@@ -30,6 +30,10 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
   bool? lastDiscoverableEnabled;
   int setDiscoverableCalls = 0;
   bool? lastRespondToOfferAccept;
+
+  /// What the accept forwarded as the collection's identity. Android needs it
+  /// to find the half-written files a previous attempt left behind.
+  String? lastRespondToOfferCollectionHash;
   int respondToOfferCalls = 0;
   String? lastIncomingSenderName;
   String? lastIncomingSenderEndpointId;
@@ -82,6 +86,7 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
     String statusMessage = 'Incoming offer',
     BigInt? bytesReceived,
     List<rust_receiver.ReceiverTransferFile>? files,
+    String? collectionHash,
   }) {
     if (_incomingController.isClosed) {
       return;
@@ -126,6 +131,7 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
       totalSizeLabel: '0 B',
       files: incomingFiles,
       error: null,
+      collectionHash: collectionHash,
     );
     _incomingController.add(_lastIncomingEvent!);
   }
@@ -324,8 +330,10 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
   Future<void> respondToOffer({
     required bool accept,
     List<String> transferPaths = const [],
+    String? collectionHash,
   }) async {
     lastRespondToOfferAccept = accept;
+    lastRespondToOfferCollectionHash = collectionHash;
     respondToOfferCalls += 1;
   }
 

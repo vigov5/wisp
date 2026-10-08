@@ -100,6 +100,11 @@ class MainActivity : FlutterFragmentActivity() {
         // so the next run on a device says whether 8 was the right pick.
         private const val DESTINATION_CONCURRENCY = 8
 
+        // Separators for the resume map. Built from code points rather than
+        // escapes so what lands in the file is unambiguous.
+        private val RESUME_FIELD_SEPARATOR = 0.toChar()
+        private val RESUME_LINE_SEPARATOR = 10.toChar()
+
         // MediaStore's on-disk name for a row whose IS_PENDING is still set.
         // Skipped by the folder walk; see [collectTreeFiles].
         private const val PENDING_MEDIA_PREFIX = ".pending-"
@@ -256,7 +261,7 @@ class MainActivity : FlutterFragmentActivity() {
         releaseSendSources()
         // A transfer cannot outlive the engine either, so any destination still
         // pending here belongs to one that will never finish.
-        releaseReceiveDestinations(publish = false)
+        releaseReceiveDestinations(ReceiveOutcome.KEEP_FOR_RESUME)
         super.onDestroy()
     }
 
@@ -411,20 +416,21 @@ class MainActivity : FlutterFragmentActivity() {
                 // move took away.
                 "createReceiveDestinations" -> {
                     val paths = call.argument<List<String>>("paths") ?: emptyList()
+                    val collectionHash = call.argument<String>("collectionHash")
                     lifecycleScope.launch {
                         val created = receiveDestMutex.withLock {
                             withContext(Dispatchers.IO) {
-                                createReceiveDestinations(paths)
+                                createReceiveDestinations(paths, collectionHash)
                             }
                         }
                         result.success(created)
                     }
                 }
                 "finishReceiveDestinations" -> {
-                    val publish = call.argument<Boolean>("publish") ?: false
+                    val outcome = ReceiveOutcome.parse(call.argument<String>("outcome"))
                     lifecycleScope.launch {
                         val published = receiveDestMutex.withLock {
-                            releaseReceiveDestinationsConcurrently(publish)
+                            releaseReceiveDestinationsConcurrently(outcome)
                         }
                         result.success(published)
                     }
@@ -1362,6 +1368,138 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
+    // What a stopped transfer leaves behind.
+    private enum class ReceiveOutcome {
+        // Finished: clear the pending flag and the files appear.
+        PUBLISH,
+
+        // Broke. The entries stay pending, holding the bytes that did arrive,
+        // so the next attempt at the same collection carries on from there.
+        KEEP_FOR_RESUME,
+
+        // Declined, cancelled, or never written to. Delete the entries.
+        DISCARD,
+        ;
+
+        companion object {
+            fun parse(name: String?): ReceiveOutcome = when (name) {
+                "publish" -> PUBLISH
+                "keepForResume" -> KEEP_FOR_RESUME
+                else -> DISCARD
+            }
+        }
+    }
+
+    // Transfer path -> MediaStore URI for the entries a failed attempt left
+    // behind, keyed by the collection's hash.
+    //
+    // The hash is what makes resuming safe. A half-written file can only be
+    // carried into another transfer if that transfer is *the same payload*,
+    // and nothing else establishes that: two sends can easily agree on file
+    // names and sizes while disagreeing on bytes, and the stream verifies only
+    // what it fetches — a wrong prefix would be kept and never noticed.
+    private val resumePrefs by lazy {
+        getSharedPreferences("wisp_receive_resume", Context.MODE_PRIVATE)
+    }
+
+    // Pending MediaStore rows expire on their own after a week, so a map that
+    // outlives its rows is just dead weight; this is the same week.
+    private val resumeRetentionMs = 7L * 24 * 60 * 60 * 1000
+
+    private fun resumeKey(collectionHash: String?): String? =
+        collectionHash?.takeIf { it.isNotBlank() }
+
+    // The collection the held destinations belong to, so a publish or a
+    // discard can forget its map without being told the hash again.
+    private var activeResumeKey: String? = null
+
+    // Keeps the saved map in step with what just happened to the entries it
+    // names: a published transfer has nothing left to resume, and a discarded
+    // one has nothing left at all.
+    private fun settleResumeMap(outcome: ReceiveOutcome) {
+        if (outcome == ReceiveOutcome.KEEP_FOR_RESUME) return
+        forgetResumeUris(activeResumeKey)
+        activeResumeKey = null
+    }
+
+    // The saved map for `key`, or empty.
+    //
+    // One entry per line, path and URI separated by NUL: a transfer path and
+    // a content URI can each contain anything but those two, so the format
+    // needs no escaping and no parser.
+    private fun loadResumeUris(key: String?): Map<String, Uri> {
+        val raw = key?.let { resumePrefs.getString("map:$it", null) } ?: return emptyMap()
+        return raw.lineSequence()
+            .mapNotNull { line ->
+                val sep = line.indexOf(RESUME_FIELD_SEPARATOR)
+                if (sep <= 0) {
+                    null
+                } else {
+                    line.substring(0, sep) to Uri.parse(line.substring(sep + 1))
+                }
+            }
+            .toMap()
+    }
+
+    private fun saveResumeUris(key: String?, uris: Map<String, Uri>) {
+        if (key == null) return
+        val serialized = uris.entries.joinToString(RESUME_LINE_SEPARATOR.toString()) {
+            "${it.key}$RESUME_FIELD_SEPARATOR${it.value}"
+        }
+        resumePrefs.edit()
+            .putString("map:$key", serialized)
+            .putLong("at:$key", System.currentTimeMillis())
+            .apply()
+        sweepExpiredResumeMaps()
+    }
+
+    private fun forgetResumeUris(key: String?) {
+        if (key == null) return
+        resumePrefs.edit().remove("map:$key").remove("at:$key").apply()
+    }
+
+    private fun sweepExpiredResumeMaps() {
+        val now = System.currentTimeMillis()
+        val stale = resumePrefs.all.keys
+            .filter { it.startsWith("at:") }
+            .filter { now - resumePrefs.getLong(it, 0L) > resumeRetentionMs }
+            .map { it.removePrefix("at:") }
+        if (stale.isEmpty()) return
+        val edit = resumePrefs.edit()
+        for (key in stale) edit.remove("map:$key").remove("at:$key")
+        edit.apply()
+    }
+
+    // Reopens a destination a previous attempt left half-written, or null when
+    // it is gone, was published in the meantime, or belongs to someone else.
+    //
+    // The pending check is the one that matters: a published row is a finished
+    // file the user can see, and writing into it would truncate something they
+    // already have.
+    private fun reopenPendingDestination(path: String, uri: Uri): Map<String, Any?>? {
+        val stillPending = try {
+            contentResolver.query(
+                uri, arrayOf(MediaStore.Downloads.IS_PENDING), null, null, null,
+            )?.use { cursor ->
+                cursor.moveToFirst() && cursor.getInt(0) == 1
+            } ?: false
+        } catch (e: Exception) {
+            Log.w(RECEIVE_TAG, "cannot inspect $uri for resume: ${e.message}")
+            false
+        }
+        if (!stillPending) return null
+        val pfd = try {
+            contentResolver.openFileDescriptor(uri, "rw")
+        } catch (e: Exception) {
+            Log.w(RECEIVE_TAG, "cannot reopen $uri for resume: ${e.message}")
+            null
+        } ?: return null
+        synchronized(receiveDestLock) {
+            openReceiveDestinations.add(ReceiveDestination(path, uri, pfd))
+        }
+        return mapOf("transferPath" to path, "fdPath" to "/proc/self/fd/${pfd.fd}")
+    }
+
     // One incoming file's destination, created before the transfer starts and
     // held open while it runs.
     //
@@ -1402,12 +1540,21 @@ class MainActivity : FlutterFragmentActivity() {
     // they always were.  Only the default Downloads/Wisp target is handled
     // here: a user-chosen SAF folder has no equivalent of `IS_PENDING`, so a
     // partial file would be visible there, and it keeps the copy path.
-    private suspend fun createReceiveDestinations(paths: List<String>): List<Map<String, Any?>> {
+    private suspend fun createReceiveDestinations(
+        paths: List<String>,
+        collectionHash: String?,
+    ): List<Map<String, Any?>> {
         // Concurrently, like everything else on this path: a retry after a
         // failed transfer arrives here holding the previous attempt's 1911
-        // destinations, and discarding those serially would put the cost right
+        // destinations, and releasing those serially would put the cost right
         // back on the critical path it was just taken off.
-        releaseReceiveDestinationsConcurrently(publish = false)
+        //
+        // Released, not discarded: those entries are what this attempt is
+        // about to write on from, so only the descriptors go.
+        releaseReceiveDestinationsConcurrently(ReceiveOutcome.KEEP_FOR_RESUME)
+        val key = resumeKey(collectionHash)
+        activeResumeKey = key
+        val resumable = loadResumeUris(key)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return emptyList()
         // Every destination is a descriptor held for the whole transfer, and
         // this loop had no ceiling at all — a 1911-file folder asked for 1911
@@ -1450,7 +1597,7 @@ class MainActivity : FlutterFragmentActivity() {
                             // point opening another 1900 descriptors for a
                             // batch already lost.
                             if (giveUp.get()) return@withPermit
-                            val entry = createOneDestination(path)
+                            val entry = createOneDestination(path, resumable[path])
                             if (entry == null) giveUp.set(true) else created[index] = entry
                             val finished = done.incrementAndGet()
                             if (finished % PROGRESS_EMIT_FILES == 0) {
@@ -1477,6 +1624,13 @@ class MainActivity : FlutterFragmentActivity() {
         // The last partial batch never reaches the modulo above, so the UI
         // would otherwise sit at 1904 of 1911 until the transfer started.
         emitReceivePrepareProgress(paths.size, paths.size)
+        // Written down now rather than at the end: if this transfer dies in a
+        // way that never reaches `finishReceiveDestinations` — the process
+        // killed, the phone rebooted — the entries are still findable, and
+        // that is exactly the case a resume is for.
+        saveResumeUris(key, synchronized(receiveDestLock) {
+            openReceiveDestinations.associate { it.transferPath to it.uri }
+        })
         return created.map { it!! }
     }
 
@@ -1484,7 +1638,11 @@ class MainActivity : FlutterFragmentActivity() {
     //
     // The descriptor lands in [openReceiveDestinations] before this returns,
     // so an abort or a publish covers it even when the batch around it fails.
-    private fun createOneDestination(path: String): Map<String, Any?>? {
+    private fun createOneDestination(path: String, resumeFrom: Uri?): Map<String, Any?>? {
+        // A pending entry from a previous attempt already holds its bytes.
+        if (resumeFrom != null) {
+            reopenPendingDestination(path, resumeFrom)?.let { return it }
+        }
         val parts = path.replace('\\', '/').split('/').filter { it.isNotBlank() }
         if (parts.isEmpty()) return null
         val fileName = sanitizeFileName(parts.last())
@@ -1515,7 +1673,9 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     private suspend fun abortPartialDestinations(): List<Map<String, Any?>> {
-        releaseReceiveDestinationsConcurrently(publish = false)
+        // Nothing has been written into this batch, so there is nothing to
+        // come back to.
+        releaseReceiveDestinationsConcurrently(ReceiveOutcome.DISCARD)
         return emptyList()
     }
 
@@ -1523,14 +1683,15 @@ class MainActivity : FlutterFragmentActivity() {
     // the files become visible; otherwise the entries are deleted, so a failed
     // transfer leaves nothing behind.  Returns transfer path -> final URI for
     // the published files.
-    private fun releaseReceiveDestinations(publish: Boolean): Map<String, String> {
+    private fun releaseReceiveDestinations(outcome: ReceiveOutcome): Map<String, String> {
         val held = takeHeldDestinations() ?: return emptyMap()
         val started = SystemClock.elapsedRealtime()
         val published = mutableMapOf<String, String>()
         for (dest in held) {
-            releaseOneDestination(dest, publish)?.let { published[dest.transferPath] = it }
+            releaseOneDestination(dest, outcome)?.let { published[dest.transferPath] = it }
         }
-        logReleased(publish, held.size, started)
+        logReleased(outcome, held.size, started)
+        settleResumeMap(outcome)
         return published
     }
 
@@ -1543,7 +1704,7 @@ class MainActivity : FlutterFragmentActivity() {
     // still what `onDestroy` calls — it runs on the main thread, where it
     // cannot suspend.
     private suspend fun releaseReceiveDestinationsConcurrently(
-        publish: Boolean,
+        outcome: ReceiveOutcome,
     ): Map<String, String> {
         val held = takeHeldDestinations() ?: return emptyMap()
         val started = SystemClock.elapsedRealtime()
@@ -1553,14 +1714,15 @@ class MainActivity : FlutterFragmentActivity() {
             for (dest in held) {
                 launch(Dispatchers.IO) {
                     slots.withPermit {
-                        releaseOneDestination(dest, publish)?.let {
+                        releaseOneDestination(dest, outcome)?.let {
                             published[dest.transferPath] = it
                         }
                     }
                 }
             }
         }
-        logReleased(publish, held.size, started)
+        logReleased(outcome, held.size, started)
+        settleResumeMap(outcome)
         return published
     }
 
@@ -1574,38 +1736,47 @@ class MainActivity : FlutterFragmentActivity() {
             }
         }
 
-    // Closes one descriptor and either clears its pending flag or deletes the
-    // entry. Returns the final URI when it was published.
-    private fun releaseOneDestination(dest: ReceiveDestination, publish: Boolean): String? {
+    // Closes the descriptor, then does what [outcome] says with the entry
+    // behind it. Returns the final URI when it was published.
+    private fun releaseOneDestination(
+        dest: ReceiveDestination,
+        outcome: ReceiveOutcome,
+    ): String? {
         try {
             dest.pfd.close()
         } catch (_: IOException) {
         }
         return try {
-            if (publish) {
-                contentResolver.update(
-                    dest.uri,
-                    ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) },
-                    null, null,
-                )
-                dest.uri.toString()
-            } else {
-                contentResolver.delete(dest.uri, null, null)
-                null
+            when (outcome) {
+                ReceiveOutcome.PUBLISH -> {
+                    contentResolver.update(
+                        dest.uri,
+                        ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) },
+                        null, null,
+                    )
+                    dest.uri.toString()
+                }
+                // Left pending on purpose: invisible to other apps, and
+                // holding the only copy of the bytes that did arrive.
+                ReceiveOutcome.KEEP_FOR_RESUME -> null
+                ReceiveOutcome.DISCARD -> {
+                    contentResolver.delete(dest.uri, null, null)
+                    null
+                }
             }
         } catch (e: Exception) {
             Log.w(
                 RECEIVE_TAG,
-                "could not ${if (publish) "publish" else "discard"} ${dest.uri}: ${e.message}",
+                "could not ${outcome.name.lowercase()} ${dest.uri}: ${e.message}",
             )
             null
         }
     }
 
-    private fun logReleased(publish: Boolean, count: Int, startedAt: Long) {
+    private fun logReleased(outcome: ReceiveOutcome, count: Int, startedAt: Long) {
         Log.i(
             RECEIVE_TAG,
-            "${if (publish) "published" else "discarded"} $count destination(s) in " +
+            "${outcome.name.lowercase()} $count destination(s) in " +
                 "${SystemClock.elapsedRealtime() - startedAt} ms",
         )
     }
