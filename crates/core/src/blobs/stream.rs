@@ -40,6 +40,7 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tracing::{debug, trace};
 
+use super::descriptor;
 use super::error::{BlobError, BlobTextError, Result, error_chain};
 use super::receive::{BlobDownloadUpdate, PROGRESS_EMIT_INTERVAL, ProgressCoalescer};
 use super::source::BlobSource;
@@ -888,13 +889,21 @@ async fn open_sink(target: &StreamTarget, sink: &Path, resume_at: u64) -> Result
                 .map_err(|source| BlobError::fetch(context(), source))?;
         }
     }
-    let file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(sink)
-        .await
-        .map_err(|source| BlobError::fetch(context(), source))?;
+    // A descriptor the platform opened is written through a duplicate of it.
+    // Opening its `/proc/self/fd/<n>` path would walk back to the real file,
+    // which is the detour the descriptor was handed to us to avoid — see
+    // [`descriptor::open_descriptor`].  Any other path, including a
+    // `platform_descriptor` target that is an ordinary file, opens as before.
+    let file = match descriptor::open_descriptor(sink) {
+        Some(file) => tokio::fs::File::from_std(file),
+        None => tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(sink)
+            .await
+            .map_err(|source| BlobError::fetch(context(), source))?,
+    };
     file.set_len(resume_at)
         .await
         .map_err(|source| BlobError::fetch(context(), source))?;
@@ -941,10 +950,17 @@ async fn write_leaves(
 /// How much of a partial file can be kept: its length rounded down to a whole
 /// chunk group, since that is the finest boundary a range request can start on.
 async fn resumable_prefix_len(partial: &Path) -> u64 {
-    let Ok(metadata) = tokio::fs::metadata(partial).await else {
-        return 0;
+    // Through the descriptor where there is one: `stat` on a descriptor path is
+    // the same path walk as opening it, and would report 0 exactly where the
+    // open is refused — a resume that silently restarts from the beginning.
+    let len = match descriptor::descriptor_len(partial) {
+        Some(len) => len,
+        None => match tokio::fs::metadata(partial).await {
+            Ok(metadata) => metadata.len(),
+            Err(_) => return 0,
+        },
     };
-    metadata.len() / CHUNK_GROUP_BYTES * CHUNK_GROUP_BYTES
+    len / CHUNK_GROUP_BYTES * CHUNK_GROUP_BYTES
 }
 
 #[cfg(test)]
@@ -1440,6 +1456,99 @@ mod tests {
         tokio::fs::write(&partial, vec![0u8; 10]).await?;
         assert_eq!(resumable_prefix_len(&partial).await, 0);
 
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        Ok(())
+    }
+
+    /// A destination the platform opened is written through that descriptor,
+    /// not by reopening the `/proc/self/fd/<n>` path it arrives as.
+    ///
+    /// The two are told apart by the file offset.  A duplicate shares one open
+    /// file description with the original, so it inherits its position; a path
+    /// reopen is a second, independent description starting at zero.  That is
+    /// the same difference that matters on the device, where the descriptor
+    /// carries access the path walk does not.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_platform_descriptor_is_written_through_its_descriptor()
+    -> std::result::Result<(), std::io::Error> {
+        use std::io::{Read, Seek};
+        use std::os::fd::AsRawFd;
+
+        let dir = unique_dir("wisp-descriptor-sink");
+        tokio::fs::create_dir_all(&dir).await?;
+        let backing = dir.join("pending.bin");
+        let mut held = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&backing)?;
+        let fd_path = PathBuf::from(format!("/proc/self/fd/{}", held.as_raw_fd()));
+        if !fd_path.exists() {
+            // No procfs (macOS): there is no descriptor path to open.
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+            return Ok(());
+        }
+        held.seek(SeekFrom::Start(5))?;
+
+        let target = StreamTarget {
+            transfer_path: "holiday/clip.mp4".to_owned(),
+            destination: fd_path.clone(),
+            partial: dir.join("parts").join("clip.mp4"),
+            platform_descriptor: true,
+            size: 7,
+            adopt_if_matches: None,
+        };
+        let mut sink = open_sink(&target, sink_path(&target), 0)
+            .await
+            .expect("the descriptor should open");
+        assert_eq!(
+            sink.stream_position().await?,
+            5,
+            "a reopened path would start at 0; only a duplicate inherits this"
+        );
+
+        sink.seek(SeekFrom::Start(0)).await?;
+        sink.write_all(b"holiday").await?;
+        sink.flush().await?;
+        drop(sink);
+
+        // The bytes landed in the file the platform is holding, which is the
+        // only thing the receiver has to get right here.
+        held.seek(SeekFrom::Start(0))?;
+        let mut written = String::new();
+        held.read_to_string(&mut written)?;
+        assert_eq!(written, "holiday");
+
+        drop(held);
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        Ok(())
+    }
+
+    /// The resume probe measures a descriptor through the descriptor too.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_descriptor_resumes_from_its_own_length() -> std::result::Result<(), std::io::Error> {
+        use std::os::fd::AsRawFd;
+
+        let dir = unique_dir("wisp-descriptor-resume");
+        tokio::fs::create_dir_all(&dir).await?;
+        let backing = dir.join("pending.bin");
+        let held = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&backing)?;
+        let fd_path = PathBuf::from(format!("/proc/self/fd/{}", held.as_raw_fd()));
+        if !fd_path.exists() {
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+            return Ok(());
+        }
+
+        held.set_len(CHUNK_GROUP_BYTES + 7)?;
+        assert_eq!(resumable_prefix_len(&fd_path).await, CHUNK_GROUP_BYTES);
+
+        drop(held);
         let _ = tokio::fs::remove_dir_all(&dir).await;
         Ok(())
     }

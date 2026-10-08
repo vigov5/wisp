@@ -229,14 +229,26 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
     // Only the default Downloads/Wisp target: a user-chosen SAF folder has no
     // equivalent of MediaStore's pending flag, so a half-written file would be
     // visible there. That case keeps writing to the cache and copying over.
-    final destinations = accept && androidReceiveCacheDir != null && androidSaveUri == null
+    final onAndroid = androidReceiveCacheDir != null;
+    final toPickedFolder = androidSaveUri != null;
+    final destinations = accept && onAndroid && !toPickedFolder
         ? await AndroidReceiveDestinations.create(transferPaths)
         : const <AndroidReceiveDestination>[];
     _writingToPlatformDestinations = destinations.isNotEmpty;
-    if (_writingToPlatformDestinations) {
+    if (accept && onAndroid) {
+      // Which of the two receive paths runs decides whether the payload is
+      // written once or twice, and nothing on screen says which one it was:
+      // both end with the files in Downloads, one of them long after the
+      // screen says the transfer finished. Named here so a slow finish can be
+      // read off a log rather than guessed at.
+      final why = toPickedFolder
+          ? 'a picked folder has no pending flag'
+          : 'the platform opened none';
       debugPrint(
-        '[receiver] writing ${destinations.length} file(s) straight to their '
-        'final destination',
+        _writingToPlatformDestinations
+            ? '[receiver] writing ${destinations.length} file(s) straight to '
+                  'their final destination'
+            : '[receiver] receiving into the cache and copying afterwards: $why',
       );
     }
     try {

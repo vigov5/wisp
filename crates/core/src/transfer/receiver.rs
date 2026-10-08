@@ -1520,20 +1520,28 @@ async fn record_streamed_collection(
         // says it is this file, and then writes nothing at `destination` —
         // there was nothing left to write. So a missing destination with an
         // adopted candidate standing in for it is a success, not a gap.
-        let verified = match fs::metadata(&exp.destination).await {
-            Ok(metadata) => Some((exp.destination.clone(), metadata)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                match exp.adopt_if_matches.as_ref() {
-                    Some(adopted) => fs::metadata(adopted)
-                        .await
-                        .ok()
-                        .map(|metadata| (adopted.clone(), metadata)),
-                    None => None,
+        // A destination the platform opened is measured through its
+        // descriptor. `stat` on a `/proc/self/fd/<n>` path is the same walk
+        // back onto the real file that writing through the path would have
+        // been, and it happens once per file in the finalize step — the part
+        // of a receive the user is already waiting through.
+        let verified = match crate::blobs::descriptor::descriptor_len(&exp.destination) {
+            Some(len) => Some((exp.destination.clone(), len)),
+            None => match fs::metadata(&exp.destination).await {
+                Ok(metadata) => Some((exp.destination.clone(), metadata.len())),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    match exp.adopt_if_matches.as_ref() {
+                        Some(adopted) => fs::metadata(adopted)
+                            .await
+                            .ok()
+                            .map(|metadata| (adopted.clone(), metadata.len())),
+                        None => None,
+                    }
                 }
-            }
-            Err(_) => None,
+                Err(_) => None,
+            },
         };
-        let (_checked_path, metadata) = match verified {
+        let (_checked_path, found_len) = match verified {
             Some(found) => found,
             None => {
                 return Err(TransferError::other(
@@ -1545,7 +1553,7 @@ async fn record_streamed_collection(
                 ));
             }
         };
-        if metadata.len() != exp.size {
+        if found_len != exp.size {
             return Err(TransferError::other(
                 "checking streamed file",
                 std::io::Error::other(format!(
@@ -1553,7 +1561,7 @@ async fn record_streamed_collection(
                     exp.size,
                     exp.path,
                     exp.destination.display(),
-                    metadata.len()
+                    found_len
                 )),
             ));
         }

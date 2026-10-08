@@ -83,6 +83,50 @@ pub(crate) fn metadata(path: &Path) -> std::io::Result<std::fs::Metadata> {
     std::fs::metadata(path)
 }
 
+/// A handle onto the file a `/proc/self/fd/<n>` path names, made by duplicating
+/// that descriptor rather than walking the path.
+///
+/// This is the write side of the same problem the module opens with. The
+/// receiver is handed one descriptor per incoming file — on Android a pending
+/// MediaStore row the platform opened and holds for the whole transfer — and
+/// writes the file into it. Opening the `/proc/self/fd/<n>` path instead is a
+/// fresh path walk onto the real file, which costs the two things the
+/// descriptor was given to us to avoid: the walk can be refused outright, and
+/// where it is allowed it lands back in MediaProvider's FUSE daemon, so every
+/// write takes a detour through userspace that writing to the descriptor does
+/// not.
+///
+/// `None` for an ordinary path, and for a descriptor that could not be
+/// duplicated. The caller then opens the path, which is the correct thing
+/// everywhere else and no worse than today here.
+#[cfg(unix)]
+pub(crate) fn open_descriptor(path: &Path) -> Option<File> {
+    let fd = descriptor_number(path)?;
+    match unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned() {
+        Ok(owned) => {
+            trace!(path = %path.display(), "using the descriptor the platform opened");
+            Some(File::from(owned))
+        }
+        Err(source) => {
+            warn!(path = %path.display(), %source, "could not duplicate descriptor");
+            None
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn open_descriptor(_path: &Path) -> Option<std::fs::File> {
+    None
+}
+
+/// Length of the file a descriptor path names, measured through the descriptor.
+///
+/// `None` for any other path, so a caller can fall through to a path stat —
+/// which is what the length of an ordinary file means anyway.
+pub(crate) fn descriptor_len(path: &Path) -> Option<u64> {
+    Some(open_descriptor(path)?.metadata().ok()?.len())
+}
+
 impl Drop for DescriptorHandles {
     fn drop(&mut self) {
         #[cfg(unix)]
@@ -135,6 +179,47 @@ mod tests {
         assert_eq!(descriptor_number(&PathBuf::from("/proc/self/fd/-1")), None);
         assert_eq!(descriptor_number(&PathBuf::from("/proc/self/fd/1/x")), None);
         assert_eq!(descriptor_number(&PathBuf::from("/proc/1234/fd/7")), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_descriptor_path_opens_through_its_descriptor() -> std::io::Result<()> {
+        use std::io::Seek;
+        use std::os::fd::AsRawFd;
+        use std::path::PathBuf;
+
+        let dir = std::env::temp_dir().join("wisp-open-descriptor");
+        std::fs::create_dir_all(&dir)?;
+        let backing = dir.join("pending.bin");
+        let mut held = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&backing)?;
+        held.set_len(9)?;
+        let fd_path = PathBuf::from(format!("/proc/self/fd/{}", held.as_raw_fd()));
+        if !fd_path.exists() {
+            // No procfs (macOS): nothing to assert.
+            let _ = std::fs::remove_dir_all(&dir);
+            return Ok(());
+        }
+
+        // Shared position, which is what makes it the same open file and not a
+        // second one opened by name.
+        held.seek(std::io::SeekFrom::Start(4))?;
+        let mut duplicate = open_descriptor(&fd_path).expect("a descriptor path duplicates");
+        assert_eq!(duplicate.stream_position()?, 4);
+        assert_eq!(descriptor_len(&fd_path), Some(9));
+
+        // An ordinary path is the caller's to open: this says "not mine", not
+        // "failed", so nothing is reported for the far more common case.
+        assert!(open_descriptor(&backing).is_none());
+        assert_eq!(descriptor_len(&backing), None);
+
+        drop(duplicate);
+        drop(held);
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
     }
 
     #[cfg(unix)]
