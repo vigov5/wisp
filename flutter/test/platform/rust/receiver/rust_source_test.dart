@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:app/features/receive/application/state.dart';
 import 'package:app/platform/rust/receiver/rust_source.dart';
 import 'package:app/platform/rust/rendezvous_defaults.dart';
 import 'package:app/src/rust/api/receiver.dart' as rust_receiver;
@@ -59,6 +60,70 @@ void main() {
 
     expect(seenServerUrls, contains(defaultRendezvousUrl));
   });
+
+  test(
+    'an empty pairing event keeps the code but stops calling it Ready',
+    () async {
+      // The receiver saying it holds nothing, while a code is on screen, is
+      // exactly the airplane-mode case: the code came from cache or from an
+      // earlier session, and nothing can vouch for it now. Keeping it visible is
+      // right; keeping the green badge is not.
+      late StreamController<rust_receiver.ReceiverPairingState> pairing;
+      final source = RustReceiverServiceSource(
+        deviceName: 'Device',
+        downloadRoot: '/tmp/Wisp',
+        serverUrl: 'http://127.0.0.1:8787',
+        pairingStreamFactory:
+            ({
+              serverUrl,
+              required downloadRoot,
+              required deviceName,
+              required deviceType,
+            }) {
+              pairing =
+                  StreamController<
+                    rust_receiver.ReceiverPairingState
+                  >.broadcast(sync: true);
+              return pairing.stream;
+            },
+        transferStreamFactory:
+            ({
+              serverUrl,
+              required downloadRoot,
+              required deviceName,
+              required deviceType,
+            }) => const Stream<rust_receiver.ReceiverTransferEvent>.empty(),
+      );
+
+      final seen = <ReceiverServiceState>[];
+      final subscription = source.watchState().listen(seen.add);
+      addTearDown(() async {
+        await subscription.cancel();
+        await pairing.close();
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      pairing.add(
+        const rust_receiver.ReceiverPairingState(code: 'ABC123', stale: false),
+      );
+      expect(source.currentState.pairingCode.isAvailable, isTrue);
+      expect(source.currentState.pairingCode.isStale, isFalse);
+
+      pairing.add(const rust_receiver.ReceiverPairingState(stale: false));
+
+      expect(
+        source.currentState.pairingCode.normalizedCode,
+        'ABC123',
+        reason: 'the only code the user has stays on screen',
+      );
+      expect(
+        source.currentState.pairingCode.isStale,
+        isTrue,
+        reason: 'but nothing can vouch for it, so the badge must not say Ready',
+      );
+      expect(seen.last.pairingCode.isStale, isTrue);
+    },
+  );
 
   test(
     'updateIdentity restarts active receiver streams with new config',

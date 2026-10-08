@@ -270,18 +270,21 @@ void main() {
     expect(saved.totalBytes, BigInt.from(99));
   });
 
-  test('trustFromOffer falls back to a neutral label when none is given', () async {
-    final repo = await makeRepo();
-    await repo.trustFromOffer(
-      endpointId: 'NEW1',
-      label: '',
-      deviceType: 'laptop',
-    );
-    // With nothing to show, the tile still needs a label. (A raw placeholder
-    // like "Sender" is kept as-is on first save, mirroring recordTransfer, and
-    // replaced by a real name on the next transfer.)
-    expect(repo.loadAll().single.label, 'Saved device');
-  });
+  test(
+    'trustFromOffer falls back to a neutral label when none is given',
+    () async {
+      final repo = await makeRepo();
+      await repo.trustFromOffer(
+        endpointId: 'NEW1',
+        label: '',
+        deviceType: 'laptop',
+      );
+      // With nothing to show, the tile still needs a label. (A raw placeholder
+      // like "Sender" is kept as-is on first save, mirroring recordTransfer, and
+      // replaced by a real name on the next transfer.)
+      expect(repo.loadAll().single.label, 'Saved device');
+    },
+  );
 
   test('eviction caps the list at 30', () async {
     final repo = await makeRepo();

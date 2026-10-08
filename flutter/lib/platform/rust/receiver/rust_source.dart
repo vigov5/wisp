@@ -376,16 +376,30 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
           return;
         }
         final nextState = mapReceiverPairingState(pairing);
-        // Don't downgrade a usable cached/live code to Unavailable on transient
-        // empty events from the stream — keep the existing Ready state and
-        // wait for a real refresh. Only accept transitions that actually carry
-        // a code, plus terminal failures via onError.
-        if (!nextState.pairingCode.isAvailable &&
-            _currentState.pairingCode.isAvailable) {
+        // An event carrying no code does not prove the one on screen is gone,
+        // so it stays: it is the only code the user has, and on a cold start
+        // offline it is the cached one, which still pairs if the peer already
+        // knows it.
+        //
+        // What it does prove is that nobody can vouch for it. This used to
+        // return here and leave the badge green, so a phone in airplane mode
+        // read Ready however many times Refresh was tapped — the receiver
+        // saying "I have nothing" and the UI answering "I can see a code, you
+        // must be wrong". Now the code stays and the claim goes.
+        final shown = _currentState.pairingCode;
+        if (!nextState.pairingCode.isAvailable && shown.isAvailable) {
           debugPrint(
-            '[receiver] pairing stream generation=$generation ignored empty event '
-            '(keeping cached ready code)',
+            '[receiver] pairing stream generation=$generation kept the code on '
+            'screen but stopped vouching for it',
           );
+          if (shown.isStale) return;
+          _currentState = ReceiverServiceState.stale(
+            code: shown.code!,
+            expiresAt: shown.expiresAt,
+          );
+          if (!_stateController.isClosed) {
+            _stateController.add(_currentState);
+          }
           return;
         }
         _currentState = nextState;

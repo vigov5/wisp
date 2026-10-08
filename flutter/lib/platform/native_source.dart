@@ -44,10 +44,7 @@ class NativeSource {
 
   static List<NativeSource> parseAll(List<dynamic>? raw) {
     if (raw == null) return const [];
-    return raw
-        .map(NativeSource.parse)
-        .nonNulls
-        .toList(growable: false);
+    return raw.map(NativeSource.parse).nonNulls.toList(growable: false);
   }
 
   final String path;

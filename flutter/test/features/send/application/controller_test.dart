@@ -301,10 +301,7 @@ void main() {
           name: 'holiday.mp4',
           sizeBytes: BigInt.from(6000000000),
           sources: const [
-            SendSource(
-              path: '/proc/self/fd/42',
-              fdTransferPath: 'holiday.mp4',
-            ),
+            SendSource(path: '/proc/self/fd/42', fdTransferPath: 'holiday.mp4'),
           ],
         ),
       ]);
@@ -342,7 +339,8 @@ void main() {
     final controller = container.read(sendControllerProvider.notifier);
     controller.beginDraft([
       SendPickedFile(
-        path: 'content://com.android.externalstorage.documents/tree/primary%3Aphotos',
+        path:
+            'content://com.android.externalstorage.documents/tree/primary%3Aphotos',
         name: 'photos',
         kind: SendPickedFileKind.directory,
         sizeBytes: BigInt.from(9),
@@ -373,7 +371,8 @@ void main() {
       ),
     ]);
     // The draft still shows one row for the folder the user picked.
-    final drafting = container.read(sendControllerProvider) as SendStateDrafting;
+    final drafting =
+        container.read(sendControllerProvider) as SendStateDrafting;
     expect(drafting.items.single.name, 'photos');
   });
 

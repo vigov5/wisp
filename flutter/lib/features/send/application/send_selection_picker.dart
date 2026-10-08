@@ -88,9 +88,9 @@ class FileSelectorSendSelectionPicker implements SendSelectionPicker {
             elapsed: result.copyElapsed,
             bytesCopied: result.bytesCopied,
           ),
-          sources: result.sources.map(SendSource.fromNative).toList(
-            growable: false,
-          ),
+          sources: result.sources
+              .map(SendSource.fromNative)
+              .toList(growable: false),
         ),
       ];
     }
@@ -162,8 +162,6 @@ SendPickedFile sendPickedFileFromNativeSource(
     kind: SendPickedFileKind.file,
     sizeBytes: sizeBytes,
     sourcePreparation: sourcePreparation,
-    sources: source.fromDescriptor
-        ? [SendSource.fromNative(source)]
-        : null,
+    sources: source.fromDescriptor ? [SendSource.fromNative(source)] : null,
   );
 }

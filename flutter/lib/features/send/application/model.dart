@@ -122,8 +122,7 @@ class SendDraftItem {
   }
 
   /// What the core is handed for this item — see [SendPickedFile.sources].
-  List<SendSource> get resolvedSources =>
-      sources ?? [SendSource(path: path)];
+  List<SendSource> get resolvedSources => sources ?? [SendSource(path: path)];
 
   final String path;
   final String name;
@@ -175,6 +174,5 @@ class SendPickedFile {
   /// Null means the ordinary case: [path] is itself the one source.
   final List<SendSource>? sources;
 
-  List<SendSource> get resolvedSources =>
-      sources ?? [SendSource(path: path)];
+  List<SendSource> get resolvedSources => sources ?? [SendSource(path: path)];
 }
