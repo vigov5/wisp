@@ -15,7 +15,7 @@ class MobileIdentityCard extends StatefulWidget {
   final ReceiverIdleViewState state;
 
   /// Tapped when the user explicitly asks for a fresh pairing code (refresh
-  /// icon or the "may have been used" hint).
+  /// icon or the "cannot be confirmed" hint).
   final VoidCallback? onRefreshCode;
 
   @override
@@ -306,7 +306,7 @@ class _MobileIdentityCardState extends State<MobileIdentityCard> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Code may have been used. Tap to refresh.',
+                          'This code cannot be confirmed right now. Tap to refresh.',
                           style: wispSans(
                             fontSize: 13,
                             fontWeight: FontWeight.w500,

@@ -22,7 +22,7 @@ class ReceiveIdleCard extends StatefulWidget {
   final VoidCallback? onOpenQr;
 
   /// Tapped when the user explicitly asks for a fresh pairing code (refresh
-  /// icon or the "may have been used" hint).  Wired to the receiver
+  /// icon or the "cannot be confirmed" hint).  Wired to the receiver
   /// service's `ensureRegistered` from the shell.
   final VoidCallback? onRefreshCode;
 
@@ -320,7 +320,7 @@ class _ReceiveIdleCardState extends State<ReceiveIdleCard> {
                         ? _handleRefresh
                         : null,
                     tooltip: widget.state.isStale
-                        ? 'Code may have been used — tap to refresh'
+                        ? 'This code cannot be confirmed right now — tap to refresh'
                         : 'Refresh code',
                     style: IconButton.styleFrom(
                       fixedSize: const Size(38, 38),
