@@ -316,6 +316,7 @@ impl ReceiverSession {
             files,
             inline_text: offer.inline_text.clone(),
             error: None,
+            collection_hash: Some(offer.collection_hash.to_string()),
         };
         tracing::info!(
             target: "wisp_app::receiver::session",
@@ -607,6 +608,7 @@ impl ReceiverSession {
                     files: Vec::new(),
                     inline_text: None,
                     error: None,
+                    collection_hash: None,
                 },
                 CoreTransferOutcome::Cancelled(cancellation) => ReceiverOfferEvent {
                     phase: ReceiverOfferPhase::Cancelled,
@@ -635,6 +637,7 @@ impl ReceiverSession {
                         "Transfer cancelled",
                         cancellation.reason,
                     )),
+                    collection_hash: None,
                 },
             },
             Ok(Err(error)) => failed_offer_event(
@@ -836,6 +839,7 @@ fn completed_offer_event(
         files: Vec::new(),
         inline_text: None,
         error: None,
+        collection_hash: None,
     }
 }
 
@@ -885,6 +889,7 @@ fn build_offer_event(
         files,
         inline_text: None,
         error,
+        collection_hash: None,
     }
 }
 
@@ -941,6 +946,7 @@ fn failed_offer_event(
         files,
         inline_text: None,
         error: Some(error),
+        collection_hash: None,
     }
 }
 
@@ -978,6 +984,7 @@ fn connecting_offer_event(
         files: Vec::new(),
         inline_text: None,
         error: None,
+        collection_hash: None,
     }
 }
 

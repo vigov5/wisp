@@ -137,6 +137,7 @@ class TransferIncomingOffer {
     this.senderEndpointId,
     this.inlineText,
     this.autoAccepted = false,
+    this.collectionHash,
   });
 
   final TransferIdentity sender;
@@ -158,6 +159,13 @@ class TransferIncomingOffer {
   /// user never sees the offer card for it.
   final bool autoAccepted;
 
+  /// Hex hash of the collection being offered, from the receiver core.
+  ///
+  /// Android hands it to the platform so a retry can find the half-written
+  /// files its last attempt left behind, and know they are the right ones.
+  /// `null` for a fake/test source and for anything but a live offer.
+  final String? collectionHash;
+
   String get displaySenderName => sender.displayName;
   bool get willResume => bytesReceived > BigInt.zero;
   bool get isTextOffer => inlineText != null;
@@ -178,6 +186,7 @@ class TransferIncomingOffer {
       senderEndpointId: senderEndpointId ?? this.senderEndpointId,
       inlineText: inlineText,
       autoAccepted: autoAccepted ?? this.autoAccepted,
+      collectionHash: collectionHash,
     );
   }
 }

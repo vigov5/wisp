@@ -107,6 +107,15 @@ pub struct ReceiverTransferEvent {
     pub sender_endpoint_id: Option<String>,
     pub sender_ticket: Option<String>,
     pub error: Option<crate::api::error::UserFacingErrorData>,
+    /// Hex hash of the collection this offer is for, set only while the offer
+    /// awaits a decision.
+    ///
+    /// Android keeps half-written files between attempts as pending MediaStore
+    /// rows, and this is what says a given half-written file belongs to the
+    /// transfer about to resume. Matching on names and sizes instead would
+    /// eventually hand a resume the wrong prefix, which no later verification
+    /// would catch — the stream only checks the bytes it fetches.
+    pub collection_hash: Option<String>,
 }
 
 pub fn register_receiver(
@@ -669,6 +678,7 @@ fn map_event(event: AppReceiverOfferEvent) -> ReceiverTransferEvent {
         sender_endpoint_id: event.sender_endpoint_id,
         sender_ticket: event.sender_ticket,
         error: map_optional_user_facing_error(event.error),
+        collection_hash: event.collection_hash,
     }
 }
 

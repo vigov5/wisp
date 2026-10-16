@@ -158,6 +158,15 @@ pub struct ReceiverOfferEvent {
     /// ordinary file transfers.
     pub inline_text: Option<String>,
     pub error: Option<UserFacingError>,
+    /// The collection's hash, hex, on the offer the user is being asked about.
+    ///
+    /// It is the only thing that identifies *this payload* rather than a
+    /// payload that happens to have the same file names and sizes, which is
+    /// what a platform that keeps partial files between attempts has to key
+    /// them on: reusing someone else's half-written file because the name
+    /// matched would corrupt it silently. `None` on every event that is not
+    /// an offer awaiting a decision.
+    pub collection_hash: Option<String>,
 }
 
 #[derive(Debug, Clone)]

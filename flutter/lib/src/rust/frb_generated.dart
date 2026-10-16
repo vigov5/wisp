@@ -1488,8 +1488,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ReceiverTransferEvent dco_decode_receiver_transfer_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 20)
-      throw Exception('unexpected arr length: expect 20 but see ${arr.length}');
+    if (arr.length != 21)
+      throw Exception('unexpected arr length: expect 21 but see ${arr.length}');
     return ReceiverTransferEvent(
       phase: dco_decode_receiver_transfer_phase(arr[0]),
       senderName: dco_decode_String(arr[1]),
@@ -1513,6 +1513,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       senderEndpointId: dco_decode_opt_String(arr[17]),
       senderTicket: dco_decode_opt_String(arr[18]),
       error: dco_decode_opt_box_autoadd_user_facing_error_data(arr[19]),
+      collectionHash: dco_decode_opt_String(arr[20]),
     );
   }
 
@@ -2382,6 +2383,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_error = sse_decode_opt_box_autoadd_user_facing_error_data(
       deserializer,
     );
+    var var_collectionHash = sse_decode_opt_String(deserializer);
     return ReceiverTransferEvent(
       phase: var_phase,
       senderName: var_senderName,
@@ -2403,6 +2405,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       senderEndpointId: var_senderEndpointId,
       senderTicket: var_senderTicket,
       error: var_error,
+      collectionHash: var_collectionHash,
     );
   }
 
@@ -3322,6 +3325,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.senderEndpointId, serializer);
     sse_encode_opt_String(self.senderTicket, serializer);
     sse_encode_opt_box_autoadd_user_facing_error_data(self.error, serializer);
+    sse_encode_opt_String(self.collectionHash, serializer);
   }
 
   @protected

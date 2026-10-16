@@ -41,7 +41,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, trace};
 
 use super::descriptor;
-use super::error::{BlobError, BlobTextError, Result, error_chain};
+use super::error::{BlobError, BlobTextError, Result, error_chain, flatten_keeping_io_kind};
 use super::receive::{BlobDownloadUpdate, PROGRESS_EMIT_INTERVAL, ProgressCoalescer};
 use super::source::BlobSource;
 use super::telemetry::BlobTransferTelemetry;
@@ -428,7 +428,7 @@ pub(super) async fn stream_collection(
             // error means the context and not the cause. See `error_chain`.
             BlobError::fetch(
                 format!("collection {root_hash}"),
-                BlobTextError::new(error_chain(&source)),
+                flatten_keeping_io_kind(&source, error_chain(&source)),
             )
         })?;
 

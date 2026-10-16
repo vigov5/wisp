@@ -240,6 +240,16 @@ class ReceiverTransferEvent {
   final String? senderTicket;
   final UserFacingErrorData? error;
 
+  /// Hex hash of the collection this offer is for, set only while the offer
+  /// awaits a decision.
+  ///
+  /// Android keeps half-written files between attempts as pending MediaStore
+  /// rows, and this is what says a given half-written file belongs to the
+  /// transfer about to resume. Matching on names and sizes instead would
+  /// eventually hand a resume the wrong prefix, which no later verification
+  /// would catch — the stream only checks the bytes it fetches.
+  final String? collectionHash;
+
   const ReceiverTransferEvent({
     required this.phase,
     required this.senderName,
@@ -261,6 +271,7 @@ class ReceiverTransferEvent {
     this.senderEndpointId,
     this.senderTicket,
     this.error,
+    this.collectionHash,
   });
 
   @override
@@ -284,7 +295,8 @@ class ReceiverTransferEvent {
       connectionPath.hashCode ^
       senderEndpointId.hashCode ^
       senderTicket.hashCode ^
-      error.hashCode;
+      error.hashCode ^
+      collectionHash.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -310,7 +322,8 @@ class ReceiverTransferEvent {
           connectionPath == other.connectionPath &&
           senderEndpointId == other.senderEndpointId &&
           senderTicket == other.senderTicket &&
-          error == other.error;
+          error == other.error &&
+          collectionHash == other.collectionHash;
 }
 
 class ReceiverTransferFile {

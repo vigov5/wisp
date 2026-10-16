@@ -225,6 +225,7 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
   Future<void> respondToOffer({
     required bool accept,
     List<String> transferPaths = const [],
+    String? collectionHash,
   }) async {
     // Only the default Downloads/Wisp target: a user-chosen SAF folder has no
     // equivalent of MediaStore's pending flag, so a half-written file would be
@@ -232,7 +233,10 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
     final onAndroid = androidReceiveCacheDir != null;
     final toPickedFolder = androidSaveUri != null;
     final destinations = accept && onAndroid && !toPickedFolder
-        ? await AndroidReceiveDestinations.create(transferPaths)
+        ? await AndroidReceiveDestinations.create(
+            transferPaths,
+            collectionHash: collectionHash,
+          )
         : const <AndroidReceiveDestination>[];
     _writingToPlatformDestinations = destinations.isNotEmpty;
     if (accept && onAndroid) {
@@ -266,7 +270,11 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
     } catch (_) {
       if (_writingToPlatformDestinations) {
         _writingToPlatformDestinations = false;
-        await AndroidReceiveDestinations.finish(publish: false);
+        // Nothing was written: the accept itself failed. Keeping empty
+        // entries would only litter.
+        await AndroidReceiveDestinations.finish(
+          outcome: ReceiveDestinationOutcome.discard,
+        );
       }
       rethrow;
     }
@@ -542,15 +550,24 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
       };
       if (!terminal.contains(event.phase)) return;
       _writingToPlatformDestinations = false;
+      // A failure is the one case worth keeping the half-written files for:
+      // the sender is still out there and the user will almost always try
+      // again. Cancelling is the user saying no, and leaves nothing.
+      final outcome = switch (event.phase) {
+        rust_receiver.ReceiverTransferPhase.completed =>
+          ReceiveDestinationOutcome.publish,
+        rust_receiver.ReceiverTransferPhase.failed =>
+          ReceiveDestinationOutcome.keepForResume,
+        _ => ReceiveDestinationOutcome.discard,
+      };
       final published = await AndroidReceiveDestinations.finish(
-        publish: completed,
+        outcome: outcome,
       );
       _savedReceivedUris
         ..clear()
         ..addAll(published);
       debugPrint(
-        '[receiver] Android ${completed ? "published" : "discarded"} '
-        '${published.length} destination(s)',
+        '[receiver] Android ${outcome.name} ${published.length} destination(s)',
       );
       return;
     }

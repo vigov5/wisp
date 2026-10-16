@@ -725,28 +725,13 @@ fn map_io_kind(kind: io::ErrorKind) -> UserFacingError {
     }
 }
 
+/// Every level of an error's Display, joined, repeats left out.
+///
+/// The implementation lives in `wisp_core::util` because the core flattens the
+/// same chains for the same screens; this is the name the app layer has always
+/// called it by.
 pub fn format_error_chain(error: &(dyn StdError + 'static)) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    let mut current: Option<&(dyn StdError + 'static)> = Some(error);
-    while let Some(err) = current {
-        let text = err.to_string();
-        // Several variants interpolate `{source}` into their own Display, so
-        // walking the chain under one of those prints its child a second
-        // time.  That is where
-        //
-        //   reading message length: connection lost: connection lost: timed out
-        //
-        // came from: `FrameRead` already rendered "connection lost" as part
-        // of itself.  Skip a link the previous one has already said.
-        if !parts
-            .last()
-            .is_some_and(|previous| previous.ends_with(&text))
-        {
-            parts.push(text);
-        }
-        current = err.source();
-    }
-    parts.join(": ")
+    wisp_core::util::error_chain(error)
 }
 
 pub fn from_anyhow_error(error: &AnyhowError) -> UserFacingError {
@@ -1199,6 +1184,32 @@ mod tests {
         assert_eq!(wrapped.title(), direct.title());
         assert_eq!(wrapped.message(), direct.message());
         assert_eq!(wrapped.recovery(), direct.recovery());
+    }
+
+    /// The exact shape a killed receive arrives in, from a device log.
+    ///
+    /// The blob layer has to flatten its error to send it over a channel, and
+    /// the flattened form used to be a bare string. The sender called the same
+    /// break "Connection lost" while the receiver showed three lines of
+    /// context — one event, two screens, two stories.
+    #[test]
+    fn a_flattened_blob_failure_still_reads_as_a_lost_connection() {
+        let flattened = io::Error::new(
+            io::ErrorKind::ConnectionReset,
+            "fetching blob content for payload.bin (f7e2fc): read:              An existing connection was forcibly closed by the remote host.",
+        );
+        let error = TransferError::Other {
+            context: "running receiver session",
+            source: Box::new(TransferError::Other {
+                context: "collection da2c3fca27 from 11d087c1d8",
+                source: Box::new(flattened),
+            }),
+        };
+
+        assert_eq!(
+            UserFacingError::from(error).kind(),
+            UserFacingErrorKind::ConnectionLost,
+        );
     }
 
     #[test]

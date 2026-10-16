@@ -17,6 +17,53 @@ use iroh::{Endpoint, TransportAddr};
 use std::io::{self, Write};
 use thiserror::Error;
 
+/// Every level of an error's Display, joined, with the repeats left out.
+///
+/// `to_string()` and `{:#}` both render one level, and one level is almost
+/// never the cause — so anywhere an error has to become text, it should become
+/// all of it. But several error types interpolate their own source into their
+/// Display, so walking under one of those prints its child a second time. A
+/// receive that died on a reset link read
+///
+/// ```text
+/// read: An existing connection was forcibly closed by the remote host.
+/// (os error 10054): An existing connection was forcibly closed by the remote
+/// host. (os error 10054)
+/// ```
+///
+/// on the device. A link the previous one has already said is dropped.
+pub fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut current = Some(error);
+    while let Some(err) = current {
+        let text = err.to_string();
+        if !parts
+            .last()
+            .is_some_and(|previous: &String| previous.ends_with(&text))
+        {
+            parts.push(text);
+        }
+        current = err.source();
+    }
+    parts.join(": ")
+}
+
+/// The kind of the first [`io::Error`] anywhere under `error`.
+///
+/// What survives when an error has to be flattened into text: the chain goes,
+/// but this is the one fact the layers above classify on, and keeping it is
+/// the difference between "Connection lost" and a paragraph of context.
+pub fn io_kind_in_chain(error: &(dyn std::error::Error + 'static)) -> Option<io::ErrorKind> {
+    let mut current = Some(error);
+    while let Some(err) = current {
+        if let Some(io_error) = err.downcast_ref::<io::Error>() {
+            return Some(io_error.kind());
+        }
+        current = err.source();
+    }
+    None
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionPathKind {
     Direct,
@@ -562,5 +609,88 @@ mod connection_path_tests {
         assert_eq!(path.kind, ConnectionPathKind::Relay);
         assert_eq!(path.relay_url.as_deref(), Some("https://relay.example/"));
         assert!(path.direct_addr.is_none());
+    }
+}
+
+#[cfg(test)]
+mod error_chain_tests {
+    use super::*;
+    use std::io;
+
+    /// Taken from a device log: a reset link read its own reason twice,
+    /// because the layer above renders its source as part of itself.
+    #[test]
+    fn the_chain_leaves_out_what_the_previous_link_already_said() {
+        #[derive(Debug)]
+        struct Wrapper(io::Error);
+        impl std::fmt::Display for Wrapper {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "read: {}", self.0)
+            }
+        }
+        impl std::error::Error for Wrapper {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let leaf = io::Error::new(io::ErrorKind::ConnectionReset, "connection reset");
+        assert_eq!(error_chain(&Wrapper(leaf)), "read: connection reset");
+    }
+
+    #[test]
+    fn the_chain_keeps_links_that_say_something_new() {
+        #[derive(Debug)]
+        struct Context(io::Error);
+        impl std::fmt::Display for Context {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("fetching blob content")
+            }
+        }
+        impl std::error::Error for Context {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let leaf = io::Error::new(io::ErrorKind::ConnectionReset, "connection reset");
+        assert_eq!(
+            error_chain(&Context(leaf)),
+            "fetching blob content: connection reset",
+        );
+    }
+
+    #[test]
+    fn the_io_kind_is_found_under_a_wrapper() {
+        #[derive(Debug)]
+        struct Context(io::Error);
+        impl std::fmt::Display for Context {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("context")
+            }
+        }
+        impl std::error::Error for Context {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let wrapped = Context(io::Error::new(io::ErrorKind::ConnectionReset, "reset"));
+        assert_eq!(
+            io_kind_in_chain(&wrapped),
+            Some(io::ErrorKind::ConnectionReset)
+        );
+
+        // Nothing to find is not a failure, it just means the caller has only
+        // the text to go on.
+        #[derive(Debug)]
+        struct Plain;
+        impl std::fmt::Display for Plain {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("plain")
+            }
+        }
+        impl std::error::Error for Plain {}
+        assert_eq!(io_kind_in_chain(&Plain), None);
     }
 }
