@@ -1,0 +1,8 @@
+Wisp 2.7.1 — receiving, fixed.
+
+• An incoming request appears the moment it arrives, instead of after a pause
+• A transfer that finished now says so, instead of looking cancelled
+• Receiving a file you already have is instant and leaves no duplicate
+• Cancel always takes effect, even before the sender has started
+• Wisp warns when its cache passes 500 MB, and clears it in one tap
+• The footer links to the browser version, for devices that can't install Wisp

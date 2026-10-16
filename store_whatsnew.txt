@@ -1,0 +1,6 @@
+Wisp 2.8 — an interrupted receive picks up where it stopped.
+
+• A receive cut short by a dropped connection now resumes: only the missing part is sent again, not the whole file
+• When a transfer does break, Wisp says the connection was lost and lets you try again, instead of raw technical text
+• The receive code stops reading "Ready" when nothing can confirm it — it says "Local only", and the code stays on screen
+• Warning messages are legible in dark mode
