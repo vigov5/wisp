@@ -1,6 +1,7 @@
 use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 use thiserror::Error;
 
@@ -92,21 +93,39 @@ pub enum RendezvousError {
 /// phone that changes networks underneath it: a POST started on Wi-Fi and
 /// orphaned by a switch to mobile data never fails, it just stops. The actor
 /// waiting on it was then stuck for the rest of the session.
+#[cfg(not(target_arch = "wasm32"))]
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(not(target_arch = "wasm32"))]
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// On wasm `reqwest` is a thin wrapper over the browser's `fetch`, whose
+/// builder has neither of those methods — the page owns the deadline there,
+/// and the problem the timeouts exist for (a request orphaned by a network
+/// switch, with nobody left to fail it) is the browser's to notice.
+///
+/// This crate compiles to `wasm32-unknown-unknown`, which is its whole reason
+/// for existing, and this is the one place in it that forgot.
+#[cfg(target_arch = "wasm32")]
+fn build_http_client() -> reqwest::Client {
+    reqwest::Client::new()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn build_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        // Only fails when the TLS backend cannot be initialised, which is not
+        // a reason to lose the client entirely.
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
 
 impl RendezvousClient {
     pub fn new(base_url: String) -> Self {
-        let http = reqwest::Client::builder()
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            // Only fails when the TLS backend cannot be initialised, which is
-            // not a reason to lose the client entirely.
-            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             base_url: base_url.trim_end_matches('/').to_owned(),
-            http,
+            http: build_http_client(),
         }
     }
 
