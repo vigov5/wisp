@@ -34,6 +34,23 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- The QR scanner (flutter_zxing) pulls in the camera plugin, whose
+         CameraX implementation declares RECORD_AUDIO (video capture with
+         sound) and WRITE_EXTERNAL_STORAGE (saving captured media); the
+         merger then adds READ_EXTERNAL_STORAGE as the legacy companion to
+         the latter. Wisp only reads the analysis stream to decode a code —
+         it never records audio and never writes camera output — so none of
+         the three are requested at runtime and they would do nothing except
+         show up as "Microphone" and "Storage" on the store listing. Strip
+         them back out at merge time; this restores the permission set the
+         app had before the scanner swap. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"
+        tools:node="remove" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        tools:node="remove" />
+
     <!-- Direct phone-to-phone transfer over a USB cable (Android Open Accessory).
          The sending phone drives USB host mode; the receiving phone is switched
          into accessory mode. Neither feature is required so the app still
