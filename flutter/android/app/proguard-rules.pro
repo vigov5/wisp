@@ -9,11 +9,27 @@
 # The rules below are belt-and-suspenders for the small surface R8 could still
 # get wrong, and cost us almost nothing since the app's own Kotlin glue is tiny.
 
-# Flutter embedding + plugin entry points. Flutter's own Gradle plugin adds
-# these too; kept explicitly so a future engine tweak can't strip a callback.
--keep class io.flutter.embedding.** { *; }
+# Flutter embedding + plugin entry points.
+#
+# There is deliberately no blanket `-keep class io.flutter.embedding.** { *; }`
+# here. Keeping every member of every embedding class also keeps the method
+# that constructs PlayStoreDeferredComponentManager, which drags
+# com.google.android.play.core.* references into classes.dex — and F-Droid's
+# APK scanner rejects those as a non-free dependency. Negating the class out
+# of the keep rule is not enough, because the reference lives in the body of
+# another kept method.
+#
+# Flutter itself ships no such rule: its own flutter_proguard_rules.pro only
+# keeps FlutterPlugin implementations, and everything else the engine needs is
+# reachable (MainActivity via the manifest, plugins via GeneratedPluginRegistrant,
+# io.flutter.plugin.common.* from our Kotlin channels). Wisp uses no deferred
+# components, so R8 can prove that path dead and drop it.
+#
+# If a future engine version strips something it should not, add a targeted
+# keep for that class — not the package.
 -keep class io.flutter.plugin.** { *; }
 -dontwarn io.flutter.**
+-dontwarn com.google.android.play.core.**
 
 # Our Kotlin glue: the Activity, the SAF fast-path, the USB AOA channel, and the
 # keepalive / USB-tunnel Services. Android instantiates the Services by name and

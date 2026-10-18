@@ -33,6 +33,15 @@ android {
         jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
+    // AGP otherwise signs a "Dependency metadata" blob into the APK: a
+    // Google-Play-oriented, gzipped protobuf listing every dependency, added
+    // as an extra APK signing block. F-Droid's scanner flags that block, and
+    // nothing outside Play consumes it, so drop it from both outputs.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
     defaultConfig {
         applicationId = "dev.vigov5.wisp"
         // You can update the following values to match your application needs.
