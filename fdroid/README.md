@@ -53,6 +53,15 @@ YAML comment-free.
   updater: no startup release check against api.github.com and no Play Store
   deep link, so F-Droid owns updates. See "What the F-Droid build does
   differently" above.
+- **`srclibs: flutter@3.41.9` is pinned, not `flutter@stable`** — the recipe
+  runs `flutter pub get --enforce-lockfile`, and a handful of packages in
+  `pubspec.lock` (`meta`, `matcher`, `test`, `test_api`, `test_core`,
+  `vector_math`) are pinned by the Flutter SDK itself rather than by our
+  pubspec. A different Flutter ships different versions of those, so
+  `flutter@stable` makes the lockfile unsatisfiable the moment upstream
+  Flutter moves. Pinning the SDK is what makes `--enforce-lockfile` work, and
+  it is what makes the build reproducible. **This must match the Flutter that
+  generated `flutter/pubspec.lock`.**
 - **`scandelete: .pub-cache`** — `flutter pub get` populates a local pub cache
   inside the build dir; without this the scanner walks every downloaded package.
 
@@ -62,11 +71,15 @@ YAML comment-free.
    the new `version: X.Y.Z+<code>`.
 2. Add `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`
    (≤ 500 characters — F-Droid truncates past that).
-3. In fdroiddata, append a new entry to `Builds:` copied from the previous one
+3. If the Flutter SDK moved since the last release (`flutter --version` vs the
+   `srclibs: flutter@X.Y.Z` in the recipe), update that pin to match and
+   re-run `flutter pub get` so `pubspec.lock` and the pin agree. They must
+   move together or the F-Droid build fails on `--enforce-lockfile`.
+4. In fdroiddata, append a new entry to `Builds:` copied from the previous one
    with `versionName`, `versionCode` and `commit` updated, and bump
    `CurrentVersion` / `CurrentVersionCode`.
 
-`AutoUpdateMode: Version` means F-Droid can usually write step 3 itself once
+`AutoUpdateMode: Version` means F-Droid can usually write step 4 itself once
 the tag appears; the manual edit is the fallback when the recipe itself has to
 change.
 

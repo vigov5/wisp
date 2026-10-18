@@ -23,7 +23,7 @@ Builds:
       - apt-get install -y gcc libc-dev make rustup
     output: build/app/outputs/flutter-apk/app-release.apk
     srclibs:
-      - flutter@stable
+      - flutter@3.41.9
     rm:
       - docs
       - web
