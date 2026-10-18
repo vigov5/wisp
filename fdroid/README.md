@@ -100,7 +100,7 @@ cd <fdroiddata>
 fdroid readmeta
 fdroid rewritemeta --check dev.vigov5.wisp   # CI fails on this one first
 fdroid lint dev.vigov5.wisp
-fdroid build dev.vigov5.wisp:32      # add --server for the clean VM build
+fdroid build dev.vigov5.wisp:33      # add --server for the clean VM build
 ```
 
 `rewritemeta` is the one that bites: it reformats the file to a canonical form
