@@ -62,8 +62,14 @@ YAML comment-free.
   Flutter moves. Pinning the SDK is what makes `--enforce-lockfile` work, and
   it is what makes the build reproducible. **This must match the Flutter that
   generated `flutter/pubspec.lock`.**
-- **`scandelete: .pub-cache`** — `flutter pub get` populates a local pub cache
-  inside the build dir; without this the scanner walks every downloaded package.
+- **`scandelete: flutter/.pub-cache`** — `flutter pub get` populates a local
+  pub cache; without this the scanner walks every downloaded package and dies
+  on test fixtures inside them (`archive` alone ships ~4000 `.bin` files).
+  Note the `flutter/` prefix: **`rm:` and `scandelete:` resolve against the
+  repo root, while `prebuild:`/`build:` commands run in `subdir` (`flutter/`)**.
+  So `PUB_CACHE=$(pwd)/.pub-cache` creates `flutter/.pub-cache`, and a bare
+  `.pub-cache` here silently matches nothing — fdroid reports it as
+  "Non-exist scandelete path" and then fails on thousands of scanner errors.
 
 ## Releasing a new version
 
