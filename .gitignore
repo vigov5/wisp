@@ -10,3 +10,7 @@ docs/superpowers/
 skills/
 *.skill
 web/pkg/
+
+# One-off merge-request body for the fdroiddata submission; useful to keep
+# locally, but it is not part of the project.
+fdroid/MR-description.md
