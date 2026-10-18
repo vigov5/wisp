@@ -1,0 +1,6 @@
+Wisp 2.8.1 — QR scanning no longer needs Google ML Kit.
+
+• QR codes are now read by the open-source zxing-cpp engine instead of Google ML Kit, so Wisp can be built and distributed by F-Droid
+• The camera no longer stays black the first time you scan after granting permission
+• The scan frame now matches the area actually being read, so a code lined up in the box is one the scanner can see
+• All of the app's native code is built against a single Android toolchain

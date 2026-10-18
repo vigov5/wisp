@@ -28,6 +28,7 @@ import '../features/send/application/source_rejections.dart';
 import '../platform/native_source.dart';
 import '../platform/android_file_picker.dart';
 import '../platform/desktop_integration.dart';
+import '../platform/platform_features.dart';
 import '../platform/windows_context_menu.dart';
 import '../platform/rust/receiver/source.dart';
 
@@ -92,15 +93,19 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
                 debugPrint('[app] context-menu prompt skipped: $error'),
           ),
         );
-        unawaited(
-          ref
-              .read(updateControllerProvider.notifier)
-              .checkForUpdates()
-              .catchError(
-                (Object error) =>
-                    debugPrint('[app] update check skipped: $error'),
-              ),
-        );
+        // Compiled out of the F-Droid build, which must not reach
+        // api.github.com for releases it does not ship. See hasInAppUpdates.
+        if (hasInAppUpdates) {
+          unawaited(
+            ref
+                .read(updateControllerProvider.notifier)
+                .checkForUpdates()
+                .catchError(
+                  (Object error) =>
+                      debugPrint('[app] update check skipped: $error'),
+                ),
+          );
+        }
       }
     });
   }

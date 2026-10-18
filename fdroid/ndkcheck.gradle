@@ -1,0 +1,17 @@
+// Configuration-only probe: print the resolved ndkVersion of every Android
+// module, after all project evaluation (and therefore after the afterEvaluate
+// pin in android/build.gradle.kts) has run.
+gradle.projectsEvaluated {
+    gradle.rootProject.allprojects.each { p ->
+        def ext = p.extensions.findByName("android")
+        if (ext != null) {
+            def v = null
+            try {
+                v = ext.getNdkVersion()
+            } catch (Throwable t) {
+                v = "<unreadable: ${t.class.simpleName}>"
+            }
+            println("NDKCHECK ${p.name} = ${v}")
+        }
+    }
+}

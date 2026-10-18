@@ -1,0 +1,53 @@
+Wisp sends files straight from one device to another — no cloud, no account. It's like AirDrop, but across phones, laptops, and desktops (not just Apple), whether they're on the same Wi-Fi or halfway across the world.
+
+▸ Send anything, fast
+Photos, videos, documents, folders, text, and links — drop them in and they arrive on the other device. When devices can reach each other directly, files stream straight between them at full network speed with no one in the middle; behind strict NATs or firewalls, Wisp falls back to an encrypted relay so the transfer still completes. Either way it's end-to-end encrypted — no relay, and no one else, can read your files.
+
+▸ Four ways to connect
+• Nearby — devices on the same Wi-Fi find each other automatically.
+• Pairing code — share a 6-character code from the receiver to pair across networks.
+• QR code — scan a code on the receiver for fully offline LAN pairing, no internet needed.
+• USB cable — move files over a cable with no Wi-Fi: directly between two Android phones, or between a phone and a computer via USB tethering, with a guided setup on each end.
+
+▸ Open received files in one tap
+When a transfer finishes, open any received file right from the result screen, or jump to the exact folder it was saved in — including a custom folder you picked.
+
+▸ Resumable transfers
+If the connection drops mid-transfer, send the same files again and Wisp resumes from where it left off instead of starting over.
+
+▸ Saved devices
+Devices you've transferred with appear in a "Recent" list, so you can pick them again without re-scanning or re-typing a code — and give them your own nicknames.
+
+▸ Back up your identity
+Export and restore your device's secret key to move your Wisp identity to a new phone or keep your saved devices after a reinstall.
+
+▸ Built-in Connection Test
+A self-diagnose screen surfaces network, rendezvous, LAN, and permission problems with actionable hints.
+
+▸ Privacy by design
+• No accounts — no email, phone number, or any identifier to register.
+• No analytics, no advertising, no tracking SDKs.
+• Files travel over an end-to-end encrypted peer-to-peer connection built on iroh. Only the sender and receiver can read them.
+• The optional rendezvous server only sees ephemeral pairing codes — never your files, file names, or recipient list.
+• Full privacy policy: https://vigov5.github.io/wisp/privacy-policy/
+
+▸ Free and open source
+Wisp is MIT-licensed. Read the source, audit it, run your own rendezvous server, or contribute: https://github.com/vigov5/wisp
+
+▸ Cross-platform
+Android, macOS, Windows, and Linux builds at https://github.com/vigov5/wisp/releases, plus a no-install browser version at https://web.wisp.mooo.com
+
+────────────
+
+Permissions, and why:
+• Wi-Fi / nearby devices — to discover other Wisp devices on your LAN via mDNS. The Android 13+ NEARBY_WIFI_DEVICES permission uses "neverForLocation", so Wisp doesn't derive your location.
+• Location (Android 12 and below) — only a fallback for mDNS discovery; never read, stored, or transmitted.
+• Camera — only on the QR-scan screen; decoding is done on-device by the bundled zxing-cpp library and no image is recorded.
+• Foreground service + notifications — to keep a long transfer running in the background, with the system-required visible notification.
+• VPN (VpnService) — used ONLY for direct phone-to-phone transfers over a USB cable. Wisp creates a local, on-device point-to-point tunnel over the cable (a private 10.42.0.0/30 link) so files can move between the two phones. It is not a remote VPN: it never routes your internet traffic, sends nothing to any external VPN server, and runs only while a USB cable transfer is active. The data carried over it is end-to-end encrypted.
+
+────────────
+
+Wisp is a friendly fork of the original Drift by Samarth Verma, focused on Android polish, QR pairing, self-diagnose tooling, and self-hosted rendezvous.
+
+Found a bug or want a feature? https://github.com/vigov5/wisp/issues

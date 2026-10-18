@@ -108,7 +108,10 @@ It is designed to feel as simple as AirDrop, but without being limited to Apple 
 
 The Flutter app lives in [`flutter/`](flutter/).
 
-See [`flutter/README.md`](flutter/README.md) for build instructions.
+See [`flutter/README.md`](flutter/README.md) for build instructions, and
+[`fdroid/README.md`](fdroid/README.md) for the F-Droid build recipe — F-Droid
+compiles every app from source, so that build drops the in-app updater and
+decodes QR codes with zxing-cpp instead of Google ML Kit.
 
 ## Getting started
 

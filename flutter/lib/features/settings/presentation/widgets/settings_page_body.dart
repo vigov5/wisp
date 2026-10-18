@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/app_router.dart';
 import '../../../../platform/android_media_store.dart';
 import '../../../../platform/desktop_integration.dart';
+import '../../../../platform/platform_features.dart';
 import '../../../../platform/windows_context_menu.dart';
 import '../../../../src/rust/api/simple.dart' as rust_simple;
 import '../../../../theme/wisp_theme.dart';
@@ -740,85 +741,91 @@ class _SettingsPageBodyState extends ConsumerState<SettingsPageBody> {
                             ),
                           ),
                         ),
-                        const _SettingsGroupHeader(title: 'Update'),
-                        // Styled like the Storage row: a label on the left and
-                        // a primary action button on the right.
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Check for updates',
-                                    style: wispSans(
-                                      fontSize: 13.5,
-                                      fontWeight: FontWeight.w600,
-                                      color: context.wc.ink,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    checkingForUpdates
-                                        ? 'Checking…'
-                                        : 'Get the latest version of Wisp.',
-                                    style: wispSans(
-                                      fontSize: 11.5,
-                                      color: context.wc.muted,
-                                      height: 1.4,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2),
-                              child: TextButton.icon(
-                                onPressed: checkingForUpdates
-                                    ? null
-                                    : _checkForUpdates,
-                                icon: checkingForUpdates
-                                    ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: kAccentCyanStrong,
-                                        ),
-                                      )
-                                    : const Icon(
-                                        Icons.refresh_rounded,
-                                        size: 18,
+                        // The whole Update group is compiled out of the
+                        // F-Droid build, which gets its updates from
+                        // F-Droid itself. See hasInAppUpdates.
+                        if (hasInAppUpdates) ...[
+                          const _SettingsGroupHeader(title: 'Update'),
+                          // Styled like the Storage row: a label on the left and
+                          // a primary action button on the right.
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Check for updates',
+                                      style: wispSans(
+                                        fontSize: 13.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: context.wc.ink,
                                       ),
-                                label: Text(
-                                  'Re-check',
-                                  style: wispSans(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
-                                    color: kAccentCyan,
-                                  ),
-                                ),
-                                style: TextButton.styleFrom(
-                                  foregroundColor: kAccentCyan,
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      checkingForUpdates
+                                          ? 'Checking…'
+                                          : 'Get the latest version of Wisp.',
+                                      style: wispSans(
+                                        fontSize: 11.5,
+                                        color: context.wc.muted,
+                                        height: 1.4,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        SettingsToggleField(
-                          title: 'Check for updates on startup',
-                          subtitle: 'Notify me when a new version is available',
-                          value: _checkOnStartup,
-                          onChanged: (value) {
-                            setState(() => _checkOnStartup = value);
-                            ref
-                                .read(updateControllerProvider.notifier)
-                                .setCheckOnStartup(value);
-                          },
-                        ),
+                              const SizedBox(width: 12),
+                              Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: TextButton.icon(
+                                  onPressed: checkingForUpdates
+                                      ? null
+                                      : _checkForUpdates,
+                                  icon: checkingForUpdates
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: kAccentCyanStrong,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.refresh_rounded,
+                                          size: 18,
+                                        ),
+                                  label: Text(
+                                    'Re-check',
+                                    style: wispSans(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: kAccentCyan,
+                                    ),
+                                  ),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: kAccentCyan,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          SettingsToggleField(
+                            title: 'Check for updates on startup',
+                            subtitle:
+                                'Notify me when a new version is available',
+                            value: _checkOnStartup,
+                            onChanged: (value) {
+                              setState(() => _checkOnStartup = value);
+                              ref
+                                  .read(updateControllerProvider.notifier)
+                                  .setCheckOnStartup(value);
+                            },
+                          ),
+                        ],
                         const _SettingsGroupHeader(title: 'About'),
                         InkWell(
                           onTap: () => context.pushAbout(),

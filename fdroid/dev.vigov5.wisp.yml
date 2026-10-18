@@ -1,0 +1,70 @@
+# F-Droid build recipe for Wisp.
+#
+# This file is the copy kept with the source. The authoritative one lives in
+# https://gitlab.com/fdroid/fdroiddata as metadata/dev.vigov5.wisp.yml — copy
+# this there when opening or updating the merge request, and keep the two in
+# sync. See fdroid/README.md for the release checklist.
+
+Categories:
+  - Connectivity
+  - Internet
+License: MIT
+AuthorName: vigov5
+SourceCode: https://github.com/vigov5/wisp
+IssueTracker: https://github.com/vigov5/wisp/issues
+Changelog: https://github.com/vigov5/wisp/releases
+
+AutoName: Wisp
+
+RepoType: git
+Repo: https://github.com/vigov5/wisp.git
+
+Builds:
+  - versionName: 2.8.1
+    versionCode: 32
+    commit: v2.8.1
+    subdir: flutter
+    sudo:
+      - apt-get update
+      - apt-get install -y gcc libc-dev make rustup
+    output: build/app/outputs/flutter-apk/app-release.apk
+    srclibs:
+      - flutter@stable
+    rm:
+      # docs/ is the published web-receiver build and carries a prebuilt
+      # .wasm, which the scanner rejects. Neither it nor the other non-Android
+      # targets take part in this build.
+      - docs
+      - web
+      - flutter/ios
+      - flutter/macos
+      - flutter/linux
+      - flutter/windows
+      - flutter/web
+    prebuild:
+      - export PUB_CACHE=$(pwd)/.pub-cache
+      - $$flutter$$/bin/flutter config --no-analytics
+      - $$flutter$$/bin/flutter pub get --enforce-lockfile
+      - rustup toolchain install 1.95.0 --profile minimal --target armv7-linux-androideabi
+        --target aarch64-linux-android --target x86_64-linux-android
+      - rustup default 1.95.0
+      # The Rust core is compiled by Cargokit (flutter_rust_bridge), which always
+      # invokes cargo as `cargo +stable`. Point the stable toolchain at the pinned
+      # one so the build does not silently follow whatever stable is that day.
+      - rm -rf "$(rustup show home)/toolchains/stable-x86_64-unknown-linux-gnu"
+      - ln -s "$(rustup show home)/toolchains/1.95.0-x86_64-unknown-linux-gnu" "$(rustup
+        show home)/toolchains/stable-x86_64-unknown-linux-gnu"
+    scandelete:
+      - .pub-cache
+    build:
+      - export PUB_CACHE=$(pwd)/.pub-cache
+      # WISP_FDROID compiles out the in-app updater: no release check against
+      # api.github.com and no Play Store deep link, so F-Droid owns updates.
+      - $$flutter$$/bin/flutter build apk --release --dart-define=WISP_FDROID=true
+    ndk: r28c
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+UpdateCheckData: flutter/pubspec.yaml|version:\s.+\+(\d+)|.|version:\s(.+)\+
+CurrentVersion: 2.8.1
+CurrentVersionCode: 32
