@@ -1,6 +1,0 @@
-Wisp 2.8.2 — packaging only, no behaviour changes.
-
-• The APK no longer carries references to Google Play Core. They came from the Flutter engine's Play Store deferred-components path, which Wisp never uses; R8 now strips it.
-• Removed the Android Gradle Plugin's Play-oriented "Dependency metadata" signing block.
-
-Both were blocking the F-Droid build.

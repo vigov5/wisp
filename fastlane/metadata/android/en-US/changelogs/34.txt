@@ -1,0 +1,5 @@
+Wisp 2.8.3 — fewer permissions.
+
+• RECORD_AUDIO, WRITE_EXTERNAL_STORAGE and READ_EXTERNAL_STORAGE are no longer declared. They came from the camera plugin behind the QR scanner, which supports video capture; Wisp only reads frames to decode a code and never requested them at runtime.
+
+This restores the permission set the app had before the scanner changed in 2.8.1.

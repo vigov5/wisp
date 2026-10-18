@@ -1,4 +1,3 @@
-Wisp 2.8.2 — packaging fixes, no behaviour changes.
+Wisp 2.8.3 — fewer permissions.
 
-• Removed unused Google Play delivery code that was being bundled into the app
-• Dropped a Play-only dependency manifest from the package
+• Wisp no longer asks for Microphone or Storage access. The QR scanner's camera library declared them for video recording, which Wisp never does.
