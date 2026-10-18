@@ -33,6 +33,29 @@ Two things, both forced by F-Droid's inclusion policy:
 Everything else — the Rust transfer core, USB/AOA, the rendezvous client — is
 identical to the Play and GitHub builds.
 
+## Why the recipe does what it does
+
+`fdroid rewritemeta` is a canonical formatter and **strips comments inside list
+items**, and CI fails the MR if the file is not already in that exact form. So
+the recipe cannot carry its own explanation — it lives here instead. Keep the
+YAML comment-free.
+
+- **`rm: docs`** — `docs/` is the published web-receiver build and contains a
+  prebuilt `docs/pkg/wisp_web_receiver_bg.wasm`. A `.wasm` is an unconditional
+  rejection in F-Droid's scanner. Neither it nor the other removed directories
+  (`web/`, and the non-Android Flutter targets) take part in an APK build.
+- **The `rustup` symlink dance in `prebuild`** — the Rust core is compiled by
+  Cargokit (flutter_rust_bridge), which always invokes cargo as `cargo +stable`
+  and ignores `rust-toolchain.toml` and `rustup default`. Pointing the `stable`
+  toolchain directory at the pinned 1.95.0 is what actually stops the build
+  following whatever stable happens to be released that day.
+- **`--dart-define=WISP_FDROID=true` in `build`** — compiles out the in-app
+  updater: no startup release check against api.github.com and no Play Store
+  deep link, so F-Droid owns updates. See "What the F-Droid build does
+  differently" above.
+- **`scandelete: .pub-cache`** — `flutter pub get` populates a local pub cache
+  inside the build dir; without this the scanner walks every downloaded package.
+
 ## Releasing a new version
 
 1. Tag the release as usual (`vX.Y.Z`), with `flutter/pubspec.yaml` carrying
@@ -56,9 +79,15 @@ a checkout of fdroiddata:
 cp fdroid/dev.vigov5.wisp.yml <fdroiddata>/metadata/
 cd <fdroiddata>
 fdroid readmeta
+fdroid rewritemeta --check dev.vigov5.wisp   # CI fails on this one first
 fdroid lint dev.vigov5.wisp
 fdroid build dev.vigov5.wisp:32      # add --server for the clean VM build
 ```
+
+`rewritemeta` is the one that bites: it reformats the file to a canonical form
+and the MR pipeline rejects anything that differs, including comments inside
+list items. If you have no fdroidserver, the pipeline prints the exact diff it
+wants — apply that verbatim.
 
 To reproduce just the app side of it locally, without fdroidserver:
 

@@ -25,9 +25,6 @@ Builds:
     srclibs:
       - flutter@stable
     rm:
-      # docs/ is the published web-receiver build and carries a prebuilt
-      # .wasm, which the scanner rejects. Neither it nor the other non-Android
-      # targets take part in this build.
       - docs
       - web
       - flutter/ios
@@ -42,9 +39,6 @@ Builds:
       - rustup toolchain install 1.95.0 --profile minimal --target armv7-linux-androideabi
         --target aarch64-linux-android --target x86_64-linux-android
       - rustup default 1.95.0
-      # The Rust core is compiled by Cargokit (flutter_rust_bridge), which always
-      # invokes cargo as `cargo +stable`. Point the stable toolchain at the pinned
-      # one so the build does not silently follow whatever stable is that day.
       - rm -rf "$(rustup show home)/toolchains/stable-x86_64-unknown-linux-gnu"
       - ln -s "$(rustup show home)/toolchains/1.95.0-x86_64-unknown-linux-gnu" "$(rustup
         show home)/toolchains/stable-x86_64-unknown-linux-gnu"
@@ -52,8 +46,6 @@ Builds:
       - .pub-cache
     build:
       - export PUB_CACHE=$(pwd)/.pub-cache
-      # WISP_FDROID compiles out the in-app updater: no release check against
-      # api.github.com and no Play Store deep link, so F-Droid owns updates.
       - $$flutter$$/bin/flutter build apk --release --dart-define=WISP_FDROID=true
     ndk: r28c
 
