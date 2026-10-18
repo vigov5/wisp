@@ -1,15 +1,9 @@
-# F-Droid build recipe for Wisp.
-#
-# This file is the copy kept with the source. The authoritative one lives in
-# https://gitlab.com/fdroid/fdroiddata as metadata/dev.vigov5.wisp.yml — copy
-# this there when opening or updating the merge request, and keep the two in
-# sync. See fdroid/README.md for the release checklist.
-
 Categories:
   - Connectivity
-  - Internet
+  - File Transfer
 License: MIT
 AuthorName: vigov5
+WebSite: https://web.wisp.mooo.com
 SourceCode: https://github.com/vigov5/wisp
 IssueTracker: https://github.com/vigov5/wisp/issues
 Changelog: https://github.com/vigov5/wisp/releases

@@ -6,10 +6,10 @@ with its own key.
 
 - `ndkcheck.gradle` — Gradle init script that prints each Android module's
   resolved `ndkVersion` (see "One NDK, not two" below).
-- `dev.vigov5.wisp.yml` — the build recipe. The authoritative copy lives in
-  [fdroiddata](https://gitlab.com/fdroid/fdroiddata) as
-  `metadata/dev.vigov5.wisp.yml`; this one is kept beside the source so the
-  two can be diffed. Update both together.
+- `dev.vigov5.wisp.yml` — the build recipe, byte-for-byte what belongs in
+  [fdroiddata](https://gitlab.com/fdroid/fdroiddata) at
+  `metadata/dev.vigov5.wisp.yml`. Copy it there unchanged; keep the two in
+  sync. (It carries no header comment precisely so that stays true.)
 - `../fastlane/metadata/android/en-US/` — the store listing (title, summary,
   description, changelogs, icon, feature graphic, screenshots). F-Droid reads
   this straight out of the repo at the tagged commit, so it needs no
