@@ -1,6 +1,6 @@
-Wisp 2.8 — an interrupted receive picks up where it stopped.
+Wisp 2.8.1 — QR scanning no longer needs Google ML Kit.
 
-• A receive cut short by a dropped connection now resumes: only the missing part is sent again, not the whole file
-• When a transfer does break, Wisp says the connection was lost and lets you try again, instead of raw technical text
-• The receive code stops reading "Ready" when nothing can confirm it — it says "Local only", and the code stays on screen
-• Warning messages are legible in dark mode
+• QR codes are now read by the open-source zxing-cpp engine instead of Google ML Kit, so Wisp can be built and distributed by F-Droid
+• The camera no longer stays black the first time you scan after granting permission
+• The scan frame now matches the area actually being read, so a code lined up in the box is one the scanner can see
+• All of the app's native code is built against a single Android toolchain
