@@ -1,0 +1,4 @@
+Wisp 2.8.4 — smaller downloads, fewer permissions.
+
+• Separate downloads per device architecture instead of one package carrying all three, so the download is roughly a third of the size.
+• Wisp no longer asks for Microphone or Storage access. The QR scanner's camera library declared them for video recording, which Wisp never does.
