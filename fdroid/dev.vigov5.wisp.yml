@@ -45,8 +45,8 @@ Builds:
       - flutter/.pub-cache
     build:
       - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi
-        --target-platform="android-arm" --dart-define=WISP_FDROID=true
+      - $$flutter$$/bin/flutter build apk --release --split-per-abi --target-platform="android-arm"
+        --dart-define=WISP_FDROID=true
     ndk: r28c
 
   - versionName: 2.8.4
@@ -80,8 +80,8 @@ Builds:
       - flutter/.pub-cache
     build:
       - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi
-        --target-platform="android-arm64" --dart-define=WISP_FDROID=true
+      - $$flutter$$/bin/flutter build apk --release --split-per-abi --target-platform="android-arm64"
+        --dart-define=WISP_FDROID=true
     ndk: r28c
 
   - versionName: 2.8.4
@@ -115,8 +115,8 @@ Builds:
       - flutter/.pub-cache
     build:
       - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi
-        --target-platform="android-x64" --dart-define=WISP_FDROID=true
+      - $$flutter$$/bin/flutter build apk --release --split-per-abi --target-platform="android-x64"
+        --dart-define=WISP_FDROID=true
     ndk: r28c
 
 AutoUpdateMode: Version

@@ -105,8 +105,21 @@ fdroid build dev.vigov5.wisp:34      # add --server for the clean VM build
 
 `rewritemeta` is the one that bites: it reformats the file to a canonical form
 and the MR pipeline rejects anything that differs, including comments inside
-list items. If you have no fdroidserver, the pipeline prints the exact diff it
-wants — apply that verbatim.
+list items and the exact column at which a long command folds. It has failed
+this MR twice.
+
+Without fdroidserver, check it locally with the bundled script instead of
+guessing:
+
+```sh
+pip install 'ruamel.yaml==0.17.40'
+python fdroid/check-rewritemeta.py fdroid/dev.vigov5.wisp.yml          # report
+python fdroid/check-rewritemeta.py fdroid/dev.vigov5.wisp.yml --write  # fix
+```
+
+Mind the version pin — see the script's docstring. If the pipeline still
+disagrees, it prints the exact diff it wants; apply that verbatim and re-pin
+the script.
 
 To reproduce just the app side of it locally, without fdroidserver:
 
