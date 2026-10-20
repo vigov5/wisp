@@ -37,7 +37,6 @@ Builds:
       - $$flutter$$/bin/flutter config --no-analytics
       - $$flutter$$/bin/flutter pub get --enforce-lockfile
       - rustup toolchain install 1.95.0 --profile minimal --target armv7-linux-androideabi
-        --target aarch64-linux-android --target x86_64-linux-android
       - rustup default 1.95.0
       - rm -rf "$(rustup show home)/toolchains/stable-x86_64-unknown-linux-gnu"
       - ln -s "$(rustup show home)/toolchains/1.95.0-x86_64-unknown-linux-gnu" "$(rustup
@@ -72,8 +71,7 @@ Builds:
       - export PUB_CACHE=$(pwd)/.pub-cache
       - $$flutter$$/bin/flutter config --no-analytics
       - $$flutter$$/bin/flutter pub get --enforce-lockfile
-      - rustup toolchain install 1.95.0 --profile minimal --target armv7-linux-androideabi
-        --target aarch64-linux-android --target x86_64-linux-android
+      - rustup toolchain install 1.95.0 --profile minimal --target aarch64-linux-android
       - rustup default 1.95.0
       - rm -rf "$(rustup show home)/toolchains/stable-x86_64-unknown-linux-gnu"
       - ln -s "$(rustup show home)/toolchains/1.95.0-x86_64-unknown-linux-gnu" "$(rustup
@@ -108,8 +106,7 @@ Builds:
       - export PUB_CACHE=$(pwd)/.pub-cache
       - $$flutter$$/bin/flutter config --no-analytics
       - $$flutter$$/bin/flutter pub get --enforce-lockfile
-      - rustup toolchain install 1.95.0 --profile minimal --target armv7-linux-androideabi
-        --target aarch64-linux-android --target x86_64-linux-android
+      - rustup toolchain install 1.95.0 --profile minimal --target x86_64-linux-android
       - rustup default 1.95.0
       - rm -rf "$(rustup show home)/toolchains/stable-x86_64-unknown-linux-gnu"
       - ln -s "$(rustup show home)/toolchains/1.95.0-x86_64-unknown-linux-gnu" "$(rustup
