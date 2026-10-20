@@ -99,15 +99,27 @@ android {
             // is slow and huge. Defaults to arm64-v8a (the physical test device).
             // To also build the x86_64 emulator ABI for a debug run, pass:
             //   flutter build apk --debug -PdebugAbis=arm64-v8a,x86_64
-            // Release builds are unaffected and still ship every ABI.
-            val debugAbis = (project.findProperty("debugAbis") as String?)
-                ?.split(",")
-                ?.map { it.trim() }
-                ?.filter { it.isNotEmpty() }
-                ?: listOf("arm64-v8a")
-            ndk {
-                abiFilters.clear()
-                abiFilters.addAll(debugAbis)
+            //
+            // Skipped entirely when Flutter is splitting per ABI. AGP rejects
+            // any ndk.abiFilters anywhere in the project once splits.abi is
+            // configured ("Conflicting configuration : 'arm64-v8a' in ndk
+            // abiFilters cannot be present when splits abi filters are set"),
+            // and being scoped to the debug build type does not exempt it. That
+            // is what used to make `flutter build apk --release --split-per-abi`
+            // fail to configure. Flutter sets this property itself when
+            // --split-per-abi is passed, so the guard needs no extra flag.
+            val splittingPerAbi =
+                (project.findProperty("split-per-abi") as String?)?.toBoolean() ?: false
+            if (!splittingPerAbi) {
+                val debugAbis = (project.findProperty("debugAbis") as String?)
+                    ?.split(",")
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotEmpty() }
+                    ?: listOf("arm64-v8a")
+                ndk {
+                    abiFilters.clear()
+                    abiFilters.addAll(debugAbis)
+                }
             }
         }
     }
