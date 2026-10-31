@@ -6,19 +6,22 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// Stands in for the real notifier so the test never touches a filesystem or
 /// the settings providers — the banner's job is only to render what it is
-/// handed and to call back.
+/// handed and to call back. Calls to [clear] are reported through [onClear]
+/// rather than a counter field: riverpod_lint rejects public state on a
+/// notifier, fakes included.
 class _FakeReceiverCache extends ReceiverCacheNotifier {
-  _FakeReceiverCache(this._initial);
+  _FakeReceiverCache(this._initial, {void Function()? onClear})
+    : _onClear = onClear;
 
   final ReceiverCacheState _initial;
-  int clears = 0;
+  final void Function()? _onClear;
 
   @override
   ReceiverCacheState build() => _initial;
 
   @override
   Future<String?> clear() async {
-    clears++;
+    _onClear?.call();
     return null;
   }
 }
@@ -53,7 +56,11 @@ void main() {
   testWidgets('says how big the cache is and offers to clean it', (
     tester,
   ) async {
-    final fake = _FakeReceiverCache(_measured(600 * 1024 * 1024));
+    var clears = 0;
+    final fake = _FakeReceiverCache(
+      _measured(600 * 1024 * 1024),
+      onClear: () => clears++,
+    );
     await _pump(tester, fake);
 
     expect(find.text('Receiver cache is using 600 MB'), findsOneWidget);
@@ -62,7 +69,7 @@ void main() {
     await tester.tap(find.text('Clean now'));
     await tester.pump();
 
-    expect(fake.clears, 1);
+    expect(clears, 1);
   });
 
   testWidgets('stays out of the way below the threshold', (tester) async {
@@ -75,7 +82,11 @@ void main() {
   testWidgets('will not clean while the receiver is still using it', (
     tester,
   ) async {
-    final fake = _FakeReceiverCache(_measured(900 * 1024 * 1024));
+    var clears = 0;
+    final fake = _FakeReceiverCache(
+      _measured(900 * 1024 * 1024),
+      onClear: () => clears++,
+    );
     await _pump(tester, fake, busy: true);
 
     // Still says how big it is — it just won't delete a running transfer.
@@ -83,7 +94,7 @@ void main() {
     await tester.tap(find.text('Clean now'), warnIfMissed: false);
     await tester.pump();
 
-    expect(fake.clears, 0);
+    expect(clears, 0);
   });
 
   testWidgets('dismissing it is final for the session', (tester) async {
