@@ -15,8 +15,8 @@ Repo: https://github.com/vigov5/wisp.git
 
 Builds:
   - versionName: 2.8.5
-    versionCode: 1036
-    commit: 1cd4be6d6726a39347077e9806531e5cc3bc276f
+    versionCode: 361
+    commit: c1aa095fda249e95580491bedf74a0da97e1f262
     subdir: flutter
     sudo:
       - apt-get update
@@ -53,8 +53,8 @@ Builds:
     ndk: r28c
 
   - versionName: 2.8.5
-    versionCode: 2036
-    commit: 1cd4be6d6726a39347077e9806531e5cc3bc276f
+    versionCode: 362
+    commit: c1aa095fda249e95580491bedf74a0da97e1f262
     subdir: flutter
     sudo:
       - apt-get update
@@ -91,8 +91,8 @@ Builds:
     ndk: r28c
 
   - versionName: 2.8.5
-    versionCode: 4036
-    commit: 1cd4be6d6726a39347077e9806531e5cc3bc276f
+    versionCode: 363
+    commit: c1aa095fda249e95580491bedf74a0da97e1f262
     subdir: flutter
     sudo:
       - apt-get update
@@ -131,9 +131,9 @@ Builds:
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
 VercodeOperation:
-  - '%c + 1000'
-  - '%c + 2000'
-  - '%c + 4000'
+  - 10 * %c + 1
+  - 10 * %c + 2
+  - 10 * %c + 3
 UpdateCheckData: flutter/pubspec.yaml|version:\s.+\+(\d+)|.|version:\s(.+)\+
 CurrentVersion: 2.8.5
-CurrentVersionCode: 4036
+CurrentVersionCode: 363

@@ -81,8 +81,12 @@ YAML comment-free.
 
 1. Tag the release as usual (`vX.Y.Z`), with `flutter/pubspec.yaml` carrying
    the new `version: X.Y.Z+<code>`.
-2. Add `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`
-   (≤ 500 characters — F-Droid truncates past that).
+2. Add `fastlane/metadata/android/en-US/changelogs/<code>1.txt`, `<code>2.txt`
+   and `<code>3.txt` (same text; ≤ 500 characters — F-Droid truncates past
+   that). Each split APK has its own version code, `<code> * 10 + ABI`, with
+   armeabi-v7a = 1, arm64-v8a = 2, x86_64 = 3, set by the `abiCodes` block in
+   `flutter/android/app/build.gradle.kts`; pubspec `+36` ships as 361/362/363.
+   The recipe's `VercodeOperation` must use the same formula.
 3. If you moved to a new Flutter since the last release, update
    `FLUTTER_VERSION` in **both** `.github/workflows/flutter-release.yml` (the
    one F-Droid reads) and `.github/workflows/flutter.yml`, and re-run
