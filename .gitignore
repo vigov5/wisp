@@ -14,3 +14,8 @@ web/pkg/
 # One-off merge-request body for the fdroiddata submission; useful to keep
 # locally, but it is not part of the project.
 fdroid/MR-description.md
+
+# Play Store listing and release notes (store_whatsnew.txt, store_desc.txt,
+# per-version copies). Written locally and pasted into the Play Console;
+# not part of the project.
+/store_*.txt
