@@ -8,6 +8,10 @@ on:
 
 env:
   FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: "2.12.0"
+  # Pinned so every build uses the Flutter that pubspec.lock was resolved
+  # with. F-Droid reads this exact line from flutter-release.yml to pick its
+  # Flutter, so keep it a plain quoted literal on one line.
+  FLUTTER_VERSION: "3.41.9"
 
 jobs:
   # macOS + iOS share one runner so Rust/Cargo artifacts compile once.
@@ -48,6 +52,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       # Force CocoaPods for plugin integration. Recent Flutter stables auto-add
@@ -141,6 +146,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Get Flutter dependencies
@@ -242,6 +248,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Get Flutter dependencies
@@ -329,6 +336,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Get Flutter dependencies
