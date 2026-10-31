@@ -14,16 +14,16 @@ RepoType: git
 Repo: https://github.com/vigov5/wisp.git
 
 Builds:
-  - versionName: 2.8.4
-    versionCode: 1035
-    commit: 3537132a7960042bed30a72db2c60f6497cf1bc5
+  - versionName: 2.8.5
+    versionCode: 1036
+    commit: 3b3edbbde966f7141175258b614321ed71f3b230
     subdir: flutter
     sudo:
       - apt-get update
       - apt-get install -y gcc libc-dev make rustup
     output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
     srclibs:
-      - flutter@3.41.9
+      - flutter@stable
     rm:
       - docs
       - web
@@ -33,6 +33,9 @@ Builds:
       - flutter/windows
       - flutter/web
     prebuild:
+      - flutterVersion=$(sed -n -E 's/^ +FLUTTER_VERSION:\ "(.*)"/\1/p' ../.github/workflows/flutter-release.yml)
+      - '[[ $flutterVersion ]]'
+      - git -C $$flutter$$ checkout -f $flutterVersion
       - export PUB_CACHE=$(pwd)/.pub-cache
       - $$flutter$$/bin/flutter config --no-analytics
       - $$flutter$$/bin/flutter pub get --enforce-lockfile
@@ -49,16 +52,16 @@ Builds:
         --dart-define=WISP_FDROID=true
     ndk: r28c
 
-  - versionName: 2.8.4
-    versionCode: 2035
-    commit: 3537132a7960042bed30a72db2c60f6497cf1bc5
+  - versionName: 2.8.5
+    versionCode: 2036
+    commit: 3b3edbbde966f7141175258b614321ed71f3b230
     subdir: flutter
     sudo:
       - apt-get update
       - apt-get install -y gcc libc-dev make rustup
     output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
     srclibs:
-      - flutter@3.41.9
+      - flutter@stable
     rm:
       - docs
       - web
@@ -68,6 +71,9 @@ Builds:
       - flutter/windows
       - flutter/web
     prebuild:
+      - flutterVersion=$(sed -n -E 's/^ +FLUTTER_VERSION:\ "(.*)"/\1/p' ../.github/workflows/flutter-release.yml)
+      - '[[ $flutterVersion ]]'
+      - git -C $$flutter$$ checkout -f $flutterVersion
       - export PUB_CACHE=$(pwd)/.pub-cache
       - $$flutter$$/bin/flutter config --no-analytics
       - $$flutter$$/bin/flutter pub get --enforce-lockfile
@@ -84,16 +90,16 @@ Builds:
         --dart-define=WISP_FDROID=true
     ndk: r28c
 
-  - versionName: 2.8.4
-    versionCode: 4035
-    commit: 3537132a7960042bed30a72db2c60f6497cf1bc5
+  - versionName: 2.8.5
+    versionCode: 4036
+    commit: 3b3edbbde966f7141175258b614321ed71f3b230
     subdir: flutter
     sudo:
       - apt-get update
       - apt-get install -y gcc libc-dev make rustup
     output: build/app/outputs/flutter-apk/app-x86_64-release.apk
     srclibs:
-      - flutter@3.41.9
+      - flutter@stable
     rm:
       - docs
       - web
@@ -103,6 +109,9 @@ Builds:
       - flutter/windows
       - flutter/web
     prebuild:
+      - flutterVersion=$(sed -n -E 's/^ +FLUTTER_VERSION:\ "(.*)"/\1/p' ../.github/workflows/flutter-release.yml)
+      - '[[ $flutterVersion ]]'
+      - git -C $$flutter$$ checkout -f $flutterVersion
       - export PUB_CACHE=$(pwd)/.pub-cache
       - $$flutter$$/bin/flutter config --no-analytics
       - $$flutter$$/bin/flutter pub get --enforce-lockfile
@@ -126,5 +135,5 @@ VercodeOperation:
   - '%c + 2000'
   - '%c + 4000'
 UpdateCheckData: flutter/pubspec.yaml|version:\s.+\+(\d+)|.|version:\s(.+)\+
-CurrentVersion: 2.8.4
-CurrentVersionCode: 4035
+CurrentVersion: 2.8.5
+CurrentVersionCode: 4036
