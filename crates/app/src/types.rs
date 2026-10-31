@@ -114,6 +114,22 @@ pub enum PairingCodeState {
     Stale(ReceiverRegistration),
 }
 
+/// What came of asking the receiver to poll the discovery server now.
+///
+/// Says whether the poll was *started*, not how it went — the outcome
+/// arrives on the pairing watch channel like any other registration news.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistrationPollStart {
+    /// A poll is now running.
+    Started,
+    /// One was already in flight, so this request was folded into it. Keeps
+    /// an automatic trigger — returning to the app, say — from stacking
+    /// attempts that each sit out the full timeout on a dead network.
+    AlreadyRunning,
+    /// No rendezvous server is configured, so there is nothing to poll.
+    NoServerConfigured,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiverOfferPhase {
     Connecting,

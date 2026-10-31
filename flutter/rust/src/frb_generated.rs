@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1845555824;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1547298791;
 
 // Section: executor
 
@@ -506,6 +506,39 @@ fn wire__crate__api__preview__inspect_paths_impl(
                     Ok(output_ok)
                 })(
                 ))
+            }
+        },
+    )
+}
+fn wire__crate__api__receiver__poll_receiver_registration_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "poll_receiver_registration",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok =
+                        Result::<_, ()>::Ok(crate::api::receiver::poll_receiver_registration())?;
+                    Ok(output_ok)
+                })())
             }
         },
     )
@@ -1520,6 +1553,20 @@ impl SseDecode for crate::api::receiver::ReceiverPairingState {
     }
 }
 
+impl SseDecode for crate::api::receiver::ReceiverPollStart {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::receiver::ReceiverPollStart::Started,
+            1 => crate::api::receiver::ReceiverPollStart::AlreadyRunning,
+            2 => crate::api::receiver::ReceiverPollStart::NoServerConfigured,
+            3 => crate::api::receiver::ReceiverPollStart::ReceiverNotRunning,
+            _ => unreachable!("Invalid variant for ReceiverPollStart: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for crate::api::receiver::ReceiverRegistration {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1989,36 +2036,42 @@ fn pde_ffi_dispatcher_primary_impl(
         ),
         13 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
         14 => wire__crate__api__preview__inspect_paths_impl(port, ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__receiver__register_receiver_impl(port, ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__preview__remove_path_impl(port, ptr, rust_vec_len, data_len),
-        18 => wire__crate__api__receiver__respond_to_receiver_offer_impl(
+        15 => wire__crate__api__receiver__poll_receiver_registration_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        19 => wire__crate__api__diagnostics__run_connection_test_impl(
+        17 => wire__crate__api__receiver__register_receiver_impl(port, ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__preview__remove_path_impl(port, ptr, rust_vec_len, data_len),
+        19 => wire__crate__api__receiver__respond_to_receiver_offer_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        20 => wire__crate__api__receiver__save_text_file_impl(port, ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__lan__scan_nearby_receivers_impl(port, ptr, rust_vec_len, data_len),
-        23 => wire__crate__api__receiver__set_receiver_discoverable_impl(
+        20 => wire__crate__api__diagnostics__run_connection_test_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        25 => wire__crate__api__receiver__start_receiver_transfer_listener_impl(
+        21 => wire__crate__api__receiver__save_text_file_impl(port, ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__lan__scan_nearby_receivers_impl(port, ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__receiver__set_receiver_discoverable_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        26 => wire__crate__api__sender__start_send_transfer_impl(port, ptr, rust_vec_len, data_len),
-        27 => wire__crate__api__receiver__watch_receiver_pairing_impl(
+        26 => wire__crate__api__receiver__start_receiver_transfer_listener_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        27 => wire__crate__api__sender__start_send_transfer_impl(port, ptr, rust_vec_len, data_len),
+        28 => wire__crate__api__receiver__watch_receiver_pairing_impl(
             port,
             ptr,
             rust_vec_len,
@@ -2040,9 +2093,9 @@ fn pde_ffi_dispatcher_sync_impl(
         8 => wire__crate__api__lan__decode_ticket_info_impl(ptr, rust_vec_len, data_len),
         9 => wire__crate__api__lan__detect_usb_link_impl(ptr, rust_vec_len, data_len),
         12 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__device__random_device_name_impl(ptr, rust_vec_len, data_len),
-        22 => wire__crate__api__simple__set_app_identity_impl(ptr, rust_vec_len, data_len),
-        24 => wire__crate__api__simple__set_transfer_telemetry_enabled_impl(
+        16 => wire__crate__api__device__random_device_name_impl(ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__simple__set_app_identity_impl(ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__simple__set_transfer_telemetry_enabled_impl(
             ptr,
             rust_vec_len,
             data_len,
@@ -2304,6 +2357,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::receiver::ReceiverPairingStat
     for crate::api::receiver::ReceiverPairingState
 {
     fn into_into_dart(self) -> crate::api::receiver::ReceiverPairingState {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::receiver::ReceiverPollStart {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Started => 0.into_dart(),
+            Self::AlreadyRunning => 1.into_dart(),
+            Self::NoServerConfigured => 2.into_dart(),
+            Self::ReceiverNotRunning => 3.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::receiver::ReceiverPollStart
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::receiver::ReceiverPollStart>
+    for crate::api::receiver::ReceiverPollStart
+{
+    fn into_into_dart(self) -> crate::api::receiver::ReceiverPollStart {
         self
     }
 }
@@ -3214,6 +3290,24 @@ impl SseEncode for crate::api::receiver::ReceiverPairingState {
         <Option<String>>::sse_encode(self.code, serializer);
         <Option<String>>::sse_encode(self.expires_at, serializer);
         <bool>::sse_encode(self.stale, serializer);
+    }
+}
+
+impl SseEncode for crate::api::receiver::ReceiverPollStart {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::receiver::ReceiverPollStart::Started => 0,
+                crate::api::receiver::ReceiverPollStart::AlreadyRunning => 1,
+                crate::api::receiver::ReceiverPollStart::NoServerConfigured => 2,
+                crate::api::receiver::ReceiverPollStart::ReceiverNotRunning => 3,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 

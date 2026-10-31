@@ -50,6 +50,20 @@ Stream<ReceiverPairingState> watchReceiverPairing({
   deviceType: deviceType,
 );
 
+/// Run the receiver's confirm-or-rotate poll against the discovery server now
+/// instead of waiting for the next maintenance tick.
+///
+/// Use this, not [`ensure_receiver_registration`], for anything the user did
+/// not explicitly ask for. That one mints a fresh code every time; this one
+/// keeps a code the server still vouches for, so it is safe to fire on, say,
+/// returning to the app — it cannot invalidate a code already shared.
+///
+/// Returns as soon as the poll is *started*, so it does not block the caller
+/// for the length of a request on a dead network. Deliberately does not
+/// cold-start a receiver: with nothing running there is nothing to re-confirm.
+Future<ReceiverPollStart> pollReceiverRegistration() =>
+    RustLib.instance.api.crateApiReceiverPollReceiverRegistration();
+
 Future<void> setReceiverDiscoverable({required bool enabled}) => RustLib
     .instance
     .api
@@ -190,6 +204,24 @@ class ReceiverPairingState {
           code == other.code &&
           expiresAt == other.expiresAt &&
           stale == other.stale;
+}
+
+/// What came of [`poll_receiver_registration`].
+///
+/// Total and infallible by design: the caller is an automatic trigger, and
+/// an automatic trigger must not be able to throw.
+enum ReceiverPollStart {
+  /// A poll is now running. Its result arrives on the pairing stream.
+  started,
+
+  /// One was already in flight, so this request folded into it.
+  alreadyRunning,
+
+  /// No rendezvous server is configured; there is nothing to poll.
+  noServerConfigured,
+
+  /// No receiver service is running, or it has stopped.
+  receiverNotRunning,
 }
 
 class ReceiverRegistration {

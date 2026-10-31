@@ -39,6 +39,12 @@ class ReceiverServiceController extends Notifier<ReceiverServiceState> {
         .ensureRegistered(serverUrl: serverUrl);
   }
 
+  /// See [ReceiverServiceSource.pollRegistration]. Use this, not
+  /// [ensureRegistered], for anything the user did not explicitly ask for.
+  Future<void> pollRegistration() {
+    return ref.read(receiverServiceSourceProvider).pollRegistration();
+  }
+
   Future<void> setDiscoverable({required bool enabled}) {
     return ref
         .read(receiverServiceSourceProvider)

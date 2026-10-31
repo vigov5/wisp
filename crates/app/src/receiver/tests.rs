@@ -16,7 +16,7 @@ use super::{
     OfferDecision, PairingCodeState, ReceiverEvent, ReceiverLifecycle, ReceiverRegistration,
     ReceiverService,
 };
-use crate::types::{ConflictPolicy, ReceiverConfig};
+use crate::types::{ConflictPolicy, ReceiverConfig, RegistrationPollStart};
 
 fn test_config() -> ReceiverConfig {
     ReceiverConfig {
@@ -444,5 +444,85 @@ async fn a_fresh_code_survives_a_maintenance_pass() -> AppResult<()> {
         "no RegistrationUpdated event should be emitted when the existing \
          registration is still fresh"
     );
+    Ok(())
+}
+
+/// A dead port: the attempt fails at once, which is all these tests need
+/// from it — the URL is recorded on the runtime either way.
+const UNREACHABLE_SERVER: &str = "http://127.0.0.1:1/__unreachable_test_host__";
+
+#[tokio::test]
+async fn polling_without_a_server_has_nothing_to_poll() -> AppResult<()> {
+    let Some(service) = try_start_service().await? else {
+        return Ok(());
+    };
+
+    assert_eq!(
+        service.poll_registration().await?,
+        RegistrationPollStart::NoServerConfigured,
+        "a receiver with no rendezvous server must not claim it started one",
+    );
+
+    service.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn polling_starts_a_job_once_a_server_is_known() -> AppResult<()> {
+    let Some(service) = try_start_service().await? else {
+        return Ok(());
+    };
+
+    // Fails immediately; we only want the server URL left on the runtime.
+    let _ = service
+        .ensure_registered(Some(UNREACHABLE_SERVER.to_owned()))
+        .await;
+
+    assert_eq!(
+        service.poll_registration().await?,
+        RegistrationPollStart::Started,
+    );
+
+    service.shutdown().await?;
+    Ok(())
+}
+
+/// The guard that makes this safe to fire from something as ordinary as
+/// switching back to the app: on a network where every attempt hangs for the
+/// full timeout, repeated triggers must fold into the one already running
+/// rather than stack sockets behind it.
+#[tokio::test]
+async fn a_poll_folds_into_the_attempt_already_running() -> AppResult<()> {
+    let Some(service) = try_start_service().await? else {
+        return Ok(());
+    };
+
+    // Accepts and then says nothing, so the registration stays in flight.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind the black hole");
+    let addr = listener.local_addr().expect("black hole address");
+    let _black_hole = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+        }
+    });
+
+    let registration = service.ensure_registered(Some(format!("http://{addr}")));
+    tokio::pin!(registration);
+    tokio::select! {
+        result = &mut registration => panic!("the black hole answered: {result:?}"),
+        _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+    }
+
+    for _ in 0..3 {
+        assert_eq!(
+            service.poll_registration().await?,
+            RegistrationPollStart::AlreadyRunning,
+        );
+    }
+
+    service.shutdown().await?;
     Ok(())
 }

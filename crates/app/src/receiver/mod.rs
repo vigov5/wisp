@@ -19,7 +19,7 @@ use crate::blob_dispatcher::BlobDispatcher;
 use crate::error::{AppError, AppResult};
 use crate::types::{
     ConflictPolicy, ConnectionPath, NearbyReceiver, PairingCodeState, QrPairingInfo,
-    ReceiverConfig, ReceiverOfferEvent, ReceiverRegistration,
+    ReceiverConfig, ReceiverOfferEvent, ReceiverRegistration, RegistrationPollStart,
 };
 use wisp_core::protocol::{ALPN, DeviceType};
 
@@ -308,6 +308,28 @@ impl ReceiverService {
             reply,
         })
         .await
+    }
+
+    /// Ask the actor to run its confirm-or-rotate registration poll now.
+    ///
+    /// The returned [`RegistrationPollStart`] says whether a poll started;
+    /// its outcome reaches the UI through the pairing watch channel, not
+    /// through this call.
+    ///
+    /// Use this — not [`Self::ensure_registered`] — for anything automatic.
+    /// `ensure_registered` mints a new code every time, which is right for a
+    /// deliberate "Refresh" tap and wrong for, say, returning to the app.
+    pub async fn poll_registration(&self) -> AppResult<RegistrationPollStart> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(ReceiverCommand::PollRegistration { reply: reply_tx })
+            .await
+            .map_err(|_| AppError::ActorStopped {
+                action: "polling the discovery server",
+            })?;
+        reply_rx.await.map_err(|_| AppError::ActorDroppedReply {
+            action: "polling the discovery server",
+        })
     }
 
     pub async fn set_discoverable(&self, enabled: bool) -> AppResult<()> {

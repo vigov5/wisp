@@ -13,6 +13,15 @@ abstract class ReceiverServiceSource {
 
   Future<void> ensureRegistered({String? serverUrl});
 
+  /// Runs the confirm-or-rotate poll against the discovery server now rather
+  /// than waiting for the receiver's next maintenance tick.
+  ///
+  /// Unlike [ensureRegistered], which mints a fresh code every time, this
+  /// keeps a code the server still vouches for — so it is safe to call
+  /// automatically, without invalidating a code the user already shared.
+  /// Never throws: callers are automatic triggers, not user actions.
+  Future<void> pollRegistration();
+
   Future<void> updateIdentity({
     required String deviceName,
     required String downloadRoot,

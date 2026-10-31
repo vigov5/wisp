@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/receive/application/resume_poll.dart';
 import '../features/receive/application/service.dart';
 import '../features/send/application/controller.dart';
 import '../features/send/application/model.dart';
@@ -367,6 +368,33 @@ class _WispAppState extends ConsumerState<WispApp> with WidgetsBindingObserver {
     if (foreground == _isForeground) return;
     _isForeground = foreground;
     _applyDiscoverability();
+    if (foreground) _reconfirmStalePairingCode();
+  }
+
+  DateTime? _lastResumePoll;
+
+  /// A code marked "Local only" usually describes a network the device has
+  /// since left: Android freezes the process in the background, so the
+  /// receiver's 15s maintenance tick does not run while we are away and the
+  /// badge still reflects whatever was true minutes ago. Worse, a backoff
+  /// earned back then can hold it there for another two minutes after we
+  /// return.
+  ///
+  /// So on resume, ask the receiver to re-confirm. This polls rather than
+  /// re-registers — a code the server still vouches for survives, which is
+  /// what makes it safe to do without the user asking. The outcome arrives on
+  /// the pairing stream; there is nothing to await here.
+  void _reconfirmStalePairingCode() {
+    final now = DateTime.now();
+    final poll = shouldPollOnResume(
+      isStale: ref.read(receiverServiceProvider).pairingCode.isStale,
+      now: now,
+      lastPoll: _lastResumePoll,
+    );
+    if (!poll) return;
+
+    _lastResumePoll = now;
+    unawaited(_receiverService.pollRegistration());
   }
 
   @override

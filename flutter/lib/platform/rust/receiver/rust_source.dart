@@ -161,6 +161,21 @@ class RustReceiverServiceSource implements ReceiverServiceSource {
   }
 
   @override
+  Future<void> pollRegistration() async {
+    // The bridge call itself is infallible by design, but reaching it is not
+    // — the FFI can throw if the bridge was never initialised. Callers are
+    // automatic triggers with nothing to report to, so swallow it here and
+    // keep the interface's "never throws" promise rather than leaving an
+    // unhandled async error behind.
+    try {
+      final start = await rust_receiver.pollReceiverRegistration();
+      debugPrint('[receiver] pollRegistration -> ${start.name}');
+    } catch (error) {
+      debugPrint('[receiver] pollRegistration unavailable: $error');
+    }
+  }
+
+  @override
   Future<void> updateIdentity({
     required String deviceName,
     required String downloadRoot,

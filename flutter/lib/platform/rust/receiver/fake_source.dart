@@ -308,6 +308,9 @@ class FakeReceiverServiceSource implements ReceiverServiceSource {
   Future<void> ensureRegistered({String? serverUrl}) async {}
 
   @override
+  Future<void> pollRegistration() async {}
+
+  @override
   Future<void> updateIdentity({
     required String deviceName,
     required String downloadRoot,

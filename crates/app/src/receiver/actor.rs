@@ -6,6 +6,7 @@ use tokio::time::{MissedTickBehavior, interval};
 use crate::error::{AppError, AppResult};
 use crate::types::{
     ConnectionPath, PairingCodeState, ReceiverOfferEvent, ReceiverOfferPhase, ReceiverRegistration,
+    RegistrationPollStart,
 };
 
 use super::runtime::{
@@ -23,6 +24,21 @@ pub(super) enum ReceiverCommand {
     EnsureRegistered {
         server_url: Option<String>,
         reply: oneshot::Sender<AppResult<ReceiverRegistration>>,
+    },
+    /// Run the periodic registration poll right now instead of waiting for
+    /// the next maintenance tick.
+    ///
+    /// Unlike [`ReceiverCommand::EnsureRegistered`], which mints a fresh code
+    /// unconditionally, this is the same confirm-or-rotate job the 15s tick
+    /// runs: a code the server still vouches for survives. That is what makes
+    /// it safe to fire automatically — it cannot throw away a code the user
+    /// has already read out to someone.
+    ///
+    /// The reply says whether a poll was started, not how it went; the
+    /// outcome arrives through the pairing watch channel like any other
+    /// registration news.
+    PollRegistration {
+        reply: oneshot::Sender<RegistrationPollStart>,
     },
     SetDiscoverable {
         enabled: bool,
@@ -177,6 +193,27 @@ pub(super) async fn run_receiver_actor(
                         registration_running = true;
                         spawn_registration_command(command, &job_tx, reply);
                         let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
+                    }
+                    // Deliberately guarded on `registration_running`, unlike
+                    // the command arms above: this one can be triggered by
+                    // something as ordinary as switching back to the app, so
+                    // it must not stack jobs when the server is unreachable
+                    // and each attempt sits there for the full timeout.
+                    // Clearing the cooldown is the point of the command — a
+                    // backoff earned on a network the device has since left
+                    // should not keep the badge amber for another two minutes.
+                    ReceiverCommand::PollRegistration { reply } => {
+                        registration_cooldown = 0;
+                        let started = if registration_running {
+                            RegistrationPollStart::AlreadyRunning
+                        } else if let Some(job) = runtime.registration_job() {
+                            registration_running = true;
+                            spawn_registration_job(job, &job_tx);
+                            RegistrationPollStart::Started
+                        } else {
+                            RegistrationPollStart::NoServerConfigured
+                        };
+                        let _ = reply.send(started);
                     }
                     ReceiverCommand::SetDiscoverable { enabled, reply } => {
                         let was_active = runtime.advertising_active();

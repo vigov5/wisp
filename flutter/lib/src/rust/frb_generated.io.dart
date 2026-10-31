@@ -220,6 +220,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ReceiverPairingState dco_decode_receiver_pairing_state(dynamic raw);
 
   @protected
+  ReceiverPollStart dco_decode_receiver_poll_start(dynamic raw);
+
+  @protected
   ReceiverRegistration dco_decode_receiver_registration(dynamic raw);
 
   @protected
@@ -524,6 +527,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ReceiverPairingState sse_decode_receiver_pairing_state(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ReceiverPollStart sse_decode_receiver_poll_start(
     SseDeserializer deserializer,
   );
 
@@ -903,6 +911,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_receiver_pairing_state(
     ReceiverPairingState self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_receiver_poll_start(
+    ReceiverPollStart self,
     SseSerializer serializer,
   );
 

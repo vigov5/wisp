@@ -9,7 +9,7 @@ use wisp_app::{
     QrPairingInfo as AppQrPairingInfo, ReceiverConfig, ReceiverEvent as AppReceiverEvent,
     ReceiverOfferEvent as AppReceiverOfferEvent, ReceiverOfferFile as AppReceiverOfferFile,
     ReceiverOfferPhase as AppReceiverOfferPhase, ReceiverRegistration as AppReceiverRegistration,
-    ReceiverService,
+    ReceiverService, RegistrationPollStart,
 };
 use wisp_core::transfer::{TransferPhase, TransferSnapshot};
 
@@ -252,6 +252,47 @@ pub fn watch_receiver_pairing(
 
         replace_pairing_task(config, service, updates);
         Ok(())
+    })
+}
+
+/// What came of [`poll_receiver_registration`].
+///
+/// Total and infallible by design: the caller is an automatic trigger, and
+/// an automatic trigger must not be able to throw.
+pub enum ReceiverPollStart {
+    /// A poll is now running. Its result arrives on the pairing stream.
+    Started,
+    /// One was already in flight, so this request folded into it.
+    AlreadyRunning,
+    /// No rendezvous server is configured; there is nothing to poll.
+    NoServerConfigured,
+    /// No receiver service is running, or it has stopped.
+    ReceiverNotRunning,
+}
+
+/// Run the receiver's confirm-or-rotate poll against the discovery server now
+/// instead of waiting for the next maintenance tick.
+///
+/// Use this, not [`ensure_receiver_registration`], for anything the user did
+/// not explicitly ask for. That one mints a fresh code every time; this one
+/// keeps a code the server still vouches for, so it is safe to fire on, say,
+/// returning to the app — it cannot invalidate a code already shared.
+///
+/// Returns as soon as the poll is *started*, so it does not block the caller
+/// for the length of a request on a dead network. Deliberately does not
+/// cold-start a receiver: with nothing running there is nothing to re-confirm.
+pub fn poll_receiver_registration() -> ReceiverPollStart {
+    RUNTIME.block_on(async move {
+        let Some(service) = current_service() else {
+            return ReceiverPollStart::ReceiverNotRunning;
+        };
+        match service.poll_registration().await {
+            Ok(RegistrationPollStart::Started) => ReceiverPollStart::Started,
+            Ok(RegistrationPollStart::AlreadyRunning) => ReceiverPollStart::AlreadyRunning,
+            Ok(RegistrationPollStart::NoServerConfigured) => ReceiverPollStart::NoServerConfigured,
+            // The actor stopped between the lookup above and the send.
+            Err(_) => ReceiverPollStart::ReceiverNotRunning,
+        }
     })
 }
 
