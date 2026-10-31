@@ -1,0 +1,4 @@
+Wisp 2.8.5 — the pairing code recovers faster.
+
+• Coming back to Wisp now re-checks a code marked "Local only" straight away, instead of leaving it unconfirmed for up to two minutes after you switch apps.
+• If you are offline, that check runs quietly in the background and never holds up a transfer.
