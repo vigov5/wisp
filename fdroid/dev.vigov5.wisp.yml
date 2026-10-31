@@ -16,7 +16,7 @@ Repo: https://github.com/vigov5/wisp.git
 Builds:
   - versionName: 2.8.5
     versionCode: 1036
-    commit: 3b3edbbde966f7141175258b614321ed71f3b230
+    commit: 1cd4be6d6726a39347077e9806531e5cc3bc276f
     subdir: flutter
     sudo:
       - apt-get update
@@ -54,7 +54,7 @@ Builds:
 
   - versionName: 2.8.5
     versionCode: 2036
-    commit: 3b3edbbde966f7141175258b614321ed71f3b230
+    commit: 1cd4be6d6726a39347077e9806531e5cc3bc276f
     subdir: flutter
     sudo:
       - apt-get update
@@ -92,7 +92,7 @@ Builds:
 
   - versionName: 2.8.5
     versionCode: 4036
-    commit: 3b3edbbde966f7141175258b614321ed71f3b230
+    commit: 1cd4be6d6726a39347077e9806531e5cc3bc276f
     subdir: flutter
     sudo:
       - apt-get update
