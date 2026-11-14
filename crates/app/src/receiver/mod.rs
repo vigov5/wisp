@@ -23,7 +23,7 @@ use crate::types::{
 };
 use wisp_core::protocol::{ALPN, DeviceType};
 
-use self::actor::{ReceiverCommand, run_receiver_actor};
+use self::actor::{CurrentOffer, ReceiverCommand, run_receiver_actor};
 use self::runtime::ReceiverRuntime;
 use self::wisp_handler::WispProtocolHandler;
 
@@ -115,6 +115,7 @@ pub struct ReceiverService {
     state_rx: watch::Receiver<ReceiverSnapshot>,
     pairing_rx: watch::Receiver<PairingCodeState>,
     event_tx: broadcast::Sender<ReceiverEvent>,
+    offer_rx: watch::Receiver<Option<ReceiverOfferEvent>>,
     endpoint: Endpoint,
     device_name: String,
     device_type: String,
@@ -204,6 +205,7 @@ impl ReceiverService {
         // subscriber rather than blocking the producer, so over-capacity
         // is "missed UI updates", never deadlock.)
         let (event_tx, _) = broadcast::channel(256);
+        let (offer_tx, offer_rx) = watch::channel(None);
 
         // Build the Router that multiplexes inbound ALPNs.  We accept
         // `wisp_ALPN` ourselves (delegates to `ReceiverSession`) and route
@@ -239,6 +241,7 @@ impl ReceiverService {
             state_tx,
             pairing_tx,
             event_tx.clone(),
+            CurrentOffer::new(offer_tx),
         ));
 
         Ok(Self {
@@ -246,6 +249,7 @@ impl ReceiverService {
             state_rx,
             pairing_rx,
             event_tx,
+            offer_rx,
             endpoint: endpoint_for_service,
             device_name: device_name_for_service,
             device_type: device_type_for_service,
@@ -292,6 +296,19 @@ impl ReceiverService {
 
     pub fn subscribe_events(&self) -> broadcast::Receiver<ReceiverEvent> {
         self.event_tx.subscribe()
+    }
+
+    /// The latest event of the offer in progress, if any: connecting, awaiting
+    /// a decision, or receiving.
+    ///
+    /// [`subscribe_events`](Self::subscribe_events) only delivers what is sent
+    /// after the call, so a listener that attaches late subscribes first and
+    /// then shows this, or it can miss an offer that arrived while it was
+    /// starting and leave the sender waiting on a prompt nobody sees. Showing
+    /// an event the subscription then delivers again is harmless; the order
+    /// is what closes the gap.
+    pub fn current_offer(&self) -> Option<ReceiverOfferEvent> {
+        self.offer_rx.borrow().clone()
     }
 
     pub async fn setup(&self, server_url: Option<String>) -> AppResult<ReceiverRegistration> {

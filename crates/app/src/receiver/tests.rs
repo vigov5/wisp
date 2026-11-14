@@ -6,7 +6,7 @@ use tokio::sync::{broadcast, oneshot, watch};
 
 use crate::error::{AppError, AppResult};
 
-use super::actor::registration_backoff_ticks;
+use super::actor::{ReceiverCommand, registration_backoff_ticks};
 use super::runtime::{
     OfferResolution, ReceiverRuntime, RegistrationCommandKind, RegistrationOutcome,
     registration_needs_refresh, should_advertise,
@@ -16,7 +16,9 @@ use super::{
     OfferDecision, PairingCodeState, ReceiverEvent, ReceiverLifecycle, ReceiverRegistration,
     ReceiverService,
 };
-use crate::types::{ConflictPolicy, ReceiverConfig, RegistrationPollStart};
+use crate::types::{
+    ConflictPolicy, ReceiverConfig, ReceiverOfferEvent, ReceiverOfferPhase, RegistrationPollStart,
+};
 
 fn test_config() -> ReceiverConfig {
     ReceiverConfig {
@@ -522,6 +524,179 @@ async fn a_poll_folds_into_the_attempt_already_running() -> AppResult<()> {
             RegistrationPollStart::AlreadyRunning,
         );
     }
+
+    service.shutdown().await?;
+    Ok(())
+}
+
+fn offer_event(phase: ReceiverOfferPhase, sender: &str) -> ReceiverOfferEvent {
+    ReceiverOfferEvent {
+        phase,
+        sender_name: sender.to_owned(),
+        sender_device_type: "laptop".to_owned(),
+        sender_web: false,
+        sender_ephemeral: false,
+        destination_label: sender.to_owned(),
+        save_root_label: "Downloads".to_owned(),
+        status_message: String::new(),
+        item_count: 1,
+        total_size_bytes: 5,
+        bytes_received: 0,
+        plan: None,
+        snapshot: None,
+        connection_path: None,
+        sender_endpoint_id: None,
+        sender_ticket: None,
+        total_size_label: "5 B".to_owned(),
+        files: Vec::new(),
+        inline_text: Some("hello".to_owned()),
+        error: None,
+        collection_hash: (phase == ReceiverOfferPhase::OfferReady).then(|| "abc".to_owned()),
+    }
+}
+
+/// Hands the actor an offer the way a session does, returning the receiving
+/// end of its decision channel.
+async fn prepare_offer(
+    service: &ReceiverService,
+    offer_id: u64,
+    sender: &str,
+) -> oneshot::Receiver<OfferResolution> {
+    let (decision_tx, decision_rx) = oneshot::channel();
+    let (cancel_tx, _cancel_rx) = watch::channel(false);
+    service
+        .cmd_tx
+        .send(ReceiverCommand::OfferPrepared {
+            run: ReceiverRun {
+                offer_id,
+                decision_tx,
+                cancel_tx,
+            },
+            event: offer_event(ReceiverOfferPhase::OfferReady, sender),
+        })
+        .await
+        .expect("actor is running");
+    decision_rx
+}
+
+async fn finish_offer(service: &ReceiverService, offer_id: u64, phase: ReceiverOfferPhase) {
+    service
+        .cmd_tx
+        .send(ReceiverCommand::OfferFinished {
+            offer_id,
+            final_event: offer_event(phase, "Laptop"),
+        })
+        .await
+        .expect("actor is running");
+}
+
+/// Waits until the actor has worked through everything queued before it,
+/// with a round trip that leaves the offer state alone.
+async fn settle(service: &ReceiverService) {
+    let _ = service.poll_registration().await;
+}
+
+/// A PC that sends while the phone's app is still starting reaches the
+/// service before anything is listening for its events. The prompt must
+/// still reach whoever attaches afterwards, or the PC waits on a decision
+/// nobody can see.
+#[tokio::test]
+async fn an_offer_that_arrived_before_any_listener_is_still_offered() -> AppResult<()> {
+    let Some(service) = try_start_service().await? else {
+        return Ok(());
+    };
+
+    let _decision = prepare_offer(&service, 1, "Laptop").await;
+    settle(&service).await;
+
+    // The listener attaches only now, after the offer was broadcast.
+    let offer = service.current_offer().expect("the offer is replayable");
+    assert_eq!(offer.phase, ReceiverOfferPhase::OfferReady);
+    assert_eq!(offer.sender_name, "Laptop");
+    assert_eq!(offer.collection_hash.as_deref(), Some("abc"));
+
+    service.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_answered_offer_is_not_offered_again() -> AppResult<()> {
+    let Some(service) = try_start_service().await? else {
+        return Ok(());
+    };
+
+    let decision = prepare_offer(&service, 1, "Laptop").await;
+    service.respond_to_offer(OfferDecision::Decline).await?;
+    assert!(matches!(decision.await, Ok(OfferResolution::Decline)));
+    assert_eq!(
+        service.current_offer(),
+        None,
+        "a declined offer must not come back on the next listener",
+    );
+
+    service.shutdown().await?;
+    Ok(())
+}
+
+/// Between the accept and the first progress event, a replay must say the
+/// transfer is under way rather than ask for the decision a second time.
+#[tokio::test]
+async fn an_accepted_offer_replays_as_receiving_until_it_finishes() -> AppResult<()> {
+    let Some(service) = try_start_service().await? else {
+        return Ok(());
+    };
+
+    let _decision = prepare_offer(&service, 1, "Laptop").await;
+    service
+        .respond_to_offer(OfferDecision::Accept(Default::default()))
+        .await?;
+    let offer = service.current_offer().expect("still in progress");
+    assert_eq!(offer.phase, ReceiverOfferPhase::Receiving);
+    assert_eq!(offer.collection_hash, None);
+
+    finish_offer(&service, 1, ReceiverOfferPhase::Completed).await;
+    settle(&service).await;
+    assert_eq!(service.current_offer(), None);
+
+    service.shutdown().await?;
+    Ok(())
+}
+
+/// The core gives up on an unanswered offer after its decision timeout and
+/// the session reports it finished; the replay has to let go with it.
+#[tokio::test]
+async fn an_offer_that_timed_out_is_not_offered_again() -> AppResult<()> {
+    let Some(service) = try_start_service().await? else {
+        return Ok(());
+    };
+
+    let _decision = prepare_offer(&service, 1, "Laptop").await;
+    finish_offer(&service, 1, ReceiverOfferPhase::Failed).await;
+    settle(&service).await;
+    assert_eq!(service.current_offer(), None);
+
+    service.shutdown().await?;
+    Ok(())
+}
+
+/// A second sender is turned away while an offer is pending; it must not
+/// take the first one's place in the replay.
+#[tokio::test]
+async fn a_turned_away_offer_does_not_replace_the_pending_one() -> AppResult<()> {
+    let Some(service) = try_start_service().await? else {
+        return Ok(());
+    };
+
+    let _first = prepare_offer(&service, 1, "Laptop").await;
+    let second = prepare_offer(&service, 2, "Desktop").await;
+    assert!(matches!(second.await, Ok(OfferResolution::Decline)));
+    finish_offer(&service, 2, ReceiverOfferPhase::Declined).await;
+    settle(&service).await;
+
+    let offer = service
+        .current_offer()
+        .expect("the first offer is still pending");
+    assert_eq!(offer.sender_name, "Laptop");
 
     service.shutdown().await?;
     Ok(())

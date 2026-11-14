@@ -131,6 +131,22 @@ impl ReceiverRuntime {
         matches!(self.offer_state, OfferState::Pending(_))
     }
 
+    /// The offer this runtime is following, from its sender connecting until
+    /// it settles; `None` while idle.
+    pub(super) fn tracked_offer_id(&self) -> Option<u64> {
+        match &self.offer_state {
+            OfferState::Idle => None,
+            OfferState::Connecting { offer_id, .. } | OfferState::Receiving { offer_id, .. } => {
+                Some(*offer_id)
+            }
+            OfferState::Pending(pending) => Some(pending.run.offer_id),
+        }
+    }
+
+    pub(super) fn is_receiving(&self) -> bool {
+        matches!(self.offer_state, OfferState::Receiving { .. })
+    }
+
     pub(super) fn is_available_for_new_offer(&self) -> bool {
         matches!(self.offer_state, OfferState::Idle)
     }

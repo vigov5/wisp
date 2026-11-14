@@ -82,12 +82,91 @@ pub(super) enum ReceiverCommand {
     },
 }
 
+/// The latest event of the offer the runtime is tracking, for listeners that
+/// attach after it was broadcast.
+///
+/// Offer events go out on a `broadcast` channel, which hands a new subscriber
+/// only what is sent after it subscribes. The Router accepts connections as
+/// soon as the service starts, while the app's listener subscribes only after
+/// its own startup work, rendezvous registration included. A sender that
+/// connected in between — a PC that had been waiting for a phone to open the
+/// app — got its offer acknowledged and sat in "waiting for confirmation"
+/// while the phone showed nothing. A listener replays this value on attach.
+///
+/// It follows the runtime's tracking, not the raw event stream: it is set only
+/// for the offer the runtime holds and cleared the moment the runtime lets go,
+/// so a replay never resurrects an offer that has been answered, timed out or
+/// abandoned.
+#[derive(Debug)]
+pub(super) struct CurrentOffer(watch::Sender<Option<ReceiverOfferEvent>>);
+
+impl CurrentOffer {
+    pub(super) fn new(tx: watch::Sender<Option<ReceiverOfferEvent>>) -> Self {
+        Self(tx)
+    }
+
+    /// Records `event` when it belongs to the offer the runtime tracks.
+    fn record(&self, runtime: &ReceiverRuntime, offer_id: u64, event: &ReceiverOfferEvent) {
+        if runtime.tracked_offer_id() == Some(offer_id) {
+            self.0.send_replace(Some(event.clone()));
+        }
+    }
+
+    /// Brings the stored offer in line with the runtime after anything that
+    /// may have moved it on without an event of its own: an answer, a failed
+    /// answer, a finished session.
+    fn follow(&self, runtime: &ReceiverRuntime) {
+        let tracked = runtime.tracked_offer_id();
+        let accepted = runtime.is_receiving();
+        self.0
+            .send_if_modified(|current| match (tracked, current.as_mut()) {
+                (None, Some(_)) => {
+                    *current = None;
+                    true
+                }
+                // Accepted, but the first progress event is still on its way.
+                // Until it lands, a replay must not offer the decision again.
+                (Some(_), Some(event))
+                    if accepted && event.phase == ReceiverOfferPhase::OfferReady =>
+                {
+                    event.phase = ReceiverOfferPhase::Receiving;
+                    event.collection_hash = None;
+                    true
+                }
+                _ => false,
+            });
+    }
+
+    fn set_connection_path(
+        &self,
+        runtime: &ReceiverRuntime,
+        offer_id: u64,
+        connection_path: &ConnectionPath,
+    ) {
+        if runtime.tracked_offer_id() != Some(offer_id) {
+            return;
+        }
+        self.0.send_if_modified(|current| match current.as_mut() {
+            Some(event) => {
+                event.connection_path = Some(connection_path.clone());
+                true
+            }
+            None => false,
+        });
+    }
+
+    fn clear(&self) {
+        self.0.send_replace(None);
+    }
+}
+
 pub(super) async fn run_receiver_actor(
     mut runtime: ReceiverRuntime,
     mut cmd_rx: mpsc::Receiver<ReceiverCommand>,
     state_tx: watch::Sender<ReceiverSnapshot>,
     pairing_tx: watch::Sender<PairingCodeState>,
     event_tx: broadcast::Sender<ReceiverEvent>,
+    current_offer: CurrentOffer,
 ) {
     let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
     let mut maintenance = interval(Duration::from_secs(15));
@@ -224,6 +303,7 @@ pub(super) async fn run_receiver_actor(
                     }
                     ReceiverCommand::RespondToOffer { decision, reply } => {
                         let result = runtime.respond_to_offer(decision);
+                        current_offer.follow(&runtime);
                         let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
                         let _ = reply.send(result);
                     }
@@ -242,10 +322,13 @@ pub(super) async fn run_receiver_actor(
                         // out of a stalled connect. There's still no offer to
                         // accept/decline — that arrives with `OfferPrepared`.
                         runtime.handle_offer_connecting(offer_id, cancel_tx);
+                        current_offer.record(&runtime, offer_id, &event);
                         let _ = event_tx.send(ReceiverEvent::OfferUpdated(event));
                     }
                     ReceiverCommand::OfferPrepared { run, event } => {
+                        let offer_id = run.offer_id;
                         if runtime.handle_offer_prepared(run) {
+                            current_offer.record(&runtime, offer_id, &event);
                             let _ = event_tx.send(ReceiverEvent::OfferUpdated(event));
                             // Code rotation deliberately deferred to
                             // `OfferFinished` (below).  Rotating here
@@ -261,6 +344,7 @@ pub(super) async fn run_receiver_actor(
                     }
                     ReceiverCommand::OfferProgress { offer_id, event } => {
                         if runtime.handle_offer_progress(offer_id) {
+                            current_offer.record(&runtime, offer_id, &event);
                             let _ = event_tx.send(ReceiverEvent::OfferUpdated(event));
                         }
                     }
@@ -280,6 +364,7 @@ pub(super) async fn run_receiver_actor(
                         // sender" failed-transfer card for a transfer the user
                         // never saw begin.  Suppress those.
                         let tracked = runtime.handle_offer_finished(offer_id);
+                        current_offer.follow(&runtime);
                         let identified_sender = !final_event.sender_name.trim().is_empty();
                         if tracked
                             || (matches!(
@@ -304,6 +389,7 @@ pub(super) async fn run_receiver_actor(
                         let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Ready);
                     }
                     ReceiverCommand::OfferConnectionPathChanged { offer_id, connection_path } => {
+                        current_offer.set_connection_path(&runtime, offer_id, &connection_path);
                         let _ = event_tx.send(ReceiverEvent::ConnectionPathChanged {
                             offer_id,
                             connection_path,
@@ -317,6 +403,7 @@ pub(super) async fn run_receiver_actor(
                         runtime.shutdown_router().await;
                         runtime.close_endpoint().await;
                         let _ = pairing_tx.send(PairingCodeState::Unavailable);
+                        current_offer.clear();
                         let _ = publish_snapshot(&state_tx, &runtime, ReceiverLifecycle::Stopped);
                         let _ = event_tx.send(ReceiverEvent::Shutdown);
                         let _ = reply.send(Ok(()));

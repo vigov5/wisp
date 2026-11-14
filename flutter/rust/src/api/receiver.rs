@@ -536,9 +536,22 @@ fn replace_updates_task(
     service: Arc<ReceiverService>,
     updates: StreamSink<ReceiverTransferEvent>,
 ) {
+    // Subscribe before reading the current offer: the subscription only carries
+    // what is sent from here on, and the service has been accepting senders
+    // since it started — before this listener existed, and before the
+    // registration awaited on the way here. An offer that landed in between
+    // reaches the UI only through this replay.
     let mut event_rx = service.subscribe_events();
+    let replayed = service.current_offer().map(map_event);
     let task = RUNTIME.spawn(async move {
         let mut last_event: Option<ReceiverTransferEvent> = None;
+        if let Some(event) = replayed {
+            // tracing, not println!: Android sends stdout to /dev/null, so
+            // only this reaches logcat (tag `wisp`).
+            tracing::info!(phase = ?event.phase, "replaying in-progress offer to new listener");
+            last_event = Some(event.clone());
+            let _ = updates.add(event);
+        }
         loop {
             match event_rx.recv().await {
                 Ok(AppReceiverEvent::OfferUpdated(event)) => {
