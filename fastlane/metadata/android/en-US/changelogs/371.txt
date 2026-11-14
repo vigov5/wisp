@@ -1,0 +1,5 @@
+Wisp 2.8.6 — favorite devices.
+
+• Star a device in Saved devices to pin it to the front of Recent. Favorites show a star on their tile and are never dropped when the list is full.
+• Recent now has Pick, a full list to choose from, and Manage. It also scrolls with a visible bar when it holds more devices than fit.
+• If someone sends you something while Wisp is still opening, the confirm screen now always appears.
