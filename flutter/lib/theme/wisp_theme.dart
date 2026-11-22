@@ -105,6 +105,7 @@ class WispColors extends ThemeExtension<WispColors> {
     required this.warnBorder,
     required this.warnInk,
     required this.warnFg,
+    required this.favoriteFg,
   });
 
   /// App/scaffold background.
@@ -160,6 +161,11 @@ class WispColors extends ThemeExtension<WispColors> {
   /// the thing to tap. Brighter on dark for the same reason [accentFg] is.
   final Color warnFg;
 
+  /// The gold of a favorite (starred) device's star, filled or as a badge.
+  /// Darker on light so a small star still clears 3:1 on white; brighter on
+  /// dark for the same reason [accentFg] is.
+  final Color favoriteFg;
+
   @override
   WispColors copyWith({
     Color? bg,
@@ -176,6 +182,7 @@ class WispColors extends ThemeExtension<WispColors> {
     Color? warnBorder,
     Color? warnInk,
     Color? warnFg,
+    Color? favoriteFg,
   }) {
     return WispColors(
       bg: bg ?? this.bg,
@@ -192,6 +199,7 @@ class WispColors extends ThemeExtension<WispColors> {
       warnBorder: warnBorder ?? this.warnBorder,
       warnInk: warnInk ?? this.warnInk,
       warnFg: warnFg ?? this.warnFg,
+      favoriteFg: favoriteFg ?? this.favoriteFg,
     );
   }
 
@@ -213,6 +221,7 @@ class WispColors extends ThemeExtension<WispColors> {
       warnBorder: Color.lerp(warnBorder, other.warnBorder, t)!,
       warnInk: Color.lerp(warnInk, other.warnInk, t)!,
       warnFg: Color.lerp(warnFg, other.warnFg, t)!,
+      favoriteFg: Color.lerp(favoriteFg, other.favoriteFg, t)!,
     );
   }
 }
@@ -232,6 +241,7 @@ const WispColors _lightColors = WispColors(
   warnBorder: Color(0xFFE0B96A),
   warnInk: Color(0xFF6B4D14),
   warnFg: Color(0xFFC0912C),
+  favoriteFg: Color(0xFFB7860B),
 );
 
 const WispColors _darkColors = WispColors(
@@ -252,6 +262,7 @@ const WispColors _darkColors = WispColors(
   // The amber the "Local only" badge already uses, so the badge and the
   // banner explaining it are the same colour.
   warnFg: Color(0xFFD4A824),
+  favoriteFg: Color(0xFFF5C542),
 );
 
 /// Reads the active [WispColors] for the current theme. Use `context.wc.ink`,

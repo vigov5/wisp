@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../app/app_router.dart';
 import '../../../../src/rust/api/lan.dart' as rust_lan;
 import '../../../../theme/wisp_theme.dart';
 import '../../../receive/application/service.dart';
@@ -10,6 +11,7 @@ import '../../../receive/application/state.dart';
 import '../../../saved_devices/application/device_display_name.dart';
 import '../../../saved_devices/application/saved_device.dart';
 import '../../../saved_devices/application/saved_devices_controller.dart';
+import '../../../saved_devices/presentation/saved_device_picker_sheet.dart';
 import '../../../transfers/application/pubkey_visual.dart';
 import '../../../usb_cable/presentation/usb_status_entry.dart';
 import '../../application/controller.dart';
@@ -41,6 +43,7 @@ class _SendDestinationSelectorState
   // it or scans a different one — gives the user a visible target so they
   // know what they're sending to (Nearby/Recent won't show this peer).
   NearbyReceiver? _qrPairedReceiver;
+  final ScrollController _recentScroll = ScrollController();
 
   @override
   void initState() {
@@ -62,6 +65,7 @@ class _SendDestinationSelectorState
       _scanThrottleCompleter!.complete();
     }
     _scanThrottleCompleter = null;
+    _recentScroll.dispose();
     super.dispose();
   }
 
@@ -109,6 +113,17 @@ class _SendDestinationSelectorState
     );
   }
 
+  Future<void> _pickSavedDevice(SendDestinationState destination) async {
+    final picked = await showSavedDevicePicker(
+      context,
+      selectedTicket: destination.mode == SendDestinationMode.nearby
+          ? destination.ticket
+          : null,
+    );
+    if (!mounted || picked == null) return;
+    _selectSavedDevice(picked);
+  }
+
   /// Identity key used by [_runScanLoop] to dedupe nearby devices.  Prefers
   /// the iroh pubkey when known (so the same device behind two mDNS records,
   /// or after renaming, collapses to one tile).  Falls back to fullname for
@@ -121,6 +136,10 @@ class _SendDestinationSelectorState
   /// fake source) — without this, `pumpAndSettle` never settles. In production
   /// the Rust scan already takes ~3 s, so this gate adds no latency.
   static const Duration _minLoopInterval = Duration(seconds: 1);
+
+  /// Room under the Recent tiles for the horizontal scrollbar, so the thumb
+  /// never draws over a tile.
+  static const double _recentScrollbarGap = 10;
 
   Future<void> _runScanLoop() async {
     final iteration = Stopwatch();
@@ -210,12 +229,12 @@ class _SendDestinationSelectorState
 
     // Recent = saved devices NOT currently visible on the LAN scan.
     // (When a saved device is also nearby, we only show the live Nearby tile to
-    // avoid duplicates.)
+    // avoid duplicates.) Favorites are pinned to the front.
     final savedDevices = ref.watch(savedDevicesProvider);
     final nearbyTickets = _nearbyDevices.map((d) => d.ticket).toSet();
-    final recentDevices = savedDevices
-        .where((d) => !nearbyTickets.contains(d.lastTicket ?? ''))
-        .toList(growable: false);
+    final recentDevices = favoritesFirst(
+      savedDevices.where((d) => !nearbyTickets.contains(d.lastTicket ?? '')),
+    );
 
     final qrPaired = _qrPairedReceiver;
     final qrSelected =
@@ -269,27 +288,49 @@ class _SendDestinationSelectorState
           ),
         const SizedBox(height: 18),
         if (recentDevices.isNotEmpty) ...[
-          Text('Recent', style: titleStyle),
+          Row(
+            children: [
+              Text('Recent', style: titleStyle),
+              const Spacer(),
+              _HeaderLink(
+                icon: Icons.format_list_bulleted_rounded,
+                label: 'Pick',
+                onPressed: () => _pickSavedDevice(destination),
+              ),
+              const SizedBox(width: 16),
+              _HeaderLink(
+                icon: Icons.tune_rounded,
+                label: 'Manage',
+                onPressed: () => context.pushSavedDevices(),
+              ),
+            ],
+          ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 134,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
-              itemCount: recentDevices.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 12),
-              itemBuilder: (context, index) {
-                final saved = recentDevices[index];
-                final selected =
-                    destination.mode == SendDestinationMode.nearby &&
-                    (saved.lastTicket?.isNotEmpty ?? false) &&
-                    destination.ticket == saved.lastTicket;
-                return _RecentDeviceTile(
-                  device: saved,
-                  isSelected: selected,
-                  onTap: () => _selectSavedDevice(saved),
-                );
-              },
+            height: 134 + _recentScrollbarGap,
+            child: Scrollbar(
+              controller: _recentScroll,
+              thumbVisibility: true,
+              child: ListView.separated(
+                controller: _recentScroll,
+                padding: const EdgeInsets.only(bottom: _recentScrollbarGap),
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                itemCount: recentDevices.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                itemBuilder: (context, index) {
+                  final saved = recentDevices[index];
+                  final selected =
+                      destination.mode == SendDestinationMode.nearby &&
+                      (saved.lastTicket?.isNotEmpty ?? false) &&
+                      destination.ticket == saved.lastTicket;
+                  return _RecentDeviceTile(
+                    device: saved,
+                    isSelected: selected,
+                    onTap: () => _selectSavedDevice(saved),
+                  );
+                },
+              ),
             ),
           ),
           const SizedBox(height: 18),
@@ -408,6 +449,41 @@ class _SendDestinationSelectorState
 
   void _clearQrPaired() {
     setState(() => _qrPairedReceiver = null);
+  }
+}
+
+/// Inline cyan icon + label action for a section header.
+class _HeaderLink extends StatelessWidget {
+  const _HeaderLink({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18),
+      label: Text(
+        label,
+        style: wispSans(
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+          color: kAccentCyan,
+        ),
+      ),
+      style: TextButton.styleFrom(
+        padding: EdgeInsets.zero,
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        foregroundColor: kAccentCyan,
+      ),
+    );
   }
 }
 
@@ -582,75 +658,101 @@ class _RecentDeviceTile extends ConsumerWidget {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        width: 116,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        decoration: BoxDecoration(
+      child: Stack(
+        children: [
+          _body(context, name),
+          if (device.favorite) const _FavoriteBadge(),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(BuildContext context, DeviceDisplayName name) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      width: 116,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: isSelected
+            ? kAccentCyan.withValues(alpha: 0.10)
+            : context.wc.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
           color: isSelected
-              ? kAccentCyan.withValues(alpha: 0.10)
-              : context.wc.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isSelected
-                ? kAccentCyan.withValues(alpha: 0.5)
-                : context.wc.border,
-          ),
+              ? kAccentCyan.withValues(alpha: 0.5)
+              : context.wc.border,
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              _deviceIconForType(device.deviceType),
-              size: 22,
-              color: isSelected ? kAccentCyan : context.wc.muted,
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            _deviceIconForType(device.deviceType),
+            size: 22,
+            color: isSelected ? kAccentCyan : context.wc.muted,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            name.primary,
+            style: wispSans(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: context.wc.ink,
+              height: 1.18,
             ),
-            const SizedBox(height: 8),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+          if (name.broadcast != null) ...[
+            const SizedBox(height: 2),
             Text(
-              name.primary,
+              name.broadcast!,
               style: wispSans(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-                color: context.wc.ink,
-                height: 1.18,
+                fontSize: 9.5,
+                fontWeight: FontWeight.w400,
+                color: context.wc.muted,
+                height: 1.1,
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
             ),
-            if (name.broadcast != null) ...[
-              const SizedBox(height: 2),
-              Text(
-                name.broadcast!,
-                style: wispSans(
-                  fontSize: 9.5,
-                  fontWeight: FontWeight.w400,
-                  color: context.wc.muted,
-                  height: 1.1,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-              ),
-            ],
-            const SizedBox(height: 4),
-            PubkeyBadge(
-              endpointId: device.endpointId,
-              size: PubkeyBadgeSize.medium,
-              tooltip:
-                  'Identity badge (from public key) — same color = same device.',
-            ),
-            const SizedBox(height: 2),
-            Text(
-              _relativeTime(device.lastSeenAt),
-              style: wispSans(
-                fontSize: 9.5,
-                fontWeight: FontWeight.w400,
-                color: context.wc.muted,
-              ),
-            ),
           ],
-        ),
+          const SizedBox(height: 4),
+          PubkeyBadge(
+            endpointId: device.endpointId,
+            size: PubkeyBadgeSize.medium,
+            tooltip:
+                'Identity badge (from public key) — same color = same device.',
+          ),
+          const SizedBox(height: 2),
+          Text(
+            _relativeTime(device.lastSeenAt),
+            style: wispSans(
+              fontSize: 9.5,
+              fontWeight: FontWeight.w400,
+              color: context.wc.muted,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Star in the bottom-left corner of a device tile whose device is a favorite.
+class _FavoriteBadge extends StatelessWidget {
+  const _FavoriteBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      left: 7,
+      bottom: 7,
+      child: Tooltip(
+        message: 'Favorite',
+        child: Icon(Icons.star_rounded, size: 15, color: context.wc.favoriteFg),
       ),
     );
   }
@@ -678,6 +780,9 @@ class _NearbyDeviceTile extends ConsumerWidget {
       endpointId: receiver.endpointId,
       broadcastLabel: receiver.label,
     );
+    final isFavorite =
+        receiver.endpointId.isNotEmpty &&
+        ref.watch(favoriteEndpointIdsProvider).contains(receiver.endpointId);
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 300),
       opacity: isStale ? 0.45 : 1.0,
@@ -752,6 +857,7 @@ class _NearbyDeviceTile extends ConsumerWidget {
                 ],
               ),
             ),
+            if (isFavorite) const _FavoriteBadge(),
             if (receiver.overUsb)
               Positioned(
                 top: 6,

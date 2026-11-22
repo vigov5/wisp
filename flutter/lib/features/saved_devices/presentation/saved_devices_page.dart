@@ -3,16 +3,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../theme/wisp_theme.dart';
 import '../../settings/application/controller.dart';
-import '../../transfers/application/pubkey_visual.dart';
 import '../application/saved_device.dart';
 import '../application/saved_devices_controller.dart';
+import 'widgets/saved_device_summary.dart';
 
 class SavedDevicesPage extends ConsumerWidget {
   const SavedDevicesPage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final devices = ref.watch(savedDevicesProvider);
+    final devices = favoritesFirst(ref.watch(savedDevicesProvider));
     final autoAcceptEnabled = ref.watch(
       settingsControllerProvider.select(
         (s) => s.settings.autoAcceptTrustedDevices,
@@ -72,6 +72,9 @@ class SavedDevicesPage extends ConsumerWidget {
                         onToggleAutoAccept: (value) => ref
                             .read(savedDevicesProvider.notifier)
                             .setAutoAccept(device.endpointId, value),
+                        onToggleFavorite: () => ref
+                            .read(savedDevicesProvider.notifier)
+                            .setFavorite(device.endpointId, !device.favorite),
                       );
                     },
                   ),
@@ -220,22 +223,17 @@ class _SavedDeviceRow extends StatelessWidget {
     required this.onRename,
     required this.onDelete,
     required this.onToggleAutoAccept,
+    required this.onToggleFavorite,
   });
 
   final SavedDevice device;
   final VoidCallback onRename;
   final VoidCallback onDelete;
   final ValueChanged<bool> onToggleAutoAccept;
+  final VoidCallback onToggleFavorite;
 
   @override
   Widget build(BuildContext context) {
-    final isPhone = device.deviceType.toLowerCase() == 'phone';
-    final nickname = device.nickname?.trim() ?? '';
-    final hasNickname = nickname.isNotEmpty;
-    final broadcast = device.label.trim();
-    final primary = hasNickname
-        ? nickname
-        : (broadcast.isEmpty ? 'Saved device' : broadcast);
     return Dismissible(
       key: ValueKey('saved-${device.endpointId}'),
       direction: DismissDirection.endToStart,
@@ -261,70 +259,21 @@ class _SavedDeviceRow extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(
-                  isPhone ? Icons.smartphone_rounded : Icons.laptop_mac_rounded,
-                  size: 26,
-                  color: context.wc.ink.withValues(alpha: 0.8),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        primary,
-                        style: wispSans(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: context.wc.ink,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (hasNickname) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          broadcast.isEmpty
-                              ? 'No name from them'
-                              : 'Their name: $broadcast',
-                          style: wispSans(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w400,
-                            color: context.wc.muted,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          PubkeyBadge(
-                            endpointId: device.endpointId,
-                            size: PubkeyBadgeSize.small,
-                            tooltip:
-                                'Identity badge (from public key) — '
-                                'same color = same device.',
-                          ),
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: Text(
-                              '${device.transferCount} transfer'
-                              '${device.transferCount == 1 ? '' : 's'} · '
-                              '${_relativeTime(device.lastSeenAt)}',
-                              style: wispSans(
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w400,
-                                color: context.wc.muted,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                Expanded(child: SavedDeviceSummary(device: device)),
+                IconButton(
+                  icon: Icon(
+                    device.favorite
+                        ? Icons.star_rounded
+                        : Icons.star_outline_rounded,
+                    size: 21,
                   ),
+                  color: device.favorite
+                      ? context.wc.favoriteFg
+                      : context.wc.muted,
+                  onPressed: onToggleFavorite,
+                  tooltip: device.favorite
+                      ? 'Remove from favorites'
+                      : 'Add to favorites',
                 ),
                 IconButton(
                   icon: const Icon(Icons.edit_outlined, size: 19),
@@ -441,14 +390,4 @@ class _AutoAcceptToggle extends StatelessWidget {
       ],
     );
   }
-}
-
-String _relativeTime(DateTime t) {
-  final delta = DateTime.now().toUtc().difference(t.toUtc());
-  if (delta.inMinutes < 1) return 'just now';
-  if (delta.inHours < 1) return '${delta.inMinutes}m ago';
-  if (delta.inDays < 1) return '${delta.inHours}h ago';
-  if (delta.inDays < 7) return '${delta.inDays}d ago';
-  if (delta.inDays < 30) return '${(delta.inDays / 7).floor()}w ago';
-  return '${(delta.inDays / 30).floor()}mo ago';
 }

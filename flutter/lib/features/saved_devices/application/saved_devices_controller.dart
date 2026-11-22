@@ -40,6 +40,25 @@ final trustedEndpointIdsProvider = Provider<Set<String>>((ref) {
   };
 });
 
+/// The endpointIds the user has starred, for marking a live (Nearby) tile of
+/// a favorite device.
+final favoriteEndpointIdsProvider = Provider<Set<String>>((ref) {
+  final devices = ref.watch(savedDevicesProvider);
+  return {
+    for (final d in devices)
+      if (d.favorite) d.endpointId,
+  };
+});
+
+/// Order for the sender's "Recent" list: favorites pinned first, then the
+/// rest; each group newest first.
+List<SavedDevice> favoritesFirst(Iterable<SavedDevice> devices) {
+  return [...devices]..sort((a, b) {
+    if (a.favorite != b.favorite) return a.favorite ? -1 : 1;
+    return b.lastSeenAt.compareTo(a.lastSeenAt);
+  });
+}
+
 class SavedDevicesController extends Notifier<List<SavedDevice>> {
   @override
   List<SavedDevice> build() {
@@ -76,6 +95,13 @@ class SavedDevicesController extends Notifier<List<SavedDevice>> {
   Future<void> setAutoAccept(String endpointId, bool value) async {
     final repo = ref.read(savedDevicesRepositoryProvider);
     await repo.setAutoAccept(endpointId, value);
+    state = repo.loadAll();
+  }
+
+  /// Star or unstar a saved device.
+  Future<void> setFavorite(String endpointId, bool value) async {
+    final repo = ref.read(savedDevicesRepositoryProvider);
+    await repo.setFavorite(endpointId, value);
     state = repo.loadAll();
   }
 

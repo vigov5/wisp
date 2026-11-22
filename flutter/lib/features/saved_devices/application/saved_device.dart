@@ -14,6 +14,7 @@ class SavedDevice {
     this.lastTicket,
     this.nickname,
     this.autoAccept = false,
+    this.favorite = false,
   });
 
   /// Iroh `EndpointId` (= base32 public key, ~52 chars).  Stable across the
@@ -47,6 +48,10 @@ class SavedDevice {
   /// device; only ever set on a non-web, non-ephemeral peer (a stable key).
   final bool autoAccept;
 
+  /// Starred by the user: pinned to the front of the sender's "Recent" list
+  /// and never evicted when the list hits its cap.
+  final bool favorite;
+
   SavedDevice copyWith({
     String? endpointId,
     String? label,
@@ -58,6 +63,7 @@ class SavedDevice {
     String? nickname,
     bool clearNickname = false,
     bool? autoAccept,
+    bool? favorite,
   }) {
     return SavedDevice(
       endpointId: endpointId ?? this.endpointId,
@@ -69,6 +75,7 @@ class SavedDevice {
       lastTicket: lastTicket ?? this.lastTicket,
       nickname: clearNickname ? null : (nickname ?? this.nickname),
       autoAccept: autoAccept ?? this.autoAccept,
+      favorite: favorite ?? this.favorite,
     );
   }
 
@@ -82,6 +89,7 @@ class SavedDevice {
     'lastTicket': lastTicket,
     'nickname': nickname,
     'autoAccept': autoAccept,
+    'favorite': favorite,
   };
 
   static SavedDevice? fromJson(Map<String, Object?> json) {
@@ -102,6 +110,7 @@ class SavedDevice {
       // Absent on records written before the trusted-devices feature — those
       // default to not-trusted, matching a fresh save.
       autoAccept: (json['autoAccept'] as bool?) ?? false,
+      favorite: (json['favorite'] as bool?) ?? false,
     );
   }
 
@@ -118,7 +127,8 @@ class SavedDevice {
           totalBytes == other.totalBytes &&
           lastTicket == other.lastTicket &&
           nickname == other.nickname &&
-          autoAccept == other.autoAccept;
+          autoAccept == other.autoAccept &&
+          favorite == other.favorite;
 
   @override
   int get hashCode => Object.hash(
@@ -131,5 +141,6 @@ class SavedDevice {
     lastTicket,
     nickname,
     autoAccept,
+    favorite,
   );
 }

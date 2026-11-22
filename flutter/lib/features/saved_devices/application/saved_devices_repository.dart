@@ -8,7 +8,7 @@ const String _key = 'saved_devices.v1';
 const int _maxEntries = 30;
 
 /// JSON-backed repository for `SavedDevice` entries. Bounded to [_maxEntries]
-/// — when full, the oldest `lastSeenAt` is evicted.
+/// — when full, the oldest non-favorite `lastSeenAt` is evicted.
 class SavedDevicesRepository {
   SavedDevicesRepository({required this.prefs});
 
@@ -37,12 +37,14 @@ class SavedDevicesRepository {
     } else {
       all.add(next);
     }
-    // Sort by lastSeenAt desc; evict tail beyond the cap.
+    // Sort by lastSeenAt desc; evict the oldest non-favorites beyond the cap.
     all.sort((a, b) => b.lastSeenAt.compareTo(a.lastSeenAt));
-    final trimmed = all.length > _maxEntries
-        ? all.sublist(0, _maxEntries)
-        : all;
-    await _save(trimmed);
+    while (all.length > _maxEntries) {
+      final oldest = all.lastIndexWhere((d) => !d.favorite);
+      if (oldest < 0) break;
+      all.removeAt(oldest);
+    }
+    await _save(all);
   }
 
   /// Convenience: build/update a record after a successful transfer.
@@ -134,6 +136,15 @@ class SavedDevicesRepository {
     if (index < 0) return;
     if (all[index].autoAccept == value) return;
     await upsert(all[index].copyWith(autoAccept: value));
+  }
+
+  /// Star or unstar an existing saved device. No-op if it isn't in the list.
+  Future<void> setFavorite(String endpointId, bool value) async {
+    final all = loadAll();
+    final index = all.indexWhere((d) => d.endpointId == endpointId);
+    if (index < 0) return;
+    if (all[index].favorite == value) return;
+    await upsert(all[index].copyWith(favorite: value));
   }
 
   /// Mark a device trusted from the incoming-offer card, creating a minimal

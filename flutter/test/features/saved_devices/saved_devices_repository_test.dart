@@ -302,4 +302,78 @@ void main() {
     // Newest entries survive: last inserted should be present.
     expect(repo.loadAll().any((d) => d.endpointId == 'id-34'), isTrue);
   });
+
+  test('SavedDevice defaults favorite to false and round-trips it', () {
+    final legacy = SavedDevice.fromJson({
+      'endpointId': 'OLD',
+      'label': 'Old record',
+      'lastSeenAt': '2026-01-01T00:00:00Z',
+    })!;
+    expect(legacy.favorite, isFalse);
+
+    final starred = legacy.copyWith(favorite: true);
+    expect(SavedDevice.fromJson(starred.toJson())!.favorite, isTrue);
+    expect(starred, isNot(legacy));
+  });
+
+  test('setFavorite flips the flag on an existing device only', () async {
+    final repo = await makeRepo();
+    await repo.recordTransfer(
+      endpointId: 'A',
+      label: 'Alpha',
+      deviceType: 'phone',
+      bytesTransferred: BigInt.zero,
+    );
+    await repo.setFavorite('A', true);
+    expect(repo.loadAll().single.favorite, isTrue);
+
+    await repo.setFavorite('missing', true);
+    expect(repo.loadAll(), hasLength(1));
+
+    await repo.setFavorite('A', false);
+    expect(repo.loadAll().single.favorite, isFalse);
+  });
+
+  test('recordTransfer preserves an existing favorite flag', () async {
+    final repo = await makeRepo();
+    await repo.recordTransfer(
+      endpointId: 'A',
+      label: 'Alpha',
+      deviceType: 'phone',
+      bytesTransferred: BigInt.zero,
+    );
+    await repo.setFavorite('A', true);
+    await repo.recordTransfer(
+      endpointId: 'A',
+      label: 'Alpha',
+      deviceType: 'phone',
+      bytesTransferred: BigInt.one,
+    );
+    expect(repo.loadAll().single.favorite, isTrue);
+  });
+
+  test('eviction drops the oldest non-favorite, never a favorite', () async {
+    final repo = await makeRepo();
+    await repo.recordTransfer(
+      endpointId: 'oldest-fav',
+      label: 'Starred',
+      deviceType: 'laptop',
+      bytesTransferred: BigInt.zero,
+    );
+    await repo.setFavorite('oldest-fav', true);
+    for (var i = 0; i < 30; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      await repo.recordTransfer(
+        endpointId: 'id-$i',
+        label: 'Device $i',
+        deviceType: 'laptop',
+        bytesTransferred: BigInt.zero,
+      );
+    }
+    final ids = repo.loadAll().map((d) => d.endpointId).toList();
+    expect(ids, hasLength(30));
+    expect(ids, contains('oldest-fav'));
+    expect(ids, isNot(contains('id-0')));
+    expect(ids, contains('id-29'));
+  });
 }
