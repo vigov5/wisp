@@ -5,16 +5,12 @@ name: Rust release (CLI + handheld)
 # to now had to be hand-carried onto the device, because the handheld's SFTP
 # refuses writes and its SSH channel dies on a sustained stream.
 #
-# Both workflows fire on the same `v*` tag and attach to the same release;
-# `action-gh-release` updates an existing release instead of failing, so
-# whichever finishes second just adds its files.
+# It does not publish anything itself: flutter-release.yml calls it as a job,
+# and that workflow's single release job waits for every desktop, mobile, CLI
+# and handheld build, so a tag with any red build gets no release at all.
 
 on:
-  push:
-    # Same events as the Flutter release: a push to main proves the five
-    # targets still build (artifacts only, no release), a `v*` tag publishes.
-    branches: [main]
-    tags: ['v*']
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -166,35 +162,3 @@ jobs:
           name: wisp-trimui
           path: wisp-trimui-*.zip
           if-no-files-found: error
-
-  release:
-    name: Attach to the release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [cli, handheld]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download every build
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Collect the archives
-        run: |
-          mkdir release-dist
-          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) \
-            -exec mv {} release-dist/ \;
-          ls -lh release-dist
-
-      # The Flutter release owns the body. Both workflows attach to the same
-      # release, and asking for generated notes here appends a second copy of
-      # them to whatever is already there.
-      - name: Publish
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release-dist/*
-          generate_release_notes: false
-          draft: false
-          prerelease: false

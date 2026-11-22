@@ -69,6 +69,11 @@ jobs:
 
       - name: Run code generation
         run: flutter_rust_bridge_codegen generate
+        # Codegen runs `cargo expand`, which passes rustc `-Zunpretty`; stable
+        # rustc rejects -Z flags unless RUSTC_BOOTSTRAP is set. Scoped to this
+        # step so the real builds stay plain stable.
+        env:
+          RUSTC_BOOTSTRAP: 1
 
       - name: Build macOS app
         run: flutter build macos --release
@@ -154,6 +159,11 @@ jobs:
 
       - name: Run code generation
         run: flutter_rust_bridge_codegen generate
+        # Codegen runs `cargo expand`, which passes rustc `-Zunpretty`; stable
+        # rustc rejects -Z flags unless RUSTC_BOOTSTRAP is set. Scoped to this
+        # step so the real builds stay plain stable.
+        env:
+          RUSTC_BOOTSTRAP: 1
 
       - name: Build Linux app
         run: flutter build linux --release
@@ -256,6 +266,11 @@ jobs:
 
       - name: Run code generation
         run: flutter_rust_bridge_codegen generate
+        # Codegen runs `cargo expand`, which passes rustc `-Zunpretty`; stable
+        # rustc rejects -Z flags unless RUSTC_BOOTSTRAP is set. Scoped to this
+        # step so the real builds stay plain stable.
+        env:
+          RUSTC_BOOTSTRAP: 1
 
       - name: Build Windows app
         run: flutter build windows --release
@@ -344,6 +359,11 @@ jobs:
 
       - name: Run code generation
         run: flutter_rust_bridge_codegen generate
+        # Codegen runs `cargo expand`, which passes rustc `-Zunpretty`; stable
+        # rustc rejects -Z flags unless RUSTC_BOOTSTRAP is set. Scoped to this
+        # step so the real builds stay plain stable.
+        env:
+          RUSTC_BOOTSTRAP: 1
 
       - name: Decode release keystore
         env:
@@ -429,10 +449,16 @@ jobs:
           path: wisp-${{ env.SAFE_VERSION }}.flatpak
           if-no-files-found: error
 
+  # CLI binaries and the TrimUI pak, built by the Rust workflow.
+  rust:
+    uses: ./.github/workflows/rust-release.yml
+
+  # Runs only when every build above succeeded (a failed or skipped need
+  # skips this job), so a release never ships with a target missing.
   create_release:
     name: Create GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [macos_ios, linux, windows, android, flatpak]
+    needs: [macos_ios, linux, windows, android, flatpak, rust]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -452,6 +478,8 @@ jobs:
           find artifacts -name "*.dmg" -exec mv {} release-dist/ \;
           find artifacts -name "*.flatpak" -exec mv {} release-dist/ \;
           find artifacts -name "*.deb" -exec mv {} release-dist/ \;
+          find artifacts -name "*.tar.gz" -exec mv {} release-dist/ \;
+          ls -lh release-dist
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

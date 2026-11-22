@@ -52,6 +52,11 @@ jobs:
 
       - name: Run code generation
         run: flutter_rust_bridge_codegen generate
+        # Codegen runs `cargo expand`, which passes rustc `-Zunpretty`; stable
+        # rustc rejects -Z flags unless RUSTC_BOOTSTRAP is set. Scoped to this
+        # step so the real builds stay plain stable.
+        env:
+          RUSTC_BOOTSTRAP: 1
 
       - name: Analyze
         run: flutter analyze
