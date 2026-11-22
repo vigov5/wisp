@@ -418,7 +418,8 @@ jobs:
     needs: [linux]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-45
+      # Must match runtime-version in flutter/linux/dev.vigov5.wisp.yaml.
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
       options: --privileged
     steps:
       - name: Checkout repository
