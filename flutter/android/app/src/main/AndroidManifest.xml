@@ -22,6 +22,13 @@
     <uses-permission
         android:name="android.permission.ACCESS_COARSE_LOCATION"
         android:maxSdkVersion="32" />
+    <!-- The Wi-Fi and location permissions above make Play infer required
+         android.hardware.wifi and android.hardware.location, which hide the
+         app from devices without them. Wisp also works over mobile data,
+         Ethernet and USB, the Wi-Fi locks are skipped when there is no
+         WifiManager, and location only serves legacy LAN discovery. -->
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
 
     <!-- Background keepalive for active iroh transfers -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -33,6 +40,11 @@
     <!-- Camera access for QR-code based offline-LAN pairing -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- The camera plugin declares camera.any as required, which would hide
+         the app from camera-less devices; QR pairing is optional (short codes
+         and nearby discovery still work), so override it. -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="false"
+        tools:replace="android:required" />
 
     <!-- The QR scanner (flutter_zxing) pulls in the camera plugin, whose
          CameraX implementation declares RECORD_AUDIO (video capture with

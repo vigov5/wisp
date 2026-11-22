@@ -219,7 +219,9 @@ class TransferKeepaliveService : Service() {
         }
 
         val appContext = applicationContext
-        val wm = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        // Null on devices without Wi-Fi (android.hardware.wifi is optional);
+        // the wake lock above is then the whole keepalive.
+        val wm = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
         // WIFI_MODE_FULL_HIGH_PERF is deprecated at API 29 in favour of
         // WIFI_MODE_FULL_LOW_LATENCY. Both branches here used to name the
         // deprecated constant, so on every device Wisp actually ships to the

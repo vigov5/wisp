@@ -721,7 +721,9 @@ class MainActivity : FlutterFragmentActivity() {
     private fun setMulticastLockHeld(held: Boolean): Boolean {
         if (held) {
             if (multicastLock == null) {
-                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                // Null on devices without Wi-Fi (android.hardware.wifi is optional).
+                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                    ?: return false
                 multicastLock = wm.createMulticastLock(MULTICAST_TAG).apply {
                     setReferenceCounted(false)
                 }
